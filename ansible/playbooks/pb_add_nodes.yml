@@ -1,0 +1,21 @@
+---
+- name: Add New Nodes to Kubernetes Cluster (Placeholder)
+  hosts: "{{ target_hosts | default('new_nodes_group') }}" # Expect a group of new nodes
+  become: yes
+  gather_facts: yes
+
+  vars:
+    join_token: "YOUR_JOIN_TOKEN" # Must be passed or discovered
+    discovery_token_ca_cert_hash: "sha256:YOUR_DISCOVERY_HASH" # Must be passed or discovered
+    control_plane_endpoint: "YOUR_CONTROL_PLANE_IP_OR_DNS:6443" # Must be passed or discovered
+
+  tasks:
+    - name: Display placeholder message for adding nodes
+      ansible.builtin.debug:
+        msg:
+          - "This playbook is a placeholder for adding new nodes."
+          - "It would typically run 'kubeadm join' with the following parameters:"
+          - "  Join Token: {{ join_token }}"
+          - "  Discovery Hash: {{ discovery_token_ca_cert_hash }}"
+          - "  Control Plane Endpoint: {{ control_plane_endpoint }}"
+          - "Targeted hosts: {{ ansible_play_hosts_all | join(', ') }}"

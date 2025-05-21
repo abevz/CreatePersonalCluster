@@ -1,13 +1,13 @@
-output "proxmox_endpoint_console_output" {
-  description = "The endpoint for the Proxmox Virtual Environment."
-  value       = data.sops_file.secrets.data["virtual_environment_endpoint"]
-  sensitive   = true
-}
-
 output "vm_ipv4_addresses" {
-  description = "IPv4 addresses of the K8s VMs, mapped by their keys (controlplane, worker0, etc.)."
+  description = "Primary non-loopback IPv4 addresses of the K8s VMs, attempting direct indexing."
   value = {
-    for k, vm in proxmox_virtual_environment_vm.k8s : k => vm.ipv4_addresses[0][0] if length(vm.ipv4_addresses) > 0 && length(vm.ipv4_addresses[0]) > 0
+    for k, vm in proxmox_virtual_environment_vm.k8s : k => (
+      # Attempting to use the structure vm.ipv4_addresses[1][0]
+      # This assumes the second interface list (index 1) is the primary NIC
+      # and its first IP (index 0) is the one we want.
+      # It also checks if the IP is not loopback or IPv6 link-local.
+      can(vm.ipv4_addresses[1][0]) && vm.ipv4_addresses[1][0] != "127.0.0.1" && !startswith(vm.ipv4_addresses[1][0], "fe80:") ? vm.ipv4_addresses[1][0] : null
+    )
   }
   sensitive = false # IPs are often needed, adjust if sensitive in your context
 }
@@ -36,5 +36,7 @@ output "all_vm_ids" {
 
 output "cloud_init_file_id" {
   description = "The ID of the generated cloud-init user data file in Proxmox."
-  value       = proxmox_virtual_environment_file.user_data_cloud_config.id
+  value       = {
+    for k, file in proxmox_virtual_environment_file.user_data_cloud_config : k => file.id
+  }
 }

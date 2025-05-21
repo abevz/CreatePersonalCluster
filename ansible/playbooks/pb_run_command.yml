@@ -1,0 +1,31 @@
+---
+- name: Run Arbitrary Shell Command on Target Hosts
+  hosts: "{{ target_hosts_cli | default('all') }}" # Expect target_hosts_cli to be passed from ccr
+  become: yes # Assume command might need sudo, can be made optional
+  gather_facts: no # Usually not needed for simple command execution
+
+  vars:
+    command_to_run: "echo 'No command provided'" # Expected -e command_to_run="..."
+
+  tasks:
+    - name: Check if command_to_run is provided
+      ansible.builtin.fail:
+        msg: "Variable 'command_to_run' must be provided and not empty."
+      when: command_to_run is not defined or command_to_run | trim == "" or command_to_run == "echo 'No command provided'"
+
+    - name: Execute the provided shell command
+      ansible.builtin.shell: "{{ command_to_run }}"
+      register: command_result
+      changed_when: true # Assume any command execution is a change for simplicity
+      ignore_errors: true # Let user see failures in output
+
+    - name: Display command output
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "RC: {{ command_result.rc }}"
+          - "STDOUT:"
+          - "{{ command_result.stdout | indent(2) }}"
+          - "STDERR:"
+          - "{{ command_result.stderr | indent(2) }}"
+      when: command_result is defined
