@@ -6,6 +6,7 @@ provider "proxmox" {
   endpoint = data.sops_file.secrets.data["virtual_environment_endpoint"]
   password = data.sops_file.secrets.data["virtual_environment_password"]
   username = data.sops_file.secrets.data["virtual_environment_username"]
+
   insecure = true # Consider setting to false in production with a valid certificate
 
   ssh {

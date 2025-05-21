@@ -31,6 +31,36 @@ variable "vm_cpu_cores" {
   default     = 1
 }
 
+variable "pm_template_debian_id" {
+  description = "ID of the Proxmox VM template for Debian."
+  type        = number
+  default     = 902 # Please set the correct template ID
+}
+
+variable "pm_template_ubuntu_id" {
+  description = "ID of the Proxmox VM template for Ubuntu."
+  type        = number
+  default     = 912 # Please set the correct template ID
+}
+
+variable "pm_template_rocky_id" {
+  description = "ID of the Proxmox VM template for Rocky Linux."
+  type        = number
+  default     = 931 # Please set the correct template ID
+}
+
+variable "vm_domain" {
+  description = "Domain suffix for VM hostnames (e.g., .example.com)."
+  type        = string
+  default     = ".bevz.net" # Please set your desired domain suffix
+}
+
+variable "vm_user" {
+  description = "Default user to create on VMs via cloud-init."
+  type        = string
+  default     = "abevz" # Please set your desired default username
+}
+
 variable "vm_memory_dedicated" {
   type        = number
   description = "Dedicated memory in MB for VMs."
@@ -55,12 +85,6 @@ variable "proxmox_user" {
   default     = "abevz" # You can change the default value or remove it so that it is always requested
 }
 
-variable "domain_name" {
-  description = "Domain name for the VMs"
-  type        = string
-  default     = ".bevz.net" # You can change the default value or remove it so that it is always requested
-}
-
 variable "vm_template_name" {
   description = "Name of the VM template to use for cloning."
   type        = string
@@ -79,33 +103,4 @@ variable "vm_count" {
   default     = 1
 }
 
-variable "ssh_keys" {
-  description = "SSH keys for VM access."
-  type        = list(string)
-  default     = []
-}
 
-variable "cloud_init_user_data" {
-  description = "Cloud-init user data for VM customization."
-  type        = string
-  default     = <<EOF
-#cloud-config
-users:
-  - name: abe
-    ssh-authorized-keys:
-      - ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEArD1...
-EOF
-}
-
-variable "cloud_init_network_config" {
-  description = "Cloud-init network configuration."
-  type        = string
-  default     = <<EOF
-#cloud-config
-network:
-  version: 2
-  ethernets:
-    ens18:
-      dhcp4: true
-EOF
-}
