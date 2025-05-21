@@ -1,28 +1,27 @@
 locals {
-  # effective_os_type будет равен имени текущего Tofu workspace
+  # effective_os_type will be equal to the name of the current Tofu workspace
   effective_os_type = terraform.workspace
 
-  release_letter = lower(substr(local.effective_os_type, 0, 1))
-
-  # This map stores the *names* of your templates for reference
-  # These should match the template names in your Proxmox environment
-  clones = {
-    debian = "tpl-debian-12"       # Example: Debian 12 template name
-    ubuntu = "tpl-ubuntu-2404-lts" # Example: Ubuntu 24.04 LTS template name
-    rocky  = "tpl-rocky-9"         # Example: Rocky 9 template name
-  }
-
-  # IMPORTANT: Replace placeholder IDs with actual VM IDs of your templates in Proxmox
+  # Define a map for VM template names based on the OS type (derived from workspace name)
+  # This allows selecting the correct template dynamically.
   template_vm_ids = {
-    debian = 902 # VM ID for template named "tpl-debian-12"
-    ubuntu = 912 # Example: VM ID for template named "tpl-ubuntu-2404-lts"
-    rocky  = 931 # Example: VM ID for template named "tpl-rocky-9"
-    # Убедитесь, что здесь есть записи для всех ваших ожидаемых имен workspace
+    "debian" = var.pm_template_debian_id
+    "ubuntu" = var.pm_template_ubuntu_id
+    "rocky"  = var.pm_template_rocky_id
+    # Add other OS types and their corresponding template IDs as needed
   }
 
-  # Common tags to apply to all resources, can be extended with environment-specific tags
-  common_tags = {
-    environment = terraform.workspace # Изменено с var.environment
-    managed-by  = "terraform"
+  # Define a map for release letters based on the OS type (derived from workspace name)
+  # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
+  release_letters_map = {
+    "debian" = "d"
+    "ubuntu" = "u"
+    "rocky"  = "r"
+    # Ensure there are entries here for all your expected workspace names
   }
+
+  # Get the release letter for the current workspace, defaulting to "x" if not found.
+  release_letter = lookup(local.release_letters_map, local.effective_os_type, "x") # "x" as a fallback
+
+  environment = terraform.workspace # Changed from var.environment
 }
