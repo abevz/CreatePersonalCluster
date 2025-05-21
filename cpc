@@ -36,7 +36,31 @@ get_current_cluster_context() {
   if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
     cat "$CLUSTER_CONTEXT_FILE"
   else
-    echo "default" # Default context if not set
+    echo -e "${RED}Error: No cpc context set.${ENDCOLOR}" >&2
+    echo -e "${BLUE}The cpc context determines the Tofu workspace and associated configuration (e.g., OS type).${ENDCOLOR}" >&2
+    echo -e "${BLUE}Please set a context using 'cpc ctx <workspace_name>'.${ENDCOLOR}" >&2
+    
+    # Attempt to get repo_path to list workspaces.
+    # This relies on REPO_PATH_FILE being set by 'cpc setup-cpc'.
+    if [ -f "$REPO_PATH_FILE" ]; then
+      local repo_p_for_listing
+      repo_p_for_listing=$(cat "$REPO_PATH_FILE")
+      if [ -d "$repo_p_for_listing/terraform" ]; then
+        echo -e "${BLUE}Available Tofu workspaces in '$repo_p_for_listing/terraform' (use one of these for <workspace_name>):${ENDCOLOR}" >&2
+        # Ensure tofu command is available for listing or provide a message
+        if command -v tofu &> /dev/null; then
+          (cd "$repo_p_for_listing/terraform" && tofu workspace list | sed 's/^*/  /') >&2
+        else
+          echo -e "${YELLOW}  'tofu' command not found. Cannot list workspaces. Please ensure OpenTofu is installed and in your PATH.${ENDCOLOR}" >&2
+        fi
+      else
+        echo -e "${YELLOW}Warning: Cannot list Tofu workspaces. Terraform directory not found at '$repo_p_for_listing/terraform'.${ENDCOLOR}" >&2
+      fi
+    else
+      echo -e "${YELLOW}Warning: Cannot list Tofu workspaces. Repository path not set. Run 'cpc setup-cpc'.${ENDCOLOR}" >&2
+    fi
+    echo -e "${BLUE}Typically, the context/workspace should be one of: debian, ubuntu, rocky.${ENDCOLOR}" >&2
+    exit 1
   fi
 }
 
@@ -127,6 +151,8 @@ display_usage() {
   echo "Commands:"
   echo "  setup-cpc                      Initial setup for cpc command." # Changed from ccr
   echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)." # Changed from Terraform
+  echo "  update-pihole                  Update Pi-hole DNS records with VM IPs from current context."
+  echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context." # Updated
   echo ""
   echo "  add-nodes                      (Not Implemented) Add new worker nodes to the cluster."
   echo "  drain-node <node_name>         Drain workloads from a node."
@@ -276,6 +302,100 @@ case "$COMMAND" in
     target="$1"
     shell_cmd="$2"
     run_ansible_playbook "pb_run_command.yml" "$target" "-e command_to_run='''$shell_cmd'''"
+    ;;
+
+  update-pihole)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc update-pihole" # Changed from ccr
+      echo "Updates Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs."
+      echo "Requires 'sops' and 'curl' to be installed, and secrets.sops.yaml to be configured."
+      exit 0
+    fi
+    echo -e "${BLUE}Updating Pi-hole DNS records...${ENDCOLOR}"
+    # Assuming the script is in REPO_PATH/scripts/
+    "$REPO_PATH/scripts/add_pihole_dns.py" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform"
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}Error updating Pi-hole DNS records.${ENDCOLOR}" >&2
+      exit 1
+    fi
+    echo -e "${GREEN}Pi-hole DNS update script finished.${ENDCOLOR}"
+    ;;
+
+  deploy)
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
+      echo "Usage: cpc deploy <tofu_command> [additional_tofu_options]"
+      echo ""
+      echo "Runs the specified 'tofu' command (e.g., plan, apply, validate, output, destroy) in the"
+      echo "Terraform directory for the current cpc context."
+      echo ""
+      echo "Key features:"
+      echo "  - Automatically changes to the '$REPO_PATH/terraform' directory."
+      echo "  - Ensures the Tofu workspace matches the current cpc context (e.g., 'debian', 'ubuntu')."
+      echo "  - For 'tofu plan', 'apply', 'destroy', 'import', and 'console' commands, automatically includes"
+      echo "    the context-specific variables file (e.g., 'environments/\$CONTEXT.tfvars') if it exists."
+      echo ""
+      echo "Examples:"
+      echo "  cpc deploy plan                                 # Plan changes for the current context"
+      echo "  cpc deploy apply -auto-approve                  # Apply changes with auto-approval"
+      echo "  cpc deploy output vm_ipv4_addresses             # Get a specific output"
+      echo "  cpc deploy validate                             # Validate the configuration"
+      echo "  cpc deploy destroy -target=proxmox_vm_kvm.vm[0] # Destroy a specific resource"
+      echo "  cpc deploy workspace list                       # List Tofu workspaces"
+      exit 0
+    fi
+
+    current_ctx=$(get_current_cluster_context)
+    tf_dir="$REPO_PATH/terraform"
+    tfvars_file="$tf_dir/environments/${current_ctx}.tfvars"
+
+    echo -e "${BLUE}Preparing to run 'tofu $*' for context '$current_ctx' in $tf_dir...${ENDCOLOR}"
+
+    pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to directory $tf_dir${ENDCOLOR}"; exit 1; }
+    selected_workspace=$(tofu workspace show)
+    if [ "$selected_workspace" != "$current_ctx" ]; then
+        echo -e "${YELLOW}Warning: Current Tofu workspace ('$selected_workspace') does not match cpc context ('$current_ctx').${ENDCOLOR}"
+        echo -e "${YELLOW}Attempting to select workspace '$current_ctx'...${ENDCOLOR}"
+        tofu workspace select "$current_ctx"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error selecting Tofu workspace '$current_ctx'. Please check your Tofu setup.${ENDCOLOR}" >&2
+            popd > /dev/null
+            exit 1
+        fi
+    fi
+
+    tofu_subcommand="$1"
+    shift # Remove subcommand, rest are its arguments
+
+    final_tofu_cmd_array=(tofu "$tofu_subcommand")
+
+    # Check if the subcommand is one that accepts -var-file
+    case "$tofu_subcommand" in
+      apply|plan|destroy|import|console)
+        if [ -f "$tfvars_file" ]; then
+          final_tofu_cmd_array+=("-var-file=$tfvars_file")
+          echo -e "${BLUE}Using tfvars file: $tfvars_file${ENDCOLOR}"
+        else
+          echo -e "${YELLOW}Warning: No specific tfvars file found for context '$current_ctx' at $tfvars_file. Using defaults if applicable.${ENDCOLOR}"
+        fi
+        ;;
+    esac
+
+    # Append remaining user-provided arguments
+    if [[ $# -gt 0 ]]; then
+      final_tofu_cmd_array+=("$@")
+    fi
+
+    echo -e "${BLUE}Executing: ${final_tofu_cmd_array[*]}${ENDCOLOR}"
+    "${final_tofu_cmd_array[@]}"
+    cmd_exit_code=$?
+
+    popd > /dev/null || exit 1
+
+    if [ $cmd_exit_code -ne 0 ]; then
+      echo -e "${RED}Error: '${final_tofu_cmd_array[*]}' failed with exit code $cmd_exit_code.${ENDCOLOR}" >&2
+      exit 1
+    fi
+    echo -e "${GREEN}'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'.${ENDCOLOR}"
     ;;
 
   "" | "-h" | "--help" | "help")
