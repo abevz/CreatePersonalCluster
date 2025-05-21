@@ -1,0 +1,41 @@
+---
+- name: Main playbook to provision servers
+  hosts: all
+  become: yes
+  gather_facts: yes # Important for Ansible to know about the target systems
+
+  pre_tasks:
+    - name: Update apt cache (for Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      changed_when: false # Don't report a change for cache updates
+
+    - name: Ensure EPEL repo is enabled (for RHEL/Rocky)
+      ansible.builtin.dnf:
+        name: epel-release
+        state: present
+      when: ansible_os_family == "RedHat"
+
+  roles:
+    # We will define roles later for Kubernetes installation
+    # - role: install_kubernetes_prerequisites
+    # - role: setup_kubernetes_cluster
+
+  tasks:
+    - name: Placeholder task - Display OS Family
+      ansible.builtin.debug:
+        msg: "Hello from a {{ ansible_os_family }} server!"
+
+    - name: Install common packages
+      ansible.builtin.package:
+        name:
+          - curl
+          - wget
+          - vim
+          - git
+          - gnupg
+          - software-properties-common # for apt_repository
+          - ca-certificates # for apt_key / get_url with https
+        state: present

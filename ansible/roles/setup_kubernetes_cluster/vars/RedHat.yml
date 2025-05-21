@@ -1,0 +1,14 @@
+---
+# vars file for setup_kubernetes_cluster role (RedHat family - e.g., Rocky Linux)
+
+containerd_prerequisites_packages:
+  - ca-certificates
+  - curl
+  - gnupg # Though dnf handles keys differently, it's good for general use
+
+docker_repo_config_url_redhat: "https://download.docker.com/linux/centos/docker-ce.repo"
+docker_repo_config_path_redhat: "/etc/yum.repos.d/docker-ce.repo"
+
+# Kubernetes GPG keys are usually part of the repo definition for YUM/DNF
+k8s_gpg_key_url_redhat_new: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/repodata/repomd.xml.key"
+# k8s_gpg_key_url_redhat_old: "https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg" # Legacy, if needed

@@ -1,0 +1,292 @@
+#!/bin/bash
+
+# Color definitions
+export GREEN='\033[32m'
+export RED='\033[0;31m'
+export YELLOW='\033[0;33m'
+export BLUE='\033[1;34m'
+export ENDCOLOR='\033[0m'
+
+# Configuration
+CONFIG_DIR="$HOME/.config/my-kthw-cpc" # Changed from my-kthw-ccr
+REPO_PATH_FILE="$CONFIG_DIR/repo_path"
+CLUSTER_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
+CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE and ccr.env
+
+# --- Helper Functions ---
+check_required_commands() {
+  for cmd in "$@"; do
+    if ! command -v "$cmd" &> /dev/null; then
+      echo -e "${RED}Error: '$cmd' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
+      exit 1
+    fi
+  done
+}
+
+get_repo_path() {
+  if [ -f "$REPO_PATH_FILE" ]; then
+    cat "$REPO_PATH_FILE"
+  else
+    echo -e "${RED}Repository path not set. Run 'cpc setup-cpc' to set this value.${ENDCOLOR}" >&2 # Changed from ccr setup-ccr
+    exit 1
+  fi
+}
+
+get_current_cluster_context() {
+  if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
+    cat "$CLUSTER_CONTEXT_FILE"
+  else
+    echo "default" # Default context if not set
+  fi
+}
+
+# Source environment variables if cpc.env exists
+load_env_vars() {
+  local repo_root
+  repo_root=$(get_repo_path)
+  if [ -f "$repo_root/$CPC_ENV_FILE" ]; then # Changed from CCR_ENV_FILE
+    # shellcheck source=cpc.env
+    set -a # Automatically export all variables
+    source "$repo_root/$CPC_ENV_FILE" # Changed from CCR_ENV_FILE
+    set +a # Stop automatically exporting
+    echo -e "${BLUE}Loaded environment variables from $CPC_ENV_FILE${ENDCOLOR}" # Changed from CCR_ENV_FILE
+  else
+    echo -e "${YELLOW}Warning: $CPC_ENV_FILE not found in repository root. Some default versions might be used by playbooks.${ENDCOLOR}" # Changed from CCR_ENV_FILE
+  fi
+}
+
+
+run_ansible_playbook() {
+  local playbook_name="$1"
+  local target_hosts="$2" # Optional: specific host or group for the playbook, defaults to 'all'
+  local extra_vars_string="$3" # Optional: additional extra vars
+
+  local repo_root
+  repo_root=$(get_repo_path)
+  local ansible_dir="$repo_root/ansible"
+  local inventory_file="$ansible_dir/inventory/tofu_inventory.py" # Changed from terraform_inventory.py
+
+  if [ ! -f "$inventory_file" ]; then
+    echo -e "${RED}Error: Ansible inventory file not found at $inventory_file${ENDCOLOR}" >&2
+    echo -e "${RED}Ensure Tofu has been run and the inventory script is in place.${ENDCOLOR}" >&2 # Changed from Terraform
+    return 1
+  fi
+
+  if [ ! -x "$inventory_file" ]; then
+    echo -e "${YELLOW}Warning: Inventory script $inventory_file is not executable. Attempting to chmod +x.${ENDCOLOR}"
+    chmod +x "$inventory_file"
+    if [ ! -x "$inventory_file" ]; then
+        echo -e "${RED}Error: Failed to make inventory script $inventory_file executable.${ENDCOLOR}" >&2
+        return 1
+    fi
+  fi
+
+  local current_cluster
+  current_cluster=$(get_current_cluster_context)
+
+  # Base Ansible command
+  # Ensure ansible_dir is quoted if it can contain spaces, though REPO_PATH usually doesn't.
+  # Using ansible.cfg from the ansible_dir for settings like remote_user
+  pushd "$ansible_dir" > /dev/null || { echo -e "${RED}Failed to change directory to $ansible_dir${ENDCOLOR}"; return 1; }
+
+  local ansible_cmd="ansible-playbook -i $inventory_file playbooks/$playbook_name"
+
+  # Add common extra vars
+  ansible_cmd+=" -e ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' ansible.cfg || echo 'root')" # Get user from ansible.cfg
+  ansible_cmd+=" -e current_cluster_context=$current_cluster"
+  ansible_cmd+=" -e kubernetes_version=${kubernetes_version:-$(ansible-inventory -i $inventory_file --host all -y | jq -r '.all.children.ungrouped.vars.kubernetes_version // "1.29"')}" # Example: get from defaults or env
+  ansible_cmd+=" -e kubernetes_patch_version=${kubernetes_patch_version:-latest}"
+
+
+  # Add target hosts if specified
+  if [ -n "$target_hosts" ] && [ "$target_hosts" != "all" ]; then
+    ansible_cmd+=" --limit $target_hosts"
+  fi
+
+  # Add any other specific extra vars passed to the function
+  if [ -n "$extra_vars_string" ]; then
+    ansible_cmd+=" $extra_vars_string"
+  fi
+
+  echo -e "${BLUE}Running: $ansible_cmd${ENDCOLOR}"
+  eval "$ansible_cmd" # Use eval to correctly interpret quotes in extra_vars_string if any
+  local exit_code=$?
+
+  popd > /dev/null || return 1
+
+  if [ $exit_code -ne 0 ]; then
+    echo -e "${RED}Error: Ansible playbook $playbook_name failed with exit code $exit_code.${ENDCOLOR}" >&2
+    return 1
+  fi
+  return 0
+}
+
+display_usage() {
+  echo "Usage: cpc <command> [options]" # Changed from ccr
+  echo ""
+  echo "Commands:"
+  echo "  setup-cpc                      Initial setup for cpc command." # Changed from ccr
+  echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)." # Changed from Terraform
+  echo ""
+  echo "  add-nodes                      (Not Implemented) Add new worker nodes to the cluster."
+  echo "  drain-node <node_name>         Drain workloads from a node."
+  echo "  delete-node <node_name>        Delete a node from the Kubernetes cluster."
+  echo "  upgrade-node <node_name>       (Not Implemented) Upgrade Kubernetes on a specific node."
+  echo "  reset-node <node_name>         Reset Kubernetes on a specific node."
+  echo "  reset-all-nodes                Reset Kubernetes on all nodes in the current context."
+  echo "  upgrade-addons                 (Not Implemented) Upgrade cluster addons."
+  echo "  upgrade-k8s                    (Not Implemented) Upgrade Kubernetes control plane."
+  echo "  vmctl                          (Placeholder) Suggests using Tofu for VM control." # Changed from Terraform
+  echo "  run-command <target> "<cmd>"   Run a shell command on target host(s) or group."
+  echo ""
+  echo "Use 'cpc <command> --help' for more details on a specific command." # Changed from ccr
+}
+
+# --- Main Script Logic ---
+
+# Ensure config directory exists
+mkdir -p "$CONFIG_DIR"
+
+# Check for essential commands early
+check_required_commands "ansible-playbook" "ansible-inventory" "tofu" "kubectl" "jq"
+
+COMMAND="$1"
+shift # Remove command from arguments, rest are options
+
+# Load REPO_PATH if not doing setup
+if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$COMMAND" != "--help" ]]; then # Changed from setup-ccr
+  REPO_PATH=$(get_repo_path)
+  export REPO_PATH
+  # Load environment variables from cpc.env
+  load_env_vars # Will now use CPC_ENV_FILE
+fi
+
+
+case "$COMMAND" in
+  setup-cpc) # Changed from setup-ccr
+    current_script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo "$current_script_path" > "$REPO_PATH_FILE"
+    echo -e "${GREEN}cpc setup complete. Repository path set to: $current_script_path${ENDCOLOR}" # Changed from ccr
+    echo -e "${BLUE}You might want to add this script to your PATH, e.g., by creating a symlink in /usr/local/bin/cpc${ENDCOLOR}" # Changed from ccr
+    echo -e "${BLUE}Example: sudo ln -s "$current_script_path/cpc" /usr/local/bin/cpc${ENDCOLOR}" # Changed from ccr
+    echo -e "${BLUE}Also, create a 'cpc.env' file in '$current_script_path' for version management (see cpc.env.example).${ENDCOLOR}" # Changed from ccr.env and ccr.env.example
+    ;;
+
+  ctx)
+    if [ -z "$1" ]; then
+      current_ctx=$(get_current_cluster_context)
+      echo "Current cluster context: $current_ctx"
+      echo "Available Tofu workspaces:" # Changed from Terraform
+      (cd "$REPO_PATH/terraform" && tofu workspace list) # Changed from terraform
+      exit 0
+    elif [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc ctx [<cluster_name>]" # Changed from ccr
+      echo "Sets the current cluster context for cpc and switches Tofu workspace." # Changed from ccr and Terraform
+      exit 0
+    fi
+    cluster_name="$1"
+    echo "$cluster_name" > "$CLUSTER_CONTEXT_FILE"
+    echo -e "${GREEN}Cluster context set to: $cluster_name${ENDCOLOR}"
+    pushd "$REPO_PATH/terraform" > /dev/null || exit 1
+    if tofu workspace list | grep -qw "$cluster_name"; then # Changed from terraform
+      tofu workspace select "$cluster_name" # Changed from terraform
+    else
+      echo -e "${YELLOW}Tofu workspace '$cluster_name' does not exist. Creating and selecting.${ENDCOLOR}" # Changed from Terraform
+      tofu workspace new "$cluster_name" # Changed from terraform
+    fi
+    popd > /dev/null || exit 1
+    ;;
+
+  add-nodes)
+    echo -e "${YELLOW}Command 'add-nodes' is not fully implemented yet.${ENDCOLOR}"
+    echo -e "${BLUE}This would typically involve running 'kubeadm join' on new nodes.${ENDCOLOR}"
+    echo -e "${BLUE}You'd need a join token and discovery hash from the control plane.${ENDCOLOR}"
+    # run_ansible_playbook "pb_add_nodes.yml" "new_workers_group" "-e join_token=xxx -e discovery_hash=sha256:yyy"
+    ;;
+
+  drain-node)
+    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc drain-node <node_name> [--force] [--delete-emptydir-data]" # Changed from ccr
+      exit 1
+    fi
+    node_name="$1"
+    shift
+    extra_cli_opts="$*" # Pass through any remaining options like --force
+    run_ansible_playbook "pb_drain_node.yml" "all" "-e node_to_drain=$node_name -e drain_options='''$extra_cli_opts'''"
+    ;;
+
+  delete-node)
+    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc delete-node <node_name> [--reset-node]" # Changed from ccr
+      exit 1
+    fi
+    node_name="$1"
+    reset_flag="${2:---no-reset-node}" # default to not resetting
+    run_ansible_playbook "pb_delete_node.yml" "all" "-e node_to_delete=$node_name -e reset_after_delete=$reset_flag"
+    ;;
+
+  upgrade-node)
+    echo -e "${YELLOW}Command 'upgrade-node' is not fully implemented yet.${ENDCOLOR}"
+    # run_ansible_playbook "pb_upgrade_node.yml" "$1" "-e target_k8s_version=1.x.y"
+    ;;
+
+  reset-node)
+    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc reset-node <node_name_or_ip>" # Changed from ccr
+      exit 1
+    fi
+    node_name="$1"
+    run_ansible_playbook "pb_reset_node.yml" "$node_name" "" # Target specific node
+    ;;
+
+  reset-all-nodes)
+    read -r -p "Are you sure you want to reset Kubernetes on ALL nodes in context '$(get_current_cluster_context)'? [y/N] " response
+    if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+      run_ansible_playbook "pb_reset_all_nodes.yml" "all" ""
+    else
+      echo "Operation cancelled."
+    fi
+    ;;
+
+  upgrade-addons)
+    echo -e "${YELLOW}Command 'upgrade-addons' is not fully implemented yet.${ENDCOLOR}"
+    # run_ansible_playbook "pb_upgrade_addons.yml" "control_plane_group" "-e addon_name=calico -e addon_version=v3.x.y"
+    ;;
+
+  upgrade-k8s)
+    echo -e "${YELLOW}Command 'upgrade-k8s' (control plane) is not fully implemented yet.${ENDCOLOR}"
+    # run_ansible_playbook "pb_upgrade_k8s_control_plane.yml" "control_plane_group" "-e target_k8s_version=1.x.y"
+    ;;
+
+  vmctl)
+    echo -e "${BLUE}VM control (start, stop, create, delete) is primarily managed by Tofu in this project.${ENDCOLOR}" # Changed from Terraform
+    echo -e "${BLUE}Please use 'tofu apply', 'tofu destroy', or modify your .tfvars and re-apply.${ENDCOLOR}" # Changed from terraform
+    echo -e "${BLUE}Example: To stop a VM, you might comment it out in Tofu and apply, or use Proxmox UI/API directly.${ENDCOLOR}" # Changed from Terraform
+    # Placeholder for future direct VM interactions if needed via Proxmox API etc.
+    # run_ansible_playbook "pb_vm_control.yml" "localhost" "-e vm_name=$1 -e action=$2"
+    ;;
+
+  run-command)
+    if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc run-command <target_hosts_or_group> "<shell_command_to_run>"" # Changed from ccr
+      echo "Example: cpc run-command control_plane_nodes "hostname -f"" # Changed from ccr
+      echo "Example: cpc run-command all "sudo apt update"" # Changed from ccr
+      exit 1
+    fi
+    target="$1"
+    shell_cmd="$2"
+    run_ansible_playbook "pb_run_command.yml" "$target" "-e command_to_run='''$shell_cmd'''"
+    ;;
+
+  "" | "-h" | "--help" | "help")
+    display_usage
+    ;;
+
+  *)
+    echo -e "${RED}Unknown command: $COMMAND${ENDCOLOR}" >&2
+    display_usage
+    exit 1
+    ;;
+esac
+
+exit 0

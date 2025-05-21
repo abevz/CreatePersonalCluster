@@ -1,0 +1,27 @@
+---
+- name: Upgrade Kubernetes Control Plane (Placeholder)
+  hosts: "{{ target_hosts | default('k8s_control_plane') }}" # Target your control plane group
+  become: yes
+  gather_facts: yes
+
+  vars:
+    target_k8s_version: "{{ kubernetes_version }}.{{ kubernetes_patch_version }}" # Example, ensure this is the desired UPGRADE version
+
+  tasks:
+    - name: Display placeholder message for upgrading Kubernetes control plane
+      ansible.builtin.debug:
+        msg:
+          - "This playbook is a placeholder for upgrading the Kubernetes control plane on {{ inventory_hostname }}."
+          - "Target Kubernetes version for upgrade: {{ target_k8s_version }}"
+          - "High-level steps for the first control plane node:"
+          - "  1. kubectl drain <control_plane_node> (if not the only one or handled carefully)"
+          - "  2. apt-mark unhold kubeadm && apt-get update && apt-get install -y kubeadm='{{ target_k8s_version }}-xx'"
+          - "     (or dnf equivalent: dnf versionlock delete kubeadm; dnf install kubeadm-'{{ target_k8s_version }}')"
+          - "  3. kubeadm upgrade plan"
+          - "  4. kubeadm upgrade apply {{ target_k8s_version }}"
+          - "  5. apt-mark unhold kubelet kubectl && apt-get update && apt-get install -y kubelet='{{ target_k8s_version }}-xx' kubectl='{{ target_k8s_version }}-xx'"
+          - "     (or dnf equivalent for kubelet/kubectl)"
+          - "  6. systemctl daemon-reload && systemctl restart kubelet"
+          - "  7. kubectl uncordon <control_plane_node>"
+          - "For subsequent control plane nodes:"
+          - "  - Similar steps, but 'kubeadm upgrade node' instead of 'apply'."

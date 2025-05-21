@@ -4,10 +4,15 @@
 
 terraform {
   backend "s3" { # Example: Using S3 backend
-    bucket         = "my-terraform-state-bucket-name" # Replace with your S3 bucket name
-    key            = "environments/${var.environment}/terraform.tfstate" # Dynamically set path based on environment
+    bucket         = "mykthw-tfstate" # Replace with your S3 bucket name
+    key            = "proxmox/minio-vm.tfstate" # Dynamically set path based on environment
     region         = "us-east-1"                        # Replace with your S3 bucket region
-    encrypt        = true
+    endpoint       = "https://s3.minio.bevz.net"
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_metadata_api_check     = true
+    use_path_style            = true # Изменено с force_path_style
+
     # dynamodb_table = "my-terraform-lock-table" # Optional: for state locking
   }
 }

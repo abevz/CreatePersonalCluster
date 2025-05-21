@@ -1,0 +1,10 @@
+---
+- name: Reset Kubernetes on ALL Nodes in the Current Context
+  hosts: all # This will target all hosts in the current inventory
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Include reset_node tasks
+      ansible.builtin.include_tasks: pb_reset_node.yml
+      # No need to pass target_node here as we want it to run on `inventory_hostname` for each host in `all`

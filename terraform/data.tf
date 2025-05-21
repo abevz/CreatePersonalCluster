@@ -3,5 +3,5 @@ data "sops_file" "secrets" {
 }
 
 data "local_file" "ssh_public_key" {
-  filename = "kubekey.pub" # Ensure this file is in the root of your terraform project
+  filename = "id_rsa.pub" # Ensure this file is in the root of your terraform project
 }

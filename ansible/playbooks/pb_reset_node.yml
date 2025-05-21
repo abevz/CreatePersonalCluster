@@ -1,0 +1,57 @@
+---
+- name: Reset Kubernetes on a Specific Node
+  hosts: "{{ target_node | default('all') }}" # Expect target_node to be passed to limit execution
+  become: yes
+  gather_facts: yes # To get ansible_os_family if needed for specific reset commands
+
+  tasks:
+    - name: Display reset intention
+      ansible.builtin.debug:
+        msg: "Attempting to reset Kubernetes (kubeadm reset) on node: {{ inventory_hostname }}"
+
+    - name: Stop kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+      ignore_errors: yes # Kubelet might not be running or installed
+
+    - name: Run kubeadm reset
+      ansible.builtin.command:
+        cmd: "kubeadm reset -f" # -f for non-interactive
+      register: kubeadm_reset_result
+      changed_when: kubeadm_reset_result.rc == 0
+      failed_when: kubeadm_reset_result.rc != 0 and "command not found" not in kubeadm_reset_result.stderr # Fail if reset fails, unless kubeadm isn't there
+
+    - name: Display kubeadm reset result
+      ansible.builtin.debug:
+        var: kubeadm_reset_result.stdout_lines
+      when: kubeadm_reset_result.stdout != ""
+
+    - name: Clean up CNI configurations (example for common CNI files)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d
+      ignore_errors: yes
+
+    - name: Clean up other Kubernetes related directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/kubelet
+        - /var/lib/etcd # If it was a control plane node and etcd was local
+        - $HOME/.kube # For the user ansible connects as (e.g. root)
+        - /etc/kubernetes
+      ignore_errors: yes
+
+    - name: Restart containerd (or other runtime) to clear state if necessary
+      ansible.builtin.systemd:
+        name: containerd # Assuming containerd, adjust if using another runtime
+        state: restarted
+      ignore_errors: yes
+
+    - name: Final message
+      ansible.builtin.debug:
+        msg: "Kubernetes reset attempted on {{ inventory_hostname }}. Check output for details."

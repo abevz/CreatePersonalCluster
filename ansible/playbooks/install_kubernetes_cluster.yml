@@ -1,0 +1,246 @@
+---
+# Playbook to install Kubernetes (kubeadm, kubelet, kubectl) and container runtime (containerd)
+# Handles Debian/Ubuntu (Debian family) and Rocky Linux (RedHat family)
+
+- name: Bootstrap Kubernetes Cluster Prerequisites and Components
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    kubernetes_version: "1.29" # Specify desired Kubernetes version (e.g., 1.29, 1.28)
+    # For Debian/Ubuntu, package versions will be like {{ kubernetes_version }}.x-xx
+    # For RedHat, package versions will be like {{ kubernetes_version }}.x-x
+
+  pre_tasks:
+    - name: Update package cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      changed_when: false
+
+    - name: Ensure EPEL repo is enabled (Rocky Linux)
+      ansible.builtin.dnf:
+        name: epel-release
+        state: present
+      when: ansible_os_family == "RedHat" # Applies to Rocky
+      register: epel_install
+      failed_when: "epel_install.rc != 0 and 'Nothing to do' not in epel_install.stdout and 'already installed' not in epel_install.msg"
+
+
+    - name: Disable swap
+      ansible.builtin.command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+      changed_when: false
+
+    - name: Remove swap from fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+        replace: '# \1'
+      when: ansible_swaptotal_mb > 0
+
+  tasks:
+    - name: Load kernel modules for container runtime and networking
+      ansible.builtin.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist kernel modules
+      ansible.builtin.copy:
+        dest: "/etc/modules-load.d/k8s.conf"
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: Configure sysctl for Kubernetes networking
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/99-kubernetes-cri.conf
+        state: present
+        reload: yes
+      loop:
+        - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { key: 'net.ipv4.ip_forward', value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+
+    # Section: Install Containerd (Container Runtime)
+    - name: Install Containerd prerequisites (common)
+      ansible.builtin.package:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    - name: Add Docker GPG key (Debian/Ubuntu)
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+        force: true
+      when: ansible_os_family == "Debian"
+
+    - name: Add Docker repository (Debian/Ubuntu)
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ ansible_architecture if ansible_architecture == 'aarch64' else 'amd64' }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+      when: ansible_os_family == "Debian"
+      notify: Update apt cache
+
+    - name: Add Docker CE repository (Rocky Linux)
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+      when: ansible_os_family == "RedHat" # Applies to Rocky
+
+    - name: Install containerd.io (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: containerd.io
+        state: present
+        update_cache: yes # Run after adding repo
+      when: ansible_os_family == "Debian"
+
+    - name: Install containerd.io (Rocky Linux)
+      ansible.builtin.dnf:
+        name: containerd.io
+        state: present
+        # disable_gpg_check: yes # May be needed if GPG key for docker repo is not automatically trusted
+      when: ansible_os_family == "RedHat"
+
+    - name: Create containerd config directory
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: Generate default containerd configuration and enable SystemdCgroup
+      ansible.builtin.shell: |
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml # Avoid re-running if config exists
+      changed_when: true # Assume it changes if it runs
+      notify: Restart containerd
+
+    - name: Enable and start containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+        enabled: yes
+
+    # Section: Install Kubernetes components (kubelet, kubeadm, kubectl)
+    - name: Add Kubernetes GPG key (Debian/Ubuntu)
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
+        dest: "/etc/apt/keyrings/kubernetes-apt-keyring.asc"
+        mode: '0644'
+      when: ansible_os_family == "Debian"
+
+    - name: Add Kubernetes apt repository (Debian/Ubuntu)
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
+        state: present
+        filename: kubernetes
+      when: ansible_os_family == "Debian"
+      notify: Update apt cache
+
+    - name: Add Kubernetes yum repository (Rocky Linux)
+      ansible.builtin.yum_repository:
+        name: kubernetes
+        description: Kubernetes
+        baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/"
+        gpgkey:
+          - "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/repodata/repomd.xml.key"
+          # Old key, might be needed for some setups, or use the one from repomd.xml.key
+          # - https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+        gpgcheck: yes
+        repo_gpgcheck: yes # Check metadata signature
+        enabled: yes
+        # exclude: kubelet kubeadm kubectl cri-tools kubernetes-cni # If you want to install specific versions later
+      when: ansible_os_family == "RedHat"
+
+    - name: Install kubelet, kubeadm, kubectl (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - kubelet #={{ kubernetes_version }}.*-00
+          - kubeadm #={{ kubernetes_version }}.*-00
+          - kubectl #={{ kubernetes_version }}.*-00
+        state: present
+        update_cache: yes # After adding repo
+      when: ansible_os_family == "Debian"
+      notify: Hold Kubernetes packages Debian
+
+    - name: Install kubelet, kubeadm, kubectl (Rocky Linux)
+      ansible.builtin.dnf:
+        name:
+          - kubelet # kubelet-{{ kubernetes_version }}
+          - kubeadm # kubeadm-{{ kubernetes_version }}
+          - kubectl # kubectl-{{ kubernetes_version }}
+        state: present
+        disable_excludes: kubernetes # Important if you used exclude in repo definition
+      when: ansible_os_family == "RedHat"
+      notify: Hold Kubernetes packages RedHat
+
+
+    - name: Set SELinux to permissive (Rocky Linux - for simplicity, consider proper policies for production)
+      ansible.builtin.selinux:
+        policy: targeted
+        state: permissive
+      when: ansible_os_family == "RedHat" and ansible_selinux.status == "enabled"
+
+    - name: Enable and start kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+        # daemon_reload: yes # May be needed if unit files changed
+
+    - name: Placeholder - Indicate K8s setup would start here
+      ansible.builtin.debug:
+        msg: "Kubernetes components (kubelet, kubeadm, kubectl) and containerd installed on {{ inventory_hostname }} ({{ ansible_os_family }}). Ready for kubeadm init/join."
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Hold Kubernetes packages Debian
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+      when: ansible_os_family == "Debian"
+
+    - name: Hold Kubernetes packages RedHat
+      ansible.builtin.command: "dnf versionlock add {{ item }}" # or yum versionlock add
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+      when: ansible_os_family == "RedHat"
+      # Note: dnf versionlock plugin might need to be installed: dnf install 'dnf-command(versionlock)'
+
+# Further steps would involve:
+# 1. On control plane node(s):
+#    - kubeadm init ...
+#    - Setup kubectl for admin user
+#    - Install CNI (e.g., Calico, Flannel)
+# 2. On worker node(s):
+#    - kubeadm join ... (using token from control plane)
