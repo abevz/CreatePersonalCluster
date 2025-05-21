@@ -87,7 +87,7 @@ resource "proxmox_virtual_environment_vm" "k8s" {
   name      = "${each.value.role}${local.release_letter}${each.value.index}${var.vm_domain}" # Имя ВМ теперь использует local.release_letter, который зависит от workspace
   node_name = var.pm_node
 
-  tags = ["k8s", local.effective_os_type, terraform.workspace] # Теги теперь используют local.effective_os_type и terraform.workspace
+  tags = ["k8s", local.effective_os_type] # Удален terraform.workspace для избежания дублирования
 
   clone {
     vm_id = local.template_vm_ids[local.effective_os_type] # ID шаблона теперь зависит от workspace
@@ -126,8 +126,10 @@ resource "proxmox_virtual_environment_vm" "k8s" {
     user_data_file_id = proxmox_virtual_environment_file.user_data_cloud_config[each.key].id # Ссылка на конкретный cloud-init файл
   }
 
-  # started = true # To start the VM after creation, common practice.
-  # Consider making 'started' configurable per environment or VM role
+  started = var.vm_started # Control VM state (running/stopped)
+  timeout_start_vm = 600 # Example: 600 seconds (10 minutes)
+
+  # Consider making \'started\' configurable per environment or VM role
 }
 
 

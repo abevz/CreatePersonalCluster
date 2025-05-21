@@ -146,13 +146,15 @@ run_ansible_playbook() {
 }
 
 display_usage() {
-  echo "Usage: cpc <command> [options]" # Changed from ccr
+  echo "Usage: cpc <command> [options]"
   echo ""
   echo "Commands:"
-  echo "  setup-cpc                      Initial setup for cpc command." # Changed from ccr
-  echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)." # Changed from Terraform
-  echo "  update-pihole                  Update Pi-hole DNS records with VM IPs from current context."
-  echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context." # Updated
+  echo "  setup-cpc                      Initial setup for cpc command."
+  echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)."
+  echo "  update-pihole <action>         Manage Pi-hole DNS records. Action can be 'add' or 'unregister-dns'." # Changed
+  echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
+  echo "  start-vms                      Start all VMs in the current context."
+  echo "  stop-vms                       Stop all VMs in the current context."
   echo ""
   echo "  add-nodes                      (Not Implemented) Add new worker nodes to the cluster."
   echo "  drain-node <node_name>         Drain workloads from a node."
@@ -305,15 +307,22 @@ case "$COMMAND" in
     ;;
 
   update-pihole)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc update-pihole" # Changed from ccr
-      echo "Updates Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs."
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ -z "$1" ]]; then # Added check for missing argument
+      echo "Usage: cpc update-pihole <action>" # Changed from ccr
+      echo "Manages Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs." # Changed
+      echo "Actions: 'add', 'unregister-dns'." # Added
       echo "Requires 'sops' and 'curl' to be installed, and secrets.sops.yaml to be configured."
       exit 0
     fi
-    echo -e "${BLUE}Updating Pi-hole DNS records...${ENDCOLOR}"
+    action="$1" # Removed local
+    if [[ "$action" != "add" && "$action" != "unregister-dns" ]]; then
+      echo -e "${RED}Error: Invalid action '$action' for update-pihole. Must be 'add' or 'unregister-dns'.${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    echo -e "${BLUE}Updating Pi-hole DNS records (action: $action)...${ENDCOLOR}" # Changed
     # Assuming the script is in REPO_PATH/scripts/
-    "$REPO_PATH/scripts/add_pihole_dns.py" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform"
+    "$REPO_PATH/scripts/add_pihole_dns.py" --action "$action" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform" # Added --action
     if [ $? -ne 0 ]; then
       echo -e "${RED}Error updating Pi-hole DNS records.${ENDCOLOR}" >&2
       exit 1
@@ -396,6 +405,46 @@ case "$COMMAND" in
       exit 1
     fi
     echo -e "${GREEN}'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'.${ENDCOLOR}"
+    ;;
+
+  start-vms)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc start-vms"
+      echo "Starts all VMs in the current cpc context by running 'tofu apply' with vm_started=true."
+      exit 0
+    fi
+    current_ctx=$(get_current_cluster_context)
+    echo -e "${BLUE}Starting VMs for context '$current_ctx'...${ENDCOLOR}"
+    # Call the deploy command internally, passing the appropriate tofu apply options
+    # Ensure that the deploy command is in the PATH or use its full path if cpc is not installed globally
+    # Assuming cpc is in PATH for simplicity here. If not, use: "$0" deploy ...
+    "$0" deploy apply -var="vm_started=true" -auto-approve
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}Error starting VMs for context '$current_ctx'.${ENDCOLOR}" >&2
+      exit 1
+    fi
+    echo -e "${GREEN}VMs in context '$current_ctx' should now be starting.${ENDCOLOR}"
+    ;;
+
+  stop-vms)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc stop-vms"
+      echo "Stops all VMs in the current cpc context by running 'tofu apply' with vm_started=false."
+      exit 0
+    fi
+    current_ctx=$(get_current_cluster_context)
+    echo -e "${BLUE}Stopping VMs for context '$current_ctx'...${ENDCOLOR}"
+    read -r -p "Are you sure you want to stop all VMs in context '$current_ctx'? [y/N] " response
+    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+      echo "Operation cancelled."
+      exit 0
+    fi
+    "$0" deploy apply -var="vm_started=false" -auto-approve
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}Error stopping VMs for context '$current_ctx'.${ENDCOLOR}" >&2
+      exit 1
+    fi
+    echo -e "${GREEN}VMs in context '$current_ctx' should now be stopping.${ENDCOLOR}"
     ;;
 
   "" | "-h" | "--help" | "help")

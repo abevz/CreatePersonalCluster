@@ -11,7 +11,7 @@ terraform {
     skip_credentials_validation = true
     skip_region_validation      = true
     skip_metadata_api_check     = true
-    use_path_style            = true # Изменено с force_path_style
+    use_path_style            = true # Changed from force_path_style
 
     # dynamodb_table = "my-terraform-lock-table" # Optional: for state locking
   }

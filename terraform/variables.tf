@@ -38,19 +38,74 @@ variable "vm_memory_dedicated" {
 }
 
 variable "vm_disk_size" {
+  description = "Disk size in GB for each VM."
   type        = number
-  description = "Disk size in GB for VMs."
   default     = 20
 }
 
-variable "vm_user" {
-  type        = string
-  description = "Username to create on the VMs via cloud-init."
-  default     = "abevz" # Вы можете изменить значение по умолчанию или убрать его, чтобы оно всегда запрашивалось
+variable "vm_started" {
+  description = "Defines the power state of the VMs. true for running, false for stopped."
+  type        = bool
+  default     = true
 }
 
-variable "vm_domain" {
+variable "proxmox_user" {
+  description = "Proxmox user name"
   type        = string
-  description = "Domain for VMs."
-  default     = ".bevz.net" # Вы можете изменить значение по умолчанию или убрать его, чтобы оно всегда запрашивалось
+  default     = "abevz" # You can change the default value or remove it so that it is always requested
+}
+
+variable "domain_name" {
+  description = "Domain name for the VMs"
+  type        = string
+  default     = ".bevz.net" # You can change the default value or remove it so that it is always requested
+}
+
+variable "vm_template_name" {
+  description = "Name of the VM template to use for cloning."
+  type        = string
+  default     = "ubuntu-template" # Change this to your template name
+}
+
+variable "vm_id_start" {
+  description = "ID to start assigning VM IDs from."
+  type        = number
+  default     = 100
+}
+
+variable "vm_count" {
+  description = "Number of VMs to create."
+  type        = number
+  default     = 1
+}
+
+variable "ssh_keys" {
+  description = "SSH keys for VM access."
+  type        = list(string)
+  default     = []
+}
+
+variable "cloud_init_user_data" {
+  description = "Cloud-init user data for VM customization."
+  type        = string
+  default     = <<EOF
+#cloud-config
+users:
+  - name: abe
+    ssh-authorized-keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEArD1...
+EOF
+}
+
+variable "cloud_init_network_config" {
+  description = "Cloud-init network configuration."
+  type        = string
+  default     = <<EOF
+#cloud-config
+network:
+  version: 2
+  ethernets:
+    ens18:
+      dhcp4: true
+EOF
 }
