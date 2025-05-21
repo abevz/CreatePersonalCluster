@@ -18,17 +18,17 @@ module "app_service" {
 }
 */
 
-# Используем locals для определения карты узлов, чтобы избежать дублирования
+# Using locals to define the node map to avoid duplication
 locals {
   k8s_nodes = {
     controlplane = { role  = "c", index = 1 }
     worker0      = { role  = "w", index = 1 }
     worker1      = { role  = "w", index = 2 }
-    # Если вы изменяете карту для VMs, обновите ее здесь
+    # If you change the map for VMs, update it here
   }
 }
 
-# Ресурс для отслеживания изменений в содержимом cloud-init
+# Resource to track changes in cloud-init content
 resource "terraform_data" "cloud_init_content" {
   for_each = local.k8s_nodes
 
@@ -66,31 +66,31 @@ resource "terraform_data" "cloud_init_content" {
 
 # Cloud-init configuration file resource
 resource "proxmox_virtual_environment_file" "user_data_cloud_config" {
-  for_each = local.k8s_nodes # Используем ту же карту, что и для VMs
+  for_each = local.k8s_nodes # Using the same map as for VMs
 
   content_type = "snippets"
   datastore_id = "local"    # Consider making this configurable via a variable
   node_name    = var.pm_node # Using pm_node, ensure this node has the 'local' datastore for snippets
 
   source_raw {
-    # Берем данные из terraform_data, чтобы обеспечить зависимость
+    # Taking data from terraform_data to ensure dependency
     data      = terraform_data.cloud_init_content[each.key].input
-    # Имя файла теперь включает хеш содержимого, чтобы обеспечить уникальность при изменениях
+    # Filename now includes a content hash to ensure uniqueness upon changes
     file_name = "cloud-config-${terraform.workspace}-${each.key}-${substr(sha256(terraform_data.cloud_init_content[each.key].input), 0, 8)}.yaml"
   }
 }
 
 # Kubernetes VM resources
 resource "proxmox_virtual_environment_vm" "k8s" {
-  for_each = local.k8s_nodes # Используем карту из locals
+  for_each = local.k8s_nodes # Using the map from locals
 
-  name      = "${each.value.role}${local.release_letter}${each.value.index}${var.vm_domain}" # Имя ВМ теперь использует local.release_letter, который зависит от workspace
+  name      = "${each.value.role}${local.release_letter}${each.value.index}${var.vm_domain}" # VM name now uses local.release_letter, which depends on the workspace
   node_name = var.pm_node
 
-  tags = ["k8s", local.effective_os_type] # Удален terraform.workspace для избежания дублирования
+  tags = ["k8s", local.effective_os_type] # Removed terraform.workspace to avoid duplication
 
   clone {
-    vm_id = local.template_vm_ids[local.effective_os_type] # ID шаблона теперь зависит от workspace
+    vm_id = local.template_vm_ids[local.effective_os_type] # Template ID now depends on the workspace
     full  = true // Ensures a full clone.
   }
 
@@ -123,7 +123,7 @@ resource "proxmox_virtual_environment_vm" "k8s" {
         address = "dhcp"
       }
     }
-    user_data_file_id = proxmox_virtual_environment_file.user_data_cloud_config[each.key].id # Ссылка на конкретный cloud-init файл
+    user_data_file_id = proxmox_virtual_environment_file.user_data_cloud_config[each.key].id # Link to the specific cloud-init file
   }
 
   started = var.vm_started # Control VM state (running/stopped)
