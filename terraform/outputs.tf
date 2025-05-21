@@ -1,55 +1,51 @@
 output "controlplane_vm_id" {
-  value       = proxmox_vm_kvm.controlplane[0].id
-  description = "Control plane VM ID"
+  description = "ID of the control plane VM"
+  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-controlplane-1"].vm_id
 }
 
 output "worker0_vm_id" {
-  value       = proxmox_vm_kvm.workers[0].id
-  description = "Worker0 VM ID"
+  description = "ID of the worker0 VM"
+  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-worker0-1"].vm_id
 }
 
 output "worker1_vm_id" {
-  value       = proxmox_vm_kvm.workers[1].id
-  description = "Worker1 VM ID"
+  description = "ID of the worker1 VM"
+  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-worker1-2"].vm_id
 }
 
-output "vm_ipv4_addresses" {
-  description = "A map of VM names to their primary IPv4 addresses."
+output "k8s_node_ips" {
+  description = "IP addresses of the Kubernetes nodes"
   value = {
-    for k, vm in proxmox_virtual_environment_vm.k8s : k => try(
-      [
-        for ip_addr in flatten(vm.ipv4_addresses) : ip_addr
-        if ip_addr != null &&
-           ip_addr != "127.0.0.1" && # Exclude localhost
-           !startswith(ip_addr, "169.254.") && # Exclude link-local/APIPA
-           !startswith(ip_addr, "fe80:") # Exclude IPv6 link-local (defensive)
-      ][0], # Attempt to get the first valid IP
-      null  # Return null if no valid IP is found or list is empty
-    )
-  }
-  # If a VM is stopped, its IP addresses are not available.
-  # The output should reflect this, e.g., by returning null or an empty string for that VM.
-  # This helps prevent errors in consuming modules or scripts.
-  # Ensure this output is resilient to VMs being in a stopped state.
-}
-
-output "all_vm_ids" {
-  description = "IDs of all created K8s VMs, mapped by their keys."
-  value = {
-    for k, vm in proxmox_virtual_environment_vm.k8s : k => vm.id
+    for k, v in proxmox_virtual_environment_vm.node : k => v.ipv4_addresses[0]
   }
 }
 
-output "cloud_init_file_id" {
-  description = "The ID of the generated cloud-init user data file in Proxmox."
-  value       = {
-    for k, file in proxmox_virtual_environment_file.user_data_cloud_config : k => file.id
+output "k8s_node_names" {
+  description = "Hostnames of the Kubernetes nodes"
+  value = {
+    for k, v in proxmox_virtual_environment_vm.node : k => v.name
   }
 }
 
-output "vm_fqdns" {
-  description = "FQDNs of the K8s VMs, mapped by their keys."
+output "sops_data_keys_check" {
+  description = "Check if specific keys exist in SOPS data (sensitive)"
+  value       = sensitive({
+    has_vm_ssh_keys = can(data.sops_file.secrets.data["vm_ssh_keys"])
+    has_vm_password = can(data.sops_file.secrets.data["vm_password"])
+    all_sops_data_keys = keys(data.sops_file.secrets.data)
+  })
+  sensitive = true
+}
+
+output "debug_sops_processing_info" {
+  description = "Detailed debugging information for SOPS data processing in locals.tf"
+  value       = local.debug_sops_info
+  sensitive   = true # Mark sensitive as it might reveal structure or presence of keys
+}
+
+output "final_nodes_machine_types" {
+  description = "Machine types configured for each node in final_nodes_map"
   value = {
-    for k, vm_config in local.k8s_nodes : k => "${vm_config.role}${local.release_letter}${vm_config.index}${var.vm_domain}"
+    for k, v in local.final_nodes_map : k => v.machine
   }
 }
