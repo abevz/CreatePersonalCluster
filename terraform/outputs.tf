@@ -40,3 +40,10 @@ output "cloud_init_file_id" {
     for k, file in proxmox_virtual_environment_file.user_data_cloud_config : k => file.id
   }
 }
+
+output "vm_fqdns" {
+  description = "FQDNs of the K8s VMs, mapped by their keys."
+  value = {
+    for k, vm_config in local.k8s_nodes : k => "${vm_config.role}${local.release_letter}${vm_config.index}${var.vm_domain}"
+  }
+}
