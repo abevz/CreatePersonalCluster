@@ -1,30 +1,36 @@
+output "controlplane_vm_id" {
+  value       = proxmox_vm_kvm.controlplane[0].id
+  description = "Control plane VM ID"
+}
+
+output "worker0_vm_id" {
+  value       = proxmox_vm_kvm.workers[0].id
+  description = "Worker0 VM ID"
+}
+
+output "worker1_vm_id" {
+  value       = proxmox_vm_kvm.workers[1].id
+  description = "Worker1 VM ID"
+}
+
 output "vm_ipv4_addresses" {
-  description = "Primary non-loopback IPv4 addresses of the K8s VMs, attempting direct indexing."
+  description = "A map of VM names to their primary IPv4 addresses."
   value = {
-    for k, vm in proxmox_virtual_environment_vm.k8s : k => (
-      # Attempting to use the structure vm.ipv4_addresses[1][0]
-      # This assumes the second interface list (index 1) is the primary NIC
-      # and its first IP (index 0) is the one we want.
-      # It also checks if the IP is not loopback or IPv6 link-local.
-      can(vm.ipv4_addresses[1][0]) && vm.ipv4_addresses[1][0] != "127.0.0.1" && !startswith(vm.ipv4_addresses[1][0], "fe80:") ? vm.ipv4_addresses[1][0] : null
+    for k, vm in proxmox_virtual_environment_vm.k8s : k => try(
+      [
+        for ip_addr in flatten(vm.ipv4_addresses) : ip_addr
+        if ip_addr != null &&
+           ip_addr != "127.0.0.1" && # Exclude localhost
+           !startswith(ip_addr, "169.254.") && # Exclude link-local/APIPA
+           !startswith(ip_addr, "fe80:") # Exclude IPv6 link-local (defensive)
+      ][0], # Attempt to get the first valid IP
+      null  # Return null if no valid IP is found or list is empty
     )
   }
-  sensitive = false # IPs are often needed, adjust if sensitive in your context
-}
-
-output "controlplane_id" {
-  description = "ID виртуальной машины controlplane"
-  value       = proxmox_virtual_environment_vm.k8s["controlplane"].id
-}
-
-output "worker0_id" {
-  description = "ID виртуальной машины worker0"
-  value       = proxmox_virtual_environment_vm.k8s["worker0"].id
-}
-
-output "worker1_id" {
-  description = "ID виртуальной машины worker1"
-  value       = proxmox_virtual_environment_vm.k8s["worker1"].id
+  # If a VM is stopped, its IP addresses are not available.
+  # The output should reflect this, e.g., by returning null or an empty string for that VM.
+  # This helps prevent errors in consuming modules or scripts.
+  # Ensure this output is resilient to VMs being in a stopped state.
 }
 
 output "all_vm_ids" {
