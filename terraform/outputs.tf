@@ -16,7 +16,14 @@ output "worker1_vm_id" {
 output "k8s_node_ips" {
   description = "IP addresses of the Kubernetes nodes"
   value = {
-    for k, v in proxmox_virtual_environment_vm.node : k => v.ipv4_addresses[0]
+    for k, v in proxmox_virtual_environment_vm.node : k => (
+      # Flatten the list of lists of IPs, then remove 127.0.0.1
+      # Convert the resulting set to a list to allow indexing
+      # If the list is not empty, take the first IP, otherwise null
+      length(tolist(setsubtract(flatten(v.ipv4_addresses), ["127.0.0.1"]))) > 0 ?
+      tolist(setsubtract(flatten(v.ipv4_addresses), ["127.0.0.1"]))[0] :
+      null
+    )
   }
 }
 
