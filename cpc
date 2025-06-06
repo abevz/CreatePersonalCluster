@@ -22,6 +22,7 @@ check_required_commands() {
     fi
   done
 }
+export -f check_required_commands
 
 get_repo_path() {
   if [ -f "$REPO_PATH_FILE" ]; then
@@ -31,6 +32,7 @@ get_repo_path() {
     exit 1
   fi
 }
+export -f get_repo_path
 
 get_current_cluster_context() {
   if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
@@ -63,22 +65,210 @@ get_current_cluster_context() {
     exit 1
   fi
 }
+export -f get_current_cluster_context
 
-# Source environment variables if cpc.env exists
+# Load sensitive data from secrets.sops.yaml using SOPS
+load_secrets() {
+  local repo_root
+  repo_root=$(get_repo_path)
+  local secrets_file="$repo_root/terraform/secrets.sops.yaml"
+  
+  if [ ! -f "$secrets_file" ]; then
+    echo -e "${RED}Error: secrets.sops.yaml not found at $secrets_file${ENDCOLOR}" >&2
+    exit 1
+  fi
+  
+  # Check if sops is installed
+  if ! command -v sops &> /dev/null; then
+    echo -e "${RED}Error: 'sops' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
+    exit 1
+  fi
+  
+  # Check if jq is installed
+  if ! command -v jq &> /dev/null; then
+    echo -e "${RED}Error: 'jq' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
+    exit 1
+  fi
+  
+  echo -e "${BLUE}Loading secrets from secrets.sops.yaml...${ENDCOLOR}"
+  
+  # Export sensitive variables from SOPS
+  export PROXMOX_HOST
+  export PROXMOX_USERNAME  
+  export PROXMOX_PASSWORD
+  export VM_USERNAME
+  export VM_PASSWORD
+  export VM_SSH_KEY
+  
+  # Load secrets using sops, convert to JSON, then parse with jq
+  local secrets_json
+  secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)")
+  
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}Error: Failed to decrypt secrets.sops.yaml. Check your SOPS configuration.${ENDCOLOR}" >&2
+    exit 1
+  fi
+  
+  # Parse secrets from JSON
+  PROXMOX_HOST=$(echo "$secrets_json" | jq -r '.virtual_environment_endpoint' | sed 's|https://||' | sed 's|:8006/api2/json||')
+  PROXMOX_USERNAME=$(echo "$secrets_json" | jq -r '.proxmox_username')
+  PROXMOX_PASSWORD=$(echo "$secrets_json" | jq -r '.virtual_environment_password')
+  VM_USERNAME=$(echo "$secrets_json" | jq -r '.vm_username')
+  VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
+  VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
+  
+  # Verify that all required secrets were loaded
+  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ]; then
+    echo -e "${RED}Error: Failed to load one or more required secrets from secrets.sops.yaml${ENDCOLOR}" >&2
+    echo -e "${BLUE}Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY${ENDCOLOR}" >&2
+    exit 1
+  fi
+  
+  echo -e "${BLUE}Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_USERNAME: $VM_USERNAME)${ENDCOLOR}"
+}
+export -f load_secrets
+
+# Source environment variables if cpc.env exists and set workspace-specific variables
 load_env_vars() {
   local repo_root
   repo_root=$(get_repo_path)
+  
+  # Load secrets first
+  load_secrets
+  
   if [ -f "$repo_root/$CPC_ENV_FILE" ]; then # Changed from CCR_ENV_FILE
     # shellcheck source=cpc.env
     set -a # Automatically export all variables
     source "$repo_root/$CPC_ENV_FILE" # Changed from CCR_ENV_FILE
     set +a # Stop automatically exporting
     echo -e "${BLUE}Loaded environment variables from $CPC_ENV_FILE${ENDCOLOR}" # Changed from CCR_ENV_FILE
+    
+    # Set workspace-specific template variables based on current context
+    # This function should only be called after REPO_PATH is set
+    if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
+      local current_workspace
+      current_workspace=$(cat "$CLUSTER_CONTEXT_FILE")
+      set_workspace_template_vars "$current_workspace"
+    fi
   else
     echo -e "${YELLOW}Warning: $CPC_ENV_FILE not found in repository root. Some default versions might be used by playbooks.${ENDCOLOR}" # Changed from CCR_ENV_FILE
   fi
 }
+export -f load_env_vars
 
+# Set workspace-specific template variables based on current workspace
+set_workspace_template_vars() {
+  local workspace="$1"
+  
+  if [ -z "$workspace" ]; then
+    echo -e "${YELLOW}Warning: No workspace specified for setting template variables${ENDCOLOR}"
+    return 1
+  fi
+  
+  # Convert workspace to uppercase for variable name construction
+  local workspace_upper
+  workspace_upper=$(echo "$workspace" | tr '[:lower:]' '[:upper:]')
+  
+  # Set template variables based on workspace
+  case "$workspace" in
+    debian)
+      # Template VM configuration
+      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_DEBIAN:-902}"
+      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_DEBIAN:-tpl-debian-12-k8s}"
+      export IMAGE_NAME="${IMAGE_NAME_DEBIAN:-debian-12-genericcloud-amd64.qcow2}"
+      export IMAGE_LINK="${IMAGE_LINK_DEBIAN:-https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2}"
+      # Kubernetes component versions for debian
+      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_DEBIAN:-1.30}"
+      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_DEBIAN:-v1.30}"
+      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_DEBIAN:-v1.30}"
+      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_DEBIAN:-1.30.0}"
+      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_DEBIAN:-v1.5.0}"
+      export CALICO_VERSION="${CALICO_VERSION_DEBIAN:-v3.27.0}"
+      export METALLB_VERSION="${METALLB_VERSION_DEBIAN:-v0.14.5}"
+      export COREDNS_VERSION="${COREDNS_VERSION_DEBIAN:-v1.11.1}"
+      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_DEBIAN:-v0.7.1}"
+      export ETCD_VERSION="${ETCD_VERSION_DEBIAN:-v3.5.12}"
+      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_DEBIAN:-v0.1.9}"
+      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_DEBIAN:-v0.0.26}"
+      ;;
+    ubuntu)
+      # Template VM configuration
+      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_UBUNTU:-912}"
+      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_UBUNTU:-tpl-ubuntu-2404-k8s}"
+      export IMAGE_NAME="${IMAGE_NAME_UBUNTU:-ubuntu-24.04-server-cloudimg-amd64.img}"
+      export IMAGE_LINK="${IMAGE_LINK_UBUNTU:-https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img}"
+      # Kubernetes component versions for ubuntu
+      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_UBUNTU:-1.31}"
+      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_UBUNTU:-v1.31}"
+      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_UBUNTU:-v1.31}"
+      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_UBUNTU:-1.31.0}"
+      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_UBUNTU:-v1.5.0}"
+      export CALICO_VERSION="${CALICO_VERSION_UBUNTU:-v3.28.0}"
+      export METALLB_VERSION="${METALLB_VERSION_UBUNTU:-v0.14.8}"
+      export COREDNS_VERSION="${COREDNS_VERSION_UBUNTU:-v1.11.3}"
+      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_UBUNTU:-v0.7.2}"
+      export ETCD_VERSION="${ETCD_VERSION_UBUNTU:-v3.5.15}"
+      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_UBUNTU:-v0.1.9}"
+      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_UBUNTU:-v0.0.28}"
+      ;;
+    rocky)
+      # Template VM configuration
+      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_ROCKY:-931}"
+      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_ROCKY:-tpl-rocky-9-k8s}"
+      export IMAGE_NAME="${IMAGE_NAME_ROCKY:-Rocky-9-GenericCloud.latest.x86_64.qcow2}"
+      export IMAGE_LINK="${IMAGE_LINK_ROCKY:-https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2}"
+      # Kubernetes component versions for rocky
+      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_ROCKY:-1.29}"
+      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_ROCKY:-v1.29}"
+      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_ROCKY:-v1.29}"
+      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_ROCKY:-1.29.6}"
+      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_ROCKY:-v1.4.0}"
+      export CALICO_VERSION="${CALICO_VERSION_ROCKY:-v3.26.4}"
+      export METALLB_VERSION="${METALLB_VERSION_ROCKY:-v0.14.3}"
+      export COREDNS_VERSION="${COREDNS_VERSION_ROCKY:-v1.10.1}"
+      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_ROCKY:-v0.6.4}"
+      export ETCD_VERSION="${ETCD_VERSION_ROCKY:-v3.5.10}"
+      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_ROCKY:-v0.1.8}"
+      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_ROCKY:-v0.0.24}"
+      ;;
+    suse)
+      # Template VM configuration
+      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_SUSE:-941}"
+      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_SUSE:-tpl-suse-15-k8s}"
+      export IMAGE_NAME="${IMAGE_NAME_SUSE:-openSUSE-Leap-15.6-Minimal-VM.x86_64-15.6.0-Cloud-Build16.32.qcow2}"
+      export IMAGE_LINK="${IMAGE_LINK_SUSE:-https://download.opensuse.org/distribution/leap/15.6/appliances/openSUSE-Leap-15.6-Minimal-VM.x86_64-15.6.0-Cloud-Build16.32.qcow2}"
+      # Kubernetes component versions for suse
+      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_SUSE:-1.30}"
+      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_SUSE:-v1.30}"
+      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_SUSE:-v1.30}"
+      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_SUSE:-1.30.8}"
+      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_SUSE:-v1.4.0}"
+      export CALICO_VERSION="${CALICO_VERSION_SUSE:-v3.27.0}"
+      export METALLB_VERSION="${METALLB_VERSION_SUSE:-v0.14.5}"
+      export COREDNS_VERSION="${COREDNS_VERSION_SUSE:-v1.11.1}"
+      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_SUSE:-v0.7.1}"
+      export ETCD_VERSION="${ETCD_VERSION_SUSE:-v3.5.12}"
+      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_SUSE:-v0.1.9}"
+      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_SUSE:-v0.0.26}"
+      ;;
+    *)
+      echo -e "${YELLOW}Warning: Unknown workspace '$workspace'. Template variables not set.${ENDCOLOR}"
+      echo -e "${BLUE}Available workspaces: debian, ubuntu, rocky, suse${ENDCOLOR}"
+      return 1
+      ;;
+  esac
+  
+  echo -e "${BLUE}Set template variables for workspace '$workspace':${ENDCOLOR}"
+  echo -e "${BLUE}  TEMPLATE_VM_ID: $TEMPLATE_VM_ID${ENDCOLOR}"
+  echo -e "${BLUE}  TEMPLATE_VM_NAME: $TEMPLATE_VM_NAME${ENDCOLOR}"
+  echo -e "${BLUE}  IMAGE_NAME: $IMAGE_NAME${ENDCOLOR}"
+  echo -e "${BLUE}  KUBERNETES_VERSION: $KUBERNETES_MEDIUM_VERSION${ENDCOLOR}"
+  echo -e "${BLUE}  CALICO_VERSION: $CALICO_VERSION${ENDCOLOR}"
+  echo -e "${BLUE}  METALLB_VERSION: $METALLB_VERSION${ENDCOLOR}"
+  echo -e "${BLUE}  COREDNS_VERSION: $COREDNS_VERSION${ENDCOLOR}"
+  echo -e "${BLUE}  ETCD_VERSION: $ETCD_VERSION${ENDCOLOR}"
+}
+export -f set_workspace_template_vars
 
 run_ansible_playbook() {
   local playbook_name="$1"
@@ -144,6 +334,7 @@ run_ansible_playbook() {
   fi
   return 0
 }
+export -f run_ansible_playbook
 
 display_usage() {
   echo "Usage: cpc <command> [options]"
@@ -151,6 +342,7 @@ display_usage() {
   echo "Commands:"
   echo "  setup-cpc                      Initial setup for cpc command."
   echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)."
+  echo "  template             Creates a VM template for Kubernetes"
   echo "  update-pihole <action>         Manage Pi-hole DNS records. Action can be 'add' or 'unregister-dns'." # Changed
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
   echo "  start-vms                      Start all VMs in the current context."
@@ -223,6 +415,26 @@ case "$COMMAND" in
       tofu workspace new "$cluster_name" # Changed from terraform
     fi
     popd > /dev/null || exit 1
+    
+    # Update template variables for the new workspace context
+    set_workspace_template_vars "$cluster_name"
+    ;;
+  
+  template)
+    # Ensure workspace-specific template variables are set
+    current_ctx=$(get_current_cluster_context)
+    set_workspace_template_vars "$current_ctx"
+    
+    # Check if essential template variables are set
+    if [ -z "$TEMPLATE_VM_ID" ] || [ -z "$TEMPLATE_VM_NAME" ] || [ -z "$IMAGE_NAME" ] || [ -z "$IMAGE_LINK" ]; then
+      echo -e "${RED}Error: Template variables not properly set for workspace '$current_ctx'.${ENDCOLOR}"
+      echo -e "${RED}Please ensure cpc.env contains the required TEMPLATE_VM_ID_*, TEMPLATE_VM_NAME_*, IMAGE_NAME_*, IMAGE_LINK_* variables.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    (
+      "$REPO_PATH/scripts/template.sh" "$@"
+    )
     ;;
 
   add-nodes)
@@ -346,7 +558,7 @@ case "$COMMAND" in
       echo "Examples:"
       echo "  cpc deploy plan                                 # Plan changes for the current context"
       echo "  cpc deploy apply -auto-approve                  # Apply changes with auto-approval"
-      echo "  cpc deploy output vm_ipv4_addresses             # Get a specific output"
+      echo "  cpc deploy output k8s_node_ips             # Get a specific output"
       echo "  cpc deploy validate                             # Validate the configuration"
       echo "  cpc deploy destroy -target=proxmox_vm_kvm.vm[0] # Destroy a specific resource"
       echo "  cpc deploy workspace list                       # List Tofu workspaces"

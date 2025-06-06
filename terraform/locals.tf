@@ -8,6 +8,7 @@ locals {
     "debian" = var.pm_template_debian_id
     "ubuntu" = var.pm_template_ubuntu_id
     "rocky"  = var.pm_template_rocky_id
+    "suse"   = var.pm_template_suse_id
     # Add other OS types and their corresponding template IDs as needed
   }
 
@@ -17,6 +18,7 @@ locals {
     "debian" = "d"
     "ubuntu" = "u"
     "rocky"  = "r"
+    "suse"   = "s"
     # Ensure there are entries here for all your expected workspace names
   }
 
@@ -30,6 +32,7 @@ locals {
     "debian" = 200
     "ubuntu" = 300
     "rocky"  = 400
+    "suse"   = 500
   }
 
   # Base configuration for node types, replacing old local.k8s_nodes
@@ -52,7 +55,7 @@ locals {
       role              = definition.role # For cloud-init fqdn
 
       pve_nodes         = [var.pm_node]
-      machine           = "q35" # Changed from i440fx to q35
+      machine           = null # Set to null to use Proxmox default
       cores             = var.vm_cpu_cores
       sockets           = 1
       cpu_type          = "kvm64"

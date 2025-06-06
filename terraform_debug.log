@@ -1,0 +1,1309 @@
+[1;34mLoading secrets from secrets.sops.yaml...[0m
+[1;34mSuccessfully loaded secrets (PROXMOX_HOST: homelab.bevz.net, VM_USERNAME: abevz)[0m
+[1;34mLoaded environment variables from cpc.env[0m
+[1;34mSet template variables for workspace 'suse':[0m
+[1;34m  TEMPLATE_VM_ID: 9440[0m
+[1;34m  TEMPLATE_VM_NAME: tpl-suse-15-k8s[0m
+[1;34m  IMAGE_NAME: openSUSE-Leap-15.6-Minimal-VM.x86_64-15.6.0-Cloud-Build16.32.qcow2[0m
+[1;34m  KUBERNETES_VERSION: v1.30[0m
+[1;34m  CALICO_VERSION: v3.27.0[0m
+[1;34m  METALLB_VERSION: v0.14.5[0m
+[1;34m  COREDNS_VERSION: v1.11.1[0m
+[1;34m  ETCD_VERSION: v3.5.12[0m
+[1;34mPreparing to run 'tofu plan -out=plan.out' for context 'suse' in /home/abevz/Projects/kubernetes/my-kthw/terraform...[0m
+2025-06-06T17:10:39.686+0200 [INFO]  OpenTofu version: 1.9.1
+2025-06-06T17:10:39.686+0200 [DEBUG] using github.com/hashicorp/go-tfe v1.36.0
+2025-06-06T17:10:39.686+0200 [DEBUG] using github.com/opentofu/hcl/v2 v2.0.0-20240814143621-8048794c5c52
+2025-06-06T17:10:39.686+0200 [DEBUG] using github.com/hashicorp/terraform-svchost v0.1.1
+2025-06-06T17:10:39.686+0200 [DEBUG] using github.com/zclconf/go-cty v1.14.4
+2025-06-06T17:10:39.686+0200 [INFO]  Go runtime version: go1.24.2
+2025-06-06T17:10:39.686+0200 [INFO]  CLI args: []string{"tofu", "workspace", "show"}
+2025-06-06T17:10:39.686+0200 [DEBUG] Attempting to open CLI config file: /home/abevz/.tofurc
+2025-06-06T17:10:39.686+0200 [DEBUG] File doesn't exist, but doesn't need to. Ignoring.
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory terraform.d/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /home/abevz/.terraform.d/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /home/abevz/.local/share/terraform/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /home/abevz/.local/share/flatpak/exports/share/terraform/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /var/lib/flatpak/exports/share/terraform/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /usr/local/share/terraform/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /usr/share/terraform/plugins
+2025-06-06T17:10:39.686+0200 [DEBUG] ignoring non-existing provider search directory /var/lib/snapd/desktop/terraform/plugins
+2025-06-06T17:10:39.687+0200 [DEBUG] Found the config directory: /home/abevz/.terraform.d
+2025-06-06T17:10:39.687+0200 [INFO]  CLI command args: []string{"workspace", "show"}
+[0;33mWarning: No specific tfvars file found for context 'suse' at /home/abevz/Projects/kubernetes/my-kthw/terraform/environments/suse.tfvars. Using defaults if applicable.[0m
+[1;34mExecuting: tofu plan -out=plan.out[0m
+2025-06-06T17:10:39.720+0200 [INFO]  OpenTofu version: 1.9.1
+2025-06-06T17:10:39.720+0200 [DEBUG] using github.com/hashicorp/go-tfe v1.36.0
+2025-06-06T17:10:39.720+0200 [DEBUG] using github.com/opentofu/hcl/v2 v2.0.0-20240814143621-8048794c5c52
+2025-06-06T17:10:39.720+0200 [DEBUG] using github.com/hashicorp/terraform-svchost v0.1.1
+2025-06-06T17:10:39.720+0200 [DEBUG] using github.com/zclconf/go-cty v1.14.4
+2025-06-06T17:10:39.720+0200 [INFO]  Go runtime version: go1.24.2
+2025-06-06T17:10:39.721+0200 [INFO]  CLI args: []string{"tofu", "plan", "-out=plan.out"}
+2025-06-06T17:10:39.721+0200 [DEBUG] Attempting to open CLI config file: /home/abevz/.tofurc
+2025-06-06T17:10:39.721+0200 [DEBUG] File doesn't exist, but doesn't need to. Ignoring.
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory terraform.d/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /home/abevz/.terraform.d/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /home/abevz/.local/share/terraform/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /home/abevz/.local/share/flatpak/exports/share/terraform/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /var/lib/flatpak/exports/share/terraform/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /usr/local/share/terraform/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /usr/share/terraform/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] ignoring non-existing provider search directory /var/lib/snapd/desktop/terraform/plugins
+2025-06-06T17:10:39.721+0200 [DEBUG] Found the config directory: /home/abevz/.terraform.d
+2025-06-06T17:10:39.721+0200 [INFO]  CLI command args: []string{"plan", "-out=plan.out"}
+2025-06-06T17:10:39.731+0200 [DEBUG] backend-s3.aws-base: Resolving credentials provider
+2025-06-06T17:10:39.731+0200 [DEBUG] backend-s3.aws-base: Using authentication parameters: tf_aws.auth_fields=["access key", "secret key"] tf_aws.auth_fields.source=provider
+2025-06-06T17:10:39.731+0200 [DEBUG] backend-s3.aws-base: Loading configuration
+2025-06-06T17:10:39.731+0200 [DEBUG] backend-s3.aws-base: Retrieving credentials
+2025-06-06T17:10:39.732+0200 [INFO]  backend-s3.aws-base: Retrieved credentials: tf_aws.credentials_source=StaticCredentials
+2025-06-06T17:10:39.732+0200 [DEBUG] backend-s3.aws-base: Loading configuration
+2025-06-06T17:10:39.953+0200 [DEBUG] checking for provisioner in "."
+2025-06-06T17:10:39.957+0200 [DEBUG] checking for provisioner in "/usr/bin"
+2025-06-06T17:10:39.958+0200 [INFO]  backend/local: starting Plan operation
+2025-06-06T17:10:39.959+0200 [DEBUG] backend-s3: HTTP Request Sent: aws.region=us-east-1 aws.s3.bucket=mykthw-tfstate rpc.method=ListObjectsV2 rpc.service=S3 rpc.system=aws-api tf_aws.sdk=aws-sdk-go-v2 tf_aws.signing_region="" http.request.header.amz_sdk_request="attempt=1; max=5" http.request.header.x_amz_content_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 http.request.header.amz_sdk_invocation_id=ac7e2036-c5dd-419c-b293-7d570e56036c http.request.body="" http.method=GET http.url="https://s3.minio.bevz.net/mykthw-tfstate?list-type=2&max-keys=1000&prefix=env%3A%2F" net.peer.name=s3.minio.bevz.net http.user_agent="aws-sdk-go-v2/1.23.2 os/linux lang/go#1.24.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.46.0 APN/1.0 OpenTofu/1.9.1" http.request.header.authorization="AWS4-HMAC-SHA256 Credential=minioadmin/20250606/us-east-1/s3/aws4_request, SignedHeaders=accept-encoding;amz-sdk-invocation-id;host;x-amz-content-sha256;x-amz-date, Signature=*****" http.request.header.accept_encoding=identity http.request.header.x_amz_date=20250606T151039Z
+2025-06-06T17:10:40.004+0200 [DEBUG] backend-s3: HTTP Response Received: aws.region=us-east-1 aws.s3.bucket=mykthw-tfstate rpc.method=ListObjectsV2 rpc.service=S3 rpc.system=aws-api tf_aws.sdk=aws-sdk-go-v2 tf_aws.signing_region="" http.duration=45 http.response.header.content_type=application/xml http.response.header.x_content_type_options=["nosniff", "nosniff"] http.response.header.vary=["Accept-Encoding", "Origin", "Accept-Encoding"] http.response.header.strict_transport_security=["max-age=31536000; includeSubDomains", "max-age=15552001; includeSubDomains; preload"] http.response_content_length=1163 http.response.header.date="Fri, 06 Jun 2025 15:10:40 GMT" http.response.header.x_ratelimit_remaining=1069 http.response.header.accept_ranges=bytes http.response.header.x_ratelimit_limit=1069 http.response.header.server=nginx/1.23.4 http.status_code=200 http.response.header.x_frame_options=DENY http.response.header.content_security_policy="frame-ancestors 'self';" http.response.header.x_xss_protection=["1; mode=block", "1; mode=block"] http.response.header.x_amz_id_2=dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8
+  http.response.body=
+  | <?xml version="1.0" encoding="UTF-8"?>
+  | <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>mykthw-tfstate</Name><Prefix>env:/</Prefix><KeyCount>4</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>env:/debian/proxmox/minio-vm.tfstate</Key><LastModified>2025-06-05T19:56:06.509Z</LastModified><ETag>&#34;5e65392cb64fe14cc9da09f0aa257fd9&#34;</ETag><Size>245</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>env:/rocky/proxmox/minio-vm.tfstate</Key><LastModified>2025-06-05T19:55:23.456Z</LastModified><ETag>&#34;584ba7900678e8d8046ecbe36bf9fcb4&#34;</ETag><Size>245</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>env:/suse/proxmox/minio-vm.tfstate</Key><LastModified>2025-06-06T15:06:10.992Z</LastModified><ETag>&#34;734dbca3b6d74467d660b2c343814545&#34;</ETag><Size>244</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>env:/ubuntu/proxmox/minio-vm.tfstate</Key><LastModified>2025-06-05T19:55:46.572Z</LastModified><ETag>&#34;855f992d4b8057ab4bf84aa7b1b06e08&#34;</ETag><Size>245</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>
+   http.response.header.x_amz_request_id=18467CB92AAB3B8F
+2025-06-06T17:10:40.005+0200 [DEBUG] backend-s3: HTTP Request Sent: aws.region=us-east-1 aws.s3.bucket=mykthw-tfstate aws.s3.key=env:/suse/proxmox/minio-vm.tfstate rpc.method=HeadObject rpc.service=S3 rpc.system=aws-api tf_aws.sdk=aws-sdk-go-v2 tf_aws.signing_region="" http.url="https://s3.minio.bevz.net/mykthw-tfstate/env%3A/suse/proxmox/minio-vm.tfstate" http.user_agent="aws-sdk-go-v2/1.23.2 os/linux lang/go#1.24.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.46.0 APN/1.0 OpenTofu/1.9.1" http.request.header.authorization="AWS4-HMAC-SHA256 Credential=minioadmin/20250606/us-east-1/s3/aws4_request, SignedHeaders=accept-encoding;amz-sdk-invocation-id;host;x-amz-content-sha256;x-amz-date, Signature=*****" http.request.header.amz_sdk_request="attempt=1; max=5" http.request.header.amz_sdk_invocation_id=b9f4ed41-e654-4d4e-b56f-6e9185eea39f http.request.header.accept_encoding=identity http.request.header.x_amz_content_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 http.request.header.x_amz_date=20250606T151040Z http.method=HEAD net.peer.name=s3.minio.bevz.net http.request.body=""
+2025-06-06T17:10:40.013+0200 [DEBUG] backend-s3: HTTP Response Received: aws.region=us-east-1 aws.s3.bucket=mykthw-tfstate aws.s3.key=env:/suse/proxmox/minio-vm.tfstate rpc.method=HeadObject rpc.service=S3 rpc.system=aws-api tf_aws.sdk=aws-sdk-go-v2 tf_aws.signing_region="" http.response.header.x_ratelimit_remaining=1069 http.response.body="" http.status_code=200 http.response.header.date="Fri, 06 Jun 2025 15:10:40 GMT" http.response.header.content_security_policy="frame-ancestors 'self';" http.response.header.x_content_type_options=["nosniff", "nosniff"] http.response.header.x_amz_request_id=18467CB92B2B672F http.response.header.x_xss_protection=["1; mode=block", "1; mode=block"] http.response.header.strict_transport_security=["max-age=31536000; includeSubDomains", "max-age=15552001; includeSubDomains; preload"] http.response.header.etag="\"734dbca3b6d74467d660b2c343814545\"" http.response.header.x_ratelimit_limit=1069 http.response.header.vary=["Origin", "Accept-Encoding"] http.response.header.x_amz_id_2=dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8 http.response.header.accept_ranges=bytes http.response.header.server=nginx/1.23.4 http.duration=7 http.response_content_length=244 http.response.header.x_frame_options=DENY http.response.header.content_type=application/json http.response.header.last_modified="Fri, 06 Jun 2025 15:06:10 GMT"
+2025-06-06T17:10:40.013+0200 [DEBUG] backend-s3: HTTP Request Sent: aws.region=us-east-1 aws.s3.bucket=mykthw-tfstate aws.s3.key=env:/suse/proxmox/minio-vm.tfstate rpc.method=GetObject rpc.service=S3 rpc.system=aws-api tf_aws.sdk=aws-sdk-go-v2 tf_aws.signing_region="" http.user_agent="aws-sdk-go-v2/1.23.2 os/linux lang/go#1.24.2 md/GOOS#linux md/GOARCH#amd64 api/s3#1.46.0 APN/1.0 OpenTofu/1.9.1" http.request.header.authorization="AWS4-HMAC-SHA256 Credential=minioadmin/20250606/us-east-1/s3/aws4_request, SignedHeaders=accept-encoding;amz-sdk-invocation-id;host;x-amz-content-sha256;x-amz-date, Signature=*****" http.request.header.amz_sdk_request="attempt=1; max=5" http.request.header.amz_sdk_invocation_id=87f6c762-adfc-4b80-8f9a-128a59c8288f http.request.header.accept_encoding=identity net.peer.name=s3.minio.bevz.net http.request.header.x_amz_content_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 http.request.header.x_amz_date=20250606T151040Z http.request.body="" http.method=GET http.url="https://s3.minio.bevz.net/mykthw-tfstate/env%3A/suse/proxmox/minio-vm.tfstate?x-id=GetObject"
+2025-06-06T17:10:40.017+0200 [DEBUG] backend-s3: HTTP Response Received: aws.region=us-east-1 aws.s3.bucket=mykthw-tfstate aws.s3.key=env:/suse/proxmox/minio-vm.tfstate rpc.method=GetObject rpc.service=S3 rpc.system=aws-api tf_aws.sdk=aws-sdk-go-v2 tf_aws.signing_region="" http.response.header.vary=["Origin", "Accept-Encoding"] http.response.header.last_modified="Fri, 06 Jun 2025 15:06:10 GMT" http.response.body="[Redacted: 244 bytes, Type: application/json]" http.duration=3 http.response.header.etag="\"734dbca3b6d74467d660b2c343814545\"" http.response.header.accept_ranges=bytes http.response.header.x_xss_protection=["1; mode=block", "1; mode=block"] http.response.header.x_frame_options=DENY http.response.header.x_amz_id_2=dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8 http.response.header.strict_transport_security=["max-age=31536000; includeSubDomains", "max-age=15552001; includeSubDomains; preload"] http.response.header.content_security_policy="frame-ancestors 'self';" http.response.header.x_amz_request_id=18467CB92B70EE91 http.response.header.server=nginx/1.23.4 http.response.header.x_ratelimit_limit=1069 http.status_code=200 http.response.header.x_content_type_options=["nosniff", "nosniff"] http.response.header.content_type=application/json http.response_content_length=244 http.response.header.x_ratelimit_remaining=1069 http.response.header.date="Fri, 06 Jun 2025 15:10:40 GMT"
+2025-06-06T17:10:40.019+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.019+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.036+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 args=[".terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1"]
+2025-06-06T17:10:40.036+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 pid=143367
+2025-06-06T17:10:40.036+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1
+2025-06-06T17:10:40.041+0200 [INFO]  provider.terraform-provider-proxmox_v0.78.1: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.041+0200"
+2025-06-06T17:10:40.056+0200 [DEBUG] provider.terraform-provider-proxmox_v0.78.1: plugin address: address=/tmp/plugin1676231110 network=unix timestamp="2025-06-06T17:10:40.056+0200"
+2025-06-06T17:10:40.056+0200 [DEBUG] provider: using plugin: version=6
+2025-06-06T17:10:40.085+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.086+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 pid=143367
+2025-06-06T17:10:40.086+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.087+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.087+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.092+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 args=[".terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0"]
+2025-06-06T17:10:40.093+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 pid=143380
+2025-06-06T17:10:40.093+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0
+2025-06-06T17:10:40.103+0200 [INFO]  provider.terraform-provider-sops_v1.2.0: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.103+0200"
+2025-06-06T17:10:40.117+0200 [DEBUG] provider.terraform-provider-sops_v1.2.0: plugin address: address=/tmp/plugin2390277895 network=unix timestamp="2025-06-06T17:10:40.117+0200"
+2025-06-06T17:10:40.117+0200 [DEBUG] provider: using plugin: version=6
+2025-06-06T17:10:40.131+0200 [DEBUG] No provider meta schema returned
+2025-06-06T17:10:40.132+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.133+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 pid=143380
+2025-06-06T17:10:40.133+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.133+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.133+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.139+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/hashicorp/local/2.5.3/linux_amd64/terraform-provider-local args=[".terraform/providers/registry.opentofu.org/hashicorp/local/2.5.3/linux_amd64/terraform-provider-local"]
+2025-06-06T17:10:40.140+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/hashicorp/local/2.5.3/linux_amd64/terraform-provider-local pid=143391
+2025-06-06T17:10:40.140+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/hashicorp/local/2.5.3/linux_amd64/terraform-provider-local
+2025-06-06T17:10:40.143+0200 [INFO]  provider.terraform-provider-local: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.143+0200"
+2025-06-06T17:10:40.158+0200 [DEBUG] provider: using plugin: version=5
+2025-06-06T17:10:40.158+0200 [DEBUG] provider.terraform-provider-local: plugin address: address=/tmp/plugin399258304 network=unix timestamp="2025-06-06T17:10:40.158+0200"
+2025-06-06T17:10:40.173+0200 [DEBUG] No provider meta schema returned
+2025-06-06T17:10:40.174+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.175+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/hashicorp/local/2.5.3/linux_amd64/terraform-provider-local pid=143391
+2025-06-06T17:10:40.175+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.175+0200 [DEBUG] Building and walking validate graph
+2025-06-06T17:10:40.176+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_vm.node" (*tofu.NodeValidatableResource) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.176+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_pool.workspace_pool" (*tofu.NodeValidatableResource) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.176+0200 [DEBUG] ProviderTransformer: "data.sops_file.secrets" (*tofu.NodeValidatableResource) needs provider["registry.opentofu.org/carlpett/sops"]
+2025-06-06T17:10:40.178+0200 [DEBUG] pruning unused provider["registry.opentofu.org/hashicorp/local"]
+2025-06-06T17:10:40.179+0200 [DEBUG] ReferenceTransformer: "var.pm_template_ubuntu_id" references: []
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.vm_domain" references: []
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.vm_user (expand, reference)" references: []
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.network_bridge" references: []
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.pm_template_suse_id" references: []
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.proxmox_user" references: []
+2025-06-06T17:10:40.180+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "output.worker1_vm_id (expand)" references: [proxmox_virtual_environment_vm.node]
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.vm_cpu_cores (expand, reference)" references: []
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "local.clone_proxmox_node (expand)" references: [var.pm_node (expand, reference) var.pm_node]
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "output.final_nodes_machine_types (expand)" references: [local.final_nodes_map (expand)]
+2025-06-06T17:10:40.180+0200 [DEBUG] ReferenceTransformer: "var.vm_memory_dedicated" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/carlpett/sops\"]" references: []
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.environment (expand)" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.pm_template_debian_id" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.pm_template_debian_id (expand, reference)" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.vm_started" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.vm_started (expand, reference)" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.vm_id_start" references: []
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.effective_os_type (expand)" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.actual_sops_password_from_lookup (expand)" references: [local.sops_data (expand)]
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.actual_sops_ssh_keys_from_lookup (expand)" references: [local.sops_data (expand)]
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.current_template_vm_id (expand)" references: [local.template_vm_ids (expand) local.effective_os_type (expand)]
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.pm_node (expand, reference)" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.sops_vm_password (expand)" references: [local.processed_sops_password (expand)]
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "var.pm_node" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "local.vm_id_ranges (expand)" references: []
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "output.k8s_node_names (expand)" references: [proxmox_virtual_environment_vm.node]
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.181+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node" references: [proxmox_virtual_environment_pool.workspace_pool local.final_nodes_map (expand) local.release_letter (expand) var.vm_domain var.vm_domain (expand, reference) var.vm_started var.vm_started (expand, reference) proxmox_virtual_environment_pool.workspace_pool local.clone_proxmox_node (expand) local.current_template_vm_id (expand) local.sops_vm_ssh_keys (expand) local.sops_vm_password (expand) var.vm_user (expand, reference) var.vm_user]
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.storage (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_template_name (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.network_bridge (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.pm_template_suse_id (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.release_letters_map (expand)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.sops_data (expand)" references: [data.sops_file.secrets]
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.processed_sops_password (expand)" references: [local.actual_sops_password_from_lookup (expand) local.actual_sops_password_from_lookup (expand)]
+2025-06-06T17:10:40.182+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.182+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_pool.workspace_pool" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.pm_template_ubuntu_id (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_count (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_memory_dedicated (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.debug_sops_info (expand)" references: [local.sops_data (expand) local.sops_data (expand) local.sops_data (expand) local.sops_data (expand) local.sops_data (expand)]
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.final_nodes_map (expand)" references: [local.node_definitions (expand) local.effective_os_type (expand) local.effective_os_type (expand) local.vm_id_ranges (expand) local.effective_os_type (expand) var.pm_node (expand, reference) var.pm_node var.vm_cpu_cores (expand, reference) var.vm_cpu_cores var.vm_memory_dedicated var.vm_memory_dedicated (expand, reference) var.vm_disk_size var.vm_disk_size (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.vm_domain var.vm_domain (expand, reference) var.network_bridge var.network_bridge (expand, reference)]
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.processed_sops_ssh_keys (expand)" references: [local.actual_sops_ssh_keys_from_lookup (expand) local.actual_sops_ssh_keys_from_lookup (expand) local.actual_sops_ssh_keys_from_lookup (expand)]
+2025-06-06T17:10:40.182+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.182+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "check.valid_workspace (expand)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "local.node_definitions (expand)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "data.sops_file.secrets" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_count" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_cpu_cores" references: []
+2025-06-06T17:10:40.182+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "output.worker0_vm_id (expand)" references: [proxmox_virtual_environment_vm.node]
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "output.sops_data_keys_check (expand)" references: [data.sops_file.secrets data.sops_file.secrets data.sops_file.secrets]
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.pm_template_rocky_id" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_user" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.vm_template_name" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.pm_template_rocky_id (expand, reference)" references: []
+2025-06-06T17:10:40.182+0200 [DEBUG] ReferenceTransformer: "var.proxmox_user (expand, reference)" references: []
+2025-06-06T17:10:40.183+0200 [DEBUG] ReferenceTransformer: "output.debug_node_map_keys (expand)" references: [local.final_nodes_map (expand)]
+2025-06-06T17:10:40.183+0200 [DEBUG] ReferenceTransformer: "var.dns_servers" references: []
+2025-06-06T17:10:40.183+0200 [DEBUG] ReferenceTransformer: "var.storage" references: []
+2025-06-06T17:10:40.183+0200 [DEBUG] ReferenceTransformer: "var.vm_domain (expand, reference)" references: []
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "var.vm_disk_size" references: []
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "local.template_vm_ids (expand)" references: [var.pm_template_debian_id var.pm_template_debian_id (expand, reference) var.pm_template_ubuntu_id var.pm_template_ubuntu_id (expand, reference) var.pm_template_rocky_id var.pm_template_rocky_id (expand, reference) var.pm_template_suse_id var.pm_template_suse_id (expand, reference)]
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "var.dns_servers (expand, reference)" references: []
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "var.vm_id_start (expand, reference)" references: []
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "local.sops_vm_ssh_keys (expand)" references: [local.processed_sops_ssh_keys (expand)]
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "local.release_letter (expand)" references: [local.release_letters_map (expand) local.effective_os_type (expand)]
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "output.debug_node_configs (expand)" references: [local.final_nodes_map (expand) local.current_template_vm_id (expand) local.clone_proxmox_node (expand) local.release_letter (expand) var.vm_domain var.vm_domain (expand, reference)]
+2025-06-06T17:10:40.184+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "output.debug_template_info (expand)" references: [local.current_template_vm_id (expand) local.clone_proxmox_node (expand) local.template_vm_ids (expand)]
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "output.k8s_node_ips (expand)" references: [proxmox_virtual_environment_vm.node]
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "var.vm_disk_size (expand, reference)" references: []
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "output.debug_sops_processing_info (expand)" references: [local.debug_sops_info (expand)]
+2025-06-06T17:10:40.184+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "output.controlplane_vm_id (expand)" references: [proxmox_virtual_environment_vm.node]
+2025-06-06T17:10:40.184+0200 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/bpg/proxmox\"]" references: [data.sops_file.secrets data.sops_file.secrets data.sops_file.secrets]
+2025-06-06T17:10:40.190+0200 [DEBUG] Starting graph walk: walkValidate
+2025-06-06T17:10:40.191+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.191+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.244+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 args=[".terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0"]
+2025-06-06T17:10:40.247+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 pid=143400
+2025-06-06T17:10:40.249+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0
+2025-06-06T17:10:40.269+0200 [INFO]  provider.terraform-provider-sops_v1.2.0: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.267+0200"
+2025-06-06T17:10:40.296+0200 [DEBUG] provider.terraform-provider-sops_v1.2.0: plugin address: address=/tmp/plugin423716085 network=unix timestamp="2025-06-06T17:10:40.296+0200"
+2025-06-06T17:10:40.296+0200 [DEBUG] provider: using plugin: version=6
+2025-06-06T17:10:40.320+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.322+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 pid=143400
+2025-06-06T17:10:40.322+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.322+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.322+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.333+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 args=[".terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1"]
+2025-06-06T17:10:40.333+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 pid=143416
+2025-06-06T17:10:40.333+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1
+2025-06-06T17:10:40.344+0200 [INFO]  provider.terraform-provider-proxmox_v0.78.1: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.343+0200"
+2025-06-06T17:10:40.363+0200 [DEBUG] provider: using plugin: version=6
+2025-06-06T17:10:40.363+0200 [DEBUG] provider.terraform-provider-proxmox_v0.78.1: plugin address: address=/tmp/plugin1224078643 network=unix timestamp="2025-06-06T17:10:40.363+0200"
+2025-06-06T17:10:40.390+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.392+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 pid=143416
+2025-06-06T17:10:40.392+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.392+0200 [INFO]  backend/local: plan calling Plan
+2025-06-06T17:10:40.392+0200 [DEBUG] Building and walking plan graph for NormalMode
+2025-06-06T17:10:40.394+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_vm.node (expand)" (*tofu.nodeExpandPlannableResource) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.394+0200 [DEBUG] ProviderTransformer: "data.sops_file.secrets (expand)" (*tofu.nodeExpandPlannableResource) needs provider["registry.opentofu.org/carlpett/sops"]
+2025-06-06T17:10:40.394+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_pool.workspace_pool (expand)" (*tofu.nodeExpandPlannableResource) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.396+0200 [DEBUG] pruning unused provider["registry.opentofu.org/hashicorp/local"]
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.network_bridge (expand, reference)" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.sops_data (expand)" references: [data.sops_file.secrets (expand)]
+2025-06-06T17:10:40.397+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.397+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "check.valid_workspace (expand)" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.dns_servers (expand, reference)" references: []
+2025-06-06T17:10:40.397+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.effective_os_type (expand)" references: []
+2025-06-06T17:10:40.397+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.environment (expand)" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.pm_template_rocky_id (expand, reference)" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.pm_template_ubuntu_id (expand, reference)" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.vm_disk_size" references: []
+2025-06-06T17:10:40.397+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "output.controlplane_vm_id (expand)" references: [proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.pm_template_rocky_id" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.pm_template_suse_id" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.vm_domain" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.sops_vm_ssh_keys (expand)" references: [local.processed_sops_ssh_keys (expand)]
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.sops_vm_password (expand)" references: [local.processed_sops_password (expand)]
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.vm_id_ranges (expand)" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.proxmox_user" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "var.pm_template_ubuntu_id" references: []
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.clone_proxmox_node (expand)" references: [var.pm_node var.pm_node (expand, reference)]
+2025-06-06T17:10:40.397+0200 [DEBUG] ReferenceTransformer: "local.debug_sops_info (expand)" references: [local.sops_data (expand) local.sops_data (expand) local.sops_data (expand) local.sops_data (expand) local.sops_data (expand)]
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "local.final_nodes_map (expand)" references: [local.node_definitions (expand) local.effective_os_type (expand) local.effective_os_type (expand) local.vm_id_ranges (expand) local.effective_os_type (expand) var.pm_node var.pm_node (expand, reference) var.vm_cpu_cores var.vm_cpu_cores (expand, reference) var.vm_memory_dedicated (expand, reference) var.vm_memory_dedicated var.vm_disk_size var.vm_disk_size (expand, reference) var.dns_servers (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.dns_servers var.vm_domain var.vm_domain (expand, reference) var.network_bridge (expand, reference) var.network_bridge]
+2025-06-06T17:10:40.398+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "output.worker1_vm_id (expand)" references: [proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.398+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "output.worker0_vm_id (expand)" references: [proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.vm_cpu_cores" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.proxmox_user (expand, reference)" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.vm_user" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.pm_node" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "local.processed_sops_ssh_keys (expand)" references: [local.actual_sops_ssh_keys_from_lookup (expand) local.actual_sops_ssh_keys_from_lookup (expand) local.actual_sops_ssh_keys_from_lookup (expand)]
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.pm_template_debian_id" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.vm_memory_dedicated (expand, reference)" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.storage" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "output.k8s_node_ips (expand)" references: [proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "output.k8s_node_names (expand)" references: [proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.vm_memory_dedicated" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.vm_cpu_cores (expand, reference)" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "local.release_letters_map (expand)" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/carlpett/sops\"]" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.vm_id_start (expand, reference)" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.pm_node (expand, reference)" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "var.network_bridge" references: []
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "local.actual_sops_ssh_keys_from_lookup (expand)" references: [local.sops_data (expand)]
+2025-06-06T17:10:40.398+0200 [DEBUG] ReferenceTransformer: "local.current_template_vm_id (expand)" references: [local.template_vm_ids (expand) local.effective_os_type (expand)]
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node (expand)" references: [proxmox_virtual_environment_pool.workspace_pool (expand) local.final_nodes_map (expand) proxmox_virtual_environment_pool.workspace_pool (expand) local.release_letter (expand) var.vm_domain var.vm_domain (expand, reference) var.vm_started var.vm_started (expand, reference) local.clone_proxmox_node (expand) local.current_template_vm_id (expand) local.sops_vm_password (expand) var.vm_user var.vm_user (expand, reference) local.sops_vm_ssh_keys (expand)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "data.sops_file.secrets (expand)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.pm_template_suse_id (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.storage (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_template_name" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_template_name (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_started" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.pm_template_debian_id (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "output.debug_sops_processing_info (expand)" references: [local.debug_sops_info (expand)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "output.debug_node_map_keys (expand)" references: [local.final_nodes_map (expand)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "check.valid_workspace (report)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_started (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_disk_size (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "local.actual_sops_password_from_lookup (expand)" references: [local.sops_data (expand)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "output.sops_data_keys_check (expand)" references: [data.sops_file.secrets (expand) data.sops_file.secrets (expand) data.sops_file.secrets (expand)]
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_pool.workspace_pool (expand)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "local.processed_sops_password (expand)" references: [local.actual_sops_password_from_lookup (expand) local.actual_sops_password_from_lookup (expand)]
+2025-06-06T17:10:40.399+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "output.debug_template_info (expand)" references: [local.current_template_vm_id (expand) local.clone_proxmox_node (expand) local.template_vm_ids (expand)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "output.debug_node_configs (expand)" references: [local.final_nodes_map (expand) local.current_template_vm_id (expand) local.clone_proxmox_node (expand) local.release_letter (expand) var.vm_domain var.vm_domain (expand, reference)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_user (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_count" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "local.node_definitions (expand)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/bpg/proxmox\"]" references: [data.sops_file.secrets (expand) data.sops_file.secrets (expand) data.sops_file.secrets (expand)]
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_id_start" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.dns_servers" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "var.vm_count (expand, reference)" references: []
+2025-06-06T17:10:40.399+0200 [DEBUG] ReferenceTransformer: "local.template_vm_ids (expand)" references: [var.pm_template_debian_id var.pm_template_debian_id (expand, reference) var.pm_template_ubuntu_id (expand, reference) var.pm_template_ubuntu_id var.pm_template_rocky_id (expand, reference) var.pm_template_rocky_id var.pm_template_suse_id var.pm_template_suse_id (expand, reference)]
+2025-06-06T17:10:40.400+0200 [DEBUG] ReferenceTransformer: "local.release_letter (expand)" references: [local.release_letters_map (expand) local.effective_os_type (expand)]
+2025-06-06T17:10:40.400+0200 [DEBUG] ReferenceTransformer: "output.final_nodes_machine_types (expand)" references: [local.final_nodes_map (expand)]
+2025-06-06T17:10:40.400+0200 [DEBUG] ReferenceTransformer: "var.vm_domain (expand, reference)" references: []
+2025-06-06T17:10:40.405+0200 [DEBUG] Starting graph walk: walkPlan
+2025-06-06T17:10:40.406+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.406+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.416+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 args=[".terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0"]
+2025-06-06T17:10:40.416+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 pid=143430
+2025-06-06T17:10:40.416+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0
+2025-06-06T17:10:40.428+0200 [INFO]  provider.terraform-provider-sops_v1.2.0: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.428+0200"
+2025-06-06T17:10:40.443+0200 [DEBUG] provider.terraform-provider-sops_v1.2.0: plugin address: address=/tmp/plugin1363950551 network=unix timestamp="2025-06-06T17:10:40.443+0200"
+2025-06-06T17:10:40.443+0200 [DEBUG] provider: using plugin: version=6
+2025-06-06T17:10:40.459+0200 [DEBUG] Resource instance state not found for node "data.sops_file.secrets", instance data.sops_file.secrets
+2025-06-06T17:10:40.459+0200 [DEBUG] ReferenceTransformer: "data.sops_file.secrets" references: []
+[0m[1mdata.sops_file.secrets: Reading...[0m[0m
+2025-06-06T17:10:40.464+0200 [DEBUG] provider.terraform-provider-sops_v1.2.0: Value switched to prior value due to semantic equality logic: tf_rpc=ReadDataSource @caller=/home/runner/go/pkg/mod/github.com/hashicorp/terraform-plugin-framework@v1.7.0/internal/fwschemadata/value_semantic_equality.go:87 @module=sdk.framework tf_attribute_path=source_file tf_data_source_type=sops_file tf_provider_addr=registry.terraform.io/carlpett/sops tf_req_id=13d4dc85-377e-34fc-1d47-31029ab54799 timestamp="2025-06-06T17:10:40.464+0200"
+[0m[1mdata.sops_file.secrets: Read complete after 0s [id=-][0m
+2025-06-06T17:10:40.465+0200 [DEBUG] created provider logger: level=debug
+2025-06-06T17:10:40.466+0200 [INFO]  provider: configuring client automatic mTLS
+2025-06-06T17:10:40.477+0200 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 args=[".terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1"]
+2025-06-06T17:10:40.477+0200 [DEBUG] provider: plugin started: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 pid=143441
+2025-06-06T17:10:40.477+0200 [DEBUG] provider: waiting for RPC address: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1
+2025-06-06T17:10:40.484+0200 [INFO]  provider.terraform-provider-proxmox_v0.78.1: configuring server automatic mTLS: timestamp="2025-06-06T17:10:40.484+0200"
+2025-06-06T17:10:40.501+0200 [DEBUG] provider: using plugin: version=6
+2025-06-06T17:10:40.501+0200 [DEBUG] provider.terraform-provider-proxmox_v0.78.1: plugin address: address=/tmp/plugin3589314583 network=unix timestamp="2025-06-06T17:10:40.501+0200"
+2025-06-06T17:10:40.512+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.514+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/carlpett/sops/1.2.0/linux_amd64/terraform-provider-sops_v1.2.0 pid=143430
+2025-06-06T17:10:40.514+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.518+0200 [INFO]  provider.terraform-provider-proxmox_v0.78.1: Configuring the Framework Proxmox provider...: @caller=/home/runner/work/terraform-provider-proxmox/terraform-provider-proxmox/fwprovider/provider.go:264 @module=proxmox tf_mux_provider="*proto6server.Server" tf_provider_addr=registry.terraform.io/bpg/proxmox tf_rpc=ConfigureProvider tf_req_id=4962506b-d766-2d58-c1fb-0cad081cf4d8 timestamp="2025-06-06T17:10:40.518+0200"
+2025-06-06T17:10:40.519+0200 [INFO]  provider.terraform-provider-proxmox_v0.78.1: Configuring the SDK Proxmox provider...: @module=proxmox tf_mux_provider=tf5to6server.v5tov6Server tf_rpc=ConfigureProvider tf_provider_addr=registry.terraform.io/bpg/proxmox tf_req_id=4962506b-d766-2d58-c1fb-0cad081cf4d8 @caller=/home/runner/work/terraform-provider-proxmox/terraform-provider-proxmox/proxmoxtf/provider/provider.go:50 timestamp="2025-06-06T17:10:40.519+0200"
+2025-06-06T17:10:40.520+0200 [DEBUG] Resource instance state not found for node "proxmox_virtual_environment_pool.workspace_pool", instance proxmox_virtual_environment_pool.workspace_pool
+2025-06-06T17:10:40.520+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.520+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.520+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_pool.workspace_pool" references: []
+2025-06-06T17:10:40.520+0200 [DEBUG] refresh: proxmox_virtual_environment_pool.workspace_pool: no state, so not refreshing
+2025-06-06T17:10:40.524+0200 [DEBUG] Resource instance state not found for node "proxmox_virtual_environment_vm.node[\"suse-controlplane-1\"]", instance proxmox_virtual_environment_vm.node["suse-controlplane-1"]
+2025-06-06T17:10:40.524+0200 [DEBUG] Resource instance state not found for node "proxmox_virtual_environment_vm.node[\"suse-worker0-1\"]", instance proxmox_virtual_environment_vm.node["suse-worker0-1"]
+2025-06-06T17:10:40.524+0200 [DEBUG] Resource instance state not found for node "proxmox_virtual_environment_vm.node[\"suse-worker1-2\"]", instance proxmox_virtual_environment_vm.node["suse-worker1-2"]
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "proxmox_virtual_environment_pool.workspace_pool"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "local.final_nodes_map"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "local.release_letter"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_domain"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_started"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "local.current_template_vm_id"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "local.clone_proxmox_node"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_user"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "local.sops_vm_ssh_keys"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "local.sops_vm_password"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.524+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node[\"suse-controlplane-1\"]" references: []
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "proxmox_virtual_environment_pool.workspace_pool"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "local.final_nodes_map"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "local.release_letter"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_domain"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_started"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "local.current_template_vm_id"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "local.clone_proxmox_node"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "local.sops_vm_ssh_keys"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "local.sops_vm_password"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_user"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.525+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node[\"suse-worker0-1\"]" references: []
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "proxmox_virtual_environment_pool.workspace_pool"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "local.final_nodes_map"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_started"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "local.release_letter"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_domain"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "local.current_template_vm_id"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "local.clone_proxmox_node"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "local.sops_vm_ssh_keys"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "local.sops_vm_password"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "var.vm_user"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.526+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node[\"suse-worker1-2\"]" references: []
+2025-06-06T17:10:40.527+0200 [DEBUG] refresh: proxmox_virtual_environment_vm.node["suse-worker1-2"]: no state, so not refreshing
+2025-06-06T17:10:40.527+0200 [DEBUG] refresh: proxmox_virtual_environment_vm.node["suse-controlplane-1"]: no state, so not refreshing
+2025-06-06T17:10:40.527+0200 [DEBUG] refresh: proxmox_virtual_environment_vm.node["suse-worker0-1"]: no state, so not refreshing
+2025-06-06T17:10:40.559+0200 [WARN]  Provider "provider[\"registry.opentofu.org/bpg/proxmox\"]" produced an invalid plan for proxmox_virtual_environment_vm.node["suse-worker0-1"], but we are tolerating it because it is using the legacy plugin SDK.
+    The following problems may be the cause of any confusing errors from downstream operations:
+      - .scsi_hardware: planned value cty.StringVal("virtio-scsi-pci") for a non-computed attribute
+      - .timeout_shutdown_vm: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_migrate: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_start_vm: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_clone: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .acpi: planned value cty.True for a non-computed attribute
+      - .protection: planned value cty.False for a non-computed attribute
+      - .timeout_create: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .bios: planned value cty.StringVal("seabios") for a non-computed attribute
+      - .timeout_reboot: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_stop_vm: planned value cty.NumberIntVal(300) for a non-computed attribute
+      - .template: planned value cty.False for a non-computed attribute
+      - .tablet_device: planned value cty.True for a non-computed attribute
+      - .timeout_move_disk: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .keyboard_layout: planned value cty.StringVal("en-us") for a non-computed attribute
+      - .network_device[0].rate_limit: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].vlan_id: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].enabled: planned value cty.True for a non-computed attribute
+      - .network_device[0].mtu: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].queues: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].model: planned value cty.StringVal("virtio") for a non-computed attribute
+      - .disk[0].replicate: planned value cty.True for a non-computed attribute
+      - .memory[0].floating: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .memory[0].keep_hugepages: planned value cty.False for a non-computed attribute
+      - .memory[0].shared: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .cpu[0].limit: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .cpu[0].units: planned value cty.NumberIntVal(1024) for a non-computed attribute
+      - .cpu[0].hotplugged: planned value cty.NumberIntVal(0) for a non-computed attribute
+2025-06-06T17:10:40.560+0200 [WARN]  Provider "provider[\"registry.opentofu.org/bpg/proxmox\"]" produced an invalid plan for proxmox_virtual_environment_vm.node["suse-controlplane-1"], but we are tolerating it because it is using the legacy plugin SDK.
+    The following problems may be the cause of any confusing errors from downstream operations:
+      - .timeout_migrate: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_start_vm: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_clone: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .acpi: planned value cty.True for a non-computed attribute
+      - .protection: planned value cty.False for a non-computed attribute
+      - .timeout_create: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .bios: planned value cty.StringVal("seabios") for a non-computed attribute
+      - .timeout_reboot: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_stop_vm: planned value cty.NumberIntVal(300) for a non-computed attribute
+      - .template: planned value cty.False for a non-computed attribute
+      - .tablet_device: planned value cty.True for a non-computed attribute
+      - .timeout_move_disk: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .keyboard_layout: planned value cty.StringVal("en-us") for a non-computed attribute
+      - .scsi_hardware: planned value cty.StringVal("virtio-scsi-pci") for a non-computed attribute
+      - .timeout_shutdown_vm: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .disk[0].replicate: planned value cty.True for a non-computed attribute
+      - .memory[0].shared: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .memory[0].floating: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .memory[0].keep_hugepages: planned value cty.False for a non-computed attribute
+      - .cpu[0].limit: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .cpu[0].units: planned value cty.NumberIntVal(1024) for a non-computed attribute
+      - .cpu[0].hotplugged: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].model: planned value cty.StringVal("virtio") for a non-computed attribute
+      - .network_device[0].rate_limit: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].vlan_id: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].enabled: planned value cty.True for a non-computed attribute
+      - .network_device[0].mtu: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].queues: planned value cty.NumberIntVal(0) for a non-computed attribute
+2025-06-06T17:10:40.562+0200 [WARN]  Provider "provider[\"registry.opentofu.org/bpg/proxmox\"]" produced an invalid plan for proxmox_virtual_environment_vm.node["suse-worker1-2"], but we are tolerating it because it is using the legacy plugin SDK.
+    The following problems may be the cause of any confusing errors from downstream operations:
+      - .timeout_migrate: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_start_vm: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_clone: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .acpi: planned value cty.True for a non-computed attribute
+      - .protection: planned value cty.False for a non-computed attribute
+      - .timeout_create: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .bios: planned value cty.StringVal("seabios") for a non-computed attribute
+      - .timeout_reboot: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .timeout_stop_vm: planned value cty.NumberIntVal(300) for a non-computed attribute
+      - .template: planned value cty.False for a non-computed attribute
+      - .tablet_device: planned value cty.True for a non-computed attribute
+      - .timeout_move_disk: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .keyboard_layout: planned value cty.StringVal("en-us") for a non-computed attribute
+      - .scsi_hardware: planned value cty.StringVal("virtio-scsi-pci") for a non-computed attribute
+      - .timeout_shutdown_vm: planned value cty.NumberIntVal(1800) for a non-computed attribute
+      - .cpu[0].hotplugged: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .cpu[0].limit: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .cpu[0].units: planned value cty.NumberIntVal(1024) for a non-computed attribute
+      - .network_device[0].queues: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].model: planned value cty.StringVal("virtio") for a non-computed attribute
+      - .network_device[0].rate_limit: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].vlan_id: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .network_device[0].enabled: planned value cty.True for a non-computed attribute
+      - .network_device[0].mtu: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .disk[0].replicate: planned value cty.True for a non-computed attribute
+      - .memory[0].floating: planned value cty.NumberIntVal(0) for a non-computed attribute
+      - .memory[0].keep_hugepages: planned value cty.False for a non-computed attribute
+      - .memory[0].shared: planned value cty.NumberIntVal(0) for a non-computed attribute
+2025-06-06T17:10:40.564+0200 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2025-06-06T17:10:40.567+0200 [DEBUG] provider: plugin process exited: path=.terraform/providers/registry.opentofu.org/bpg/proxmox/0.78.1/linux_amd64/terraform-provider-proxmox_v0.78.1 pid=143441
+2025-06-06T17:10:40.567+0200 [DEBUG] provider: plugin exited
+2025-06-06T17:10:40.570+0200 [DEBUG] building apply graph to check for errors
+2025-06-06T17:10:40.571+0200 [DEBUG] Resource state not found for node "proxmox_virtual_environment_pool.workspace_pool", instance proxmox_virtual_environment_pool.workspace_pool
+2025-06-06T17:10:40.571+0200 [DEBUG] Resource state not found for node "proxmox_virtual_environment_vm.node[\"suse-worker0-1\"]", instance proxmox_virtual_environment_vm.node["suse-worker0-1"]
+2025-06-06T17:10:40.571+0200 [DEBUG] Resource state not found for node "proxmox_virtual_environment_vm.node[\"suse-controlplane-1\"]", instance proxmox_virtual_environment_vm.node["suse-controlplane-1"]
+2025-06-06T17:10:40.571+0200 [DEBUG] Resource state not found for node "proxmox_virtual_environment_vm.node[\"suse-worker1-2\"]", instance proxmox_virtual_environment_vm.node["suse-worker1-2"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_vm.node[\"suse-controlplane-1\"]" (*tofu.NodeApplyableResourceInstance) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_vm.node[\"suse-worker1-2\"]" (*tofu.NodeApplyableResourceInstance) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_pool.workspace_pool (expand)" (*tofu.nodeExpandApplyableResource) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "data.sops_file.secrets (expand)" (*tofu.nodeExpandApplyableResource) needs provider["registry.opentofu.org/carlpett/sops"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_pool.workspace_pool" (*tofu.NodeApplyableResourceInstance) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_vm.node (expand)" (*tofu.nodeExpandApplyableResource) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.572+0200 [DEBUG] ProviderTransformer: "proxmox_virtual_environment_vm.node[\"suse-worker0-1\"]" (*tofu.NodeApplyableResourceInstance) needs provider["registry.opentofu.org/bpg/proxmox"]
+2025-06-06T17:10:40.575+0200 [DEBUG] pruning unused provider["registry.opentofu.org/hashicorp/local"]
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "var.dns_servers (expand, reference)" references: []
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "var.pm_template_ubuntu_id (expand, reference)" references: []
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "local.release_letter (expand)" references: [local.release_letters_map (expand) local.effective_os_type (expand)]
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "output.debug_node_map_keys (expand)" references: [local.final_nodes_map (expand)]
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "var.pm_template_rocky_id" references: []
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "var.network_bridge (expand, reference)" references: []
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "local.current_template_vm_id (expand)" references: [local.template_vm_ids (expand) local.effective_os_type (expand)]
+2025-06-06T17:10:40.576+0200 [DEBUG] ReferenceTransformer: "output.sops_data_keys_check (expand)" references: [data.sops_file.secrets (expand) data.sops_file.secrets (expand) data.sops_file.secrets (expand)]
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "proxmox_virtual_environment_pool.workspace_pool#destroy"
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node[\"suse-worker0-1\"]" references: [proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.final_nodes_map (expand) local.release_letter (expand) var.vm_domain (expand, reference) var.vm_domain var.vm_started (expand, reference) var.vm_started proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.clone_proxmox_node (expand) local.current_template_vm_id (expand) var.vm_user var.vm_user (expand, reference) local.sops_vm_ssh_keys (expand) local.sops_vm_password (expand)]
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "local.final_nodes_map (expand)" references: [local.node_definitions (expand) local.effective_os_type (expand) local.effective_os_type (expand) local.vm_id_ranges (expand) local.effective_os_type (expand) var.pm_node var.pm_node (expand, reference) var.vm_cpu_cores var.vm_cpu_cores (expand, reference) var.vm_memory_dedicated var.vm_memory_dedicated (expand, reference) var.vm_disk_size var.vm_disk_size (expand, reference) var.dns_servers (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.dns_servers var.dns_servers (expand, reference) var.dns_servers var.vm_domain (expand, reference) var.vm_domain var.network_bridge (expand, reference) var.network_bridge]
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "local.effective_os_type (expand)" references: []
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "var.vm_domain (expand, reference)" references: []
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "var.vm_started (expand, reference)" references: []
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "var.proxmox_user (expand, reference)" references: []
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "var.vm_id_start (expand, reference)" references: []
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "local.processed_sops_ssh_keys (expand)" references: [local.actual_sops_ssh_keys_from_lookup (expand) local.actual_sops_ssh_keys_from_lookup (expand) local.actual_sops_ssh_keys_from_lookup (expand)]
+2025-06-06T17:10:40.577+0200 [DEBUG] ReferenceTransformer: "local.actual_sops_ssh_keys_from_lookup (expand)" references: [local.sops_data (expand)]
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.577+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "proxmox_virtual_environment_pool.workspace_pool#destroy"
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node[\"suse-controlplane-1\"]" references: [proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.final_nodes_map (expand) var.vm_started (expand, reference) var.vm_started proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.release_letter (expand) var.vm_domain (expand, reference) var.vm_domain local.clone_proxmox_node (expand) local.current_template_vm_id (expand) var.vm_user var.vm_user (expand, reference) local.sops_vm_ssh_keys (expand) local.sops_vm_password (expand)]
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.pm_node" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "output.final_nodes_machine_types (expand)" references: [local.final_nodes_map (expand)]
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.vm_cpu_cores" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.pm_template_suse_id (expand, reference)" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.dns_servers" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "local.actual_sops_password_from_lookup (expand)" references: [local.sops_data (expand)]
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "output.worker1_vm_id (expand)" references: [proxmox_virtual_environment_vm.node["suse-worker0-1"] proxmox_virtual_environment_vm.node["suse-controlplane-1"] proxmox_virtual_environment_vm.node["suse-worker1-2"] proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.vm_id_start" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.vm_user" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.vm_count (expand, reference)" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "output.k8s_node_ips (expand)" references: [proxmox_virtual_environment_vm.node["suse-worker0-1"] proxmox_virtual_environment_vm.node["suse-controlplane-1"] proxmox_virtual_environment_vm.node["suse-worker1-2"] proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "proxmox_virtual_environment_pool.workspace_pool#destroy"
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node[\"suse-worker1-2\"]" references: [proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.final_nodes_map (expand) var.vm_started (expand, reference) var.vm_started local.release_letter (expand) var.vm_domain (expand, reference) var.vm_domain proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.clone_proxmox_node (expand) local.current_template_vm_id (expand) var.vm_user var.vm_user (expand, reference) local.sops_vm_ssh_keys (expand) local.sops_vm_password (expand)]
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "local.release_letters_map (expand)" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "local.sops_data (expand)" references: [data.sops_file.secrets (expand)]
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.vm_domain" references: []
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_pool.workspace_pool (expand)" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.pm_template_suse_id" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.storage" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "local.processed_sops_password (expand)" references: [local.actual_sops_password_from_lookup (expand) local.actual_sops_password_from_lookup (expand)]
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.vm_user (expand, reference)" references: []
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "var.network_bridge" references: []
+2025-06-06T17:10:40.578+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.578+0200 [DEBUG] ReferenceTransformer: "local.environment (expand)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "local.vm_id_ranges (expand)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/bpg/proxmox\"]" references: [data.sops_file.secrets (expand) data.sops_file.secrets (expand) data.sops_file.secrets (expand)]
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "local.template_vm_ids (expand)" references: [var.pm_template_debian_id var.pm_template_debian_id (expand, reference) var.pm_template_ubuntu_id (expand, reference) var.pm_template_ubuntu_id var.pm_template_rocky_id var.pm_template_rocky_id (expand, reference) var.pm_template_suse_id (expand, reference) var.pm_template_suse_id]
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "output.controlplane_vm_id (expand)" references: [proxmox_virtual_environment_vm.node["suse-worker0-1"] proxmox_virtual_environment_vm.node["suse-controlplane-1"] proxmox_virtual_environment_vm.node["suse-worker1-2"] proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.pm_template_ubuntu_id" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.pm_node (expand, reference)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.vm_disk_size" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.vm_count" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "local.node_definitions (expand)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "output.debug_node_configs (expand)" references: [local.final_nodes_map (expand) local.current_template_vm_id (expand) local.clone_proxmox_node (expand) local.release_letter (expand) var.vm_domain (expand, reference) var.vm_domain]
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "output.worker0_vm_id (expand)" references: [proxmox_virtual_environment_vm.node["suse-worker0-1"] proxmox_virtual_environment_vm.node["suse-controlplane-1"] proxmox_virtual_environment_vm.node["suse-worker1-2"] proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.pm_template_rocky_id (expand, reference)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.proxmox_user" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "local.clone_proxmox_node (expand)" references: [var.pm_node var.pm_node (expand, reference)]
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "local.sops_vm_ssh_keys (expand)" references: [local.processed_sops_ssh_keys (expand)]
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "output.debug_sops_processing_info (expand)" references: [local.debug_sops_info (expand)]
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "output.debug_template_info (expand)" references: [local.current_template_vm_id (expand) local.clone_proxmox_node (expand) local.template_vm_ids (expand)]
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "provider[\"registry.opentofu.org/carlpett/sops\"]" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "data.sops_file.secrets (expand)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.pm_template_debian_id" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.pm_template_debian_id (expand, reference)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.vm_cpu_cores (expand, reference)" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "var.vm_template_name" references: []
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_pool.workspace_pool" references: []
+2025-06-06T17:10:40.579+0200 [DEBUG] ReferenceTransformer: "local.debug_sops_info (expand)" references: [local.sops_data (expand) local.sops_data (expand) local.sops_data (expand) local.sops_data (expand) local.sops_data (expand)]
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.579+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "each.value"
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "proxmox_virtual_environment_vm.node (expand)" references: [proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.final_nodes_map (expand) var.vm_started (expand, reference) var.vm_started local.release_letter (expand) var.vm_domain (expand, reference) var.vm_domain proxmox_virtual_environment_pool.workspace_pool (expand) proxmox_virtual_environment_pool.workspace_pool proxmox_virtual_environment_pool.workspace_pool local.clone_proxmox_node (expand) local.current_template_vm_id (expand) local.sops_vm_ssh_keys (expand) local.sops_vm_password (expand) var.vm_user var.vm_user (expand, reference)]
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "var.vm_started" references: []
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "var.vm_memory_dedicated" references: []
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "var.vm_memory_dedicated (expand, reference)" references: []
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "var.storage (expand, reference)" references: []
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "var.vm_template_name (expand, reference)" references: []
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "local.sops_vm_password (expand)" references: [local.processed_sops_password (expand)]
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "var.vm_disk_size (expand, reference)" references: []
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "output.k8s_node_names (expand)" references: [proxmox_virtual_environment_vm.node["suse-worker0-1"] proxmox_virtual_environment_vm.node["suse-controlplane-1"] proxmox_virtual_environment_vm.node["suse-worker1-2"] proxmox_virtual_environment_vm.node (expand)]
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.580+0200 [INFO]  ReferenceTransformer: reference not found: "terraform.workspace"
+2025-06-06T17:10:40.580+0200 [DEBUG] ReferenceTransformer: "check.valid_workspace (expand)" references: []
+2025-06-06T17:10:40.582+0200 [DEBUG] pruneUnusedNodes: var.vm_count (expand, reference) is no longer needed, removing
+2025-06-06T17:10:40.582+0200 [DEBUG] pruneUnusedNodes: local.environment (expand) is no longer needed, removing
+2025-06-06T17:10:40.582+0200 [DEBUG] pruneUnusedNodes: var.storage (expand, reference) is no longer needed, removing
+2025-06-06T17:10:40.582+0200 [DEBUG] pruneUnusedNodes: var.vm_template_name (expand, reference) is no longer needed, removing
+2025-06-06T17:10:40.582+0200 [DEBUG] pruneUnusedNodes: var.proxmox_user (expand, reference) is no longer needed, removing
+2025-06-06T17:10:40.582+0200 [DEBUG] pruneUnusedNodes: var.vm_id_start (expand, reference) is no longer needed, removing
+2025-06-06T17:10:40.584+0200 [INFO]  backend/local: plan operation completed
+2025-06-06T17:10:40.584+0200 [INFO]  backend/local: writing plan output to: plan.out
+
+OpenTofu used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  [32m+[0m create[0m
+
+OpenTofu will perform the following actions:
+
+[1m  # proxmox_virtual_environment_pool.workspace_pool[0m will be created
+[0m  [32m+[0m[0m resource "proxmox_virtual_environment_pool" "workspace_pool" {
+      [32m+[0m[0m comment = "Pool for suse VMs managed by Terraform"
+      [32m+[0m[0m id      = (known after apply)
+      [32m+[0m[0m members = (known after apply)
+      [32m+[0m[0m pool_id = "SUSE"
+    }
+
+[1m  # proxmox_virtual_environment_vm.node["suse-controlplane-1"][0m will be created
+[0m  [32m+[0m[0m resource "proxmox_virtual_environment_vm" "node" {
+      [32m+[0m[0m acpi                    = true
+      [32m+[0m[0m bios                    = "seabios"
+      [32m+[0m[0m description             = "Managed by Terraform"
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m ipv4_addresses          = (known after apply)
+      [32m+[0m[0m ipv6_addresses          = (known after apply)
+      [32m+[0m[0m keyboard_layout         = "en-us"
+      [32m+[0m[0m mac_addresses           = (known after apply)
+      [32m+[0m[0m migrate                 = true
+      [32m+[0m[0m name                    = "cs1.bevz.net"
+      [32m+[0m[0m network_interface_names = (known after apply)
+      [32m+[0m[0m node_name               = "homelab"
+      [32m+[0m[0m on_boot                 = false
+      [32m+[0m[0m pool_id                 = "SUSE"
+      [32m+[0m[0m protection              = false
+      [32m+[0m[0m reboot                  = false
+      [32m+[0m[0m reboot_after_update     = false
+      [32m+[0m[0m scsi_hardware           = "virtio-scsi-pci"
+      [32m+[0m[0m started                 = true
+      [32m+[0m[0m stop_on_destroy         = true
+      [32m+[0m[0m tablet_device           = true
+      [32m+[0m[0m tags                    = [
+          [32m+[0m[0m "k8s",
+          [32m+[0m[0m "suse",
+          [32m+[0m[0m "controlplane",
+        ]
+      [32m+[0m[0m template                = false
+      [32m+[0m[0m timeout_clone           = 1800
+      [32m+[0m[0m timeout_create          = 1800
+      [32m+[0m[0m timeout_migrate         = 1800
+      [32m+[0m[0m timeout_move_disk       = 1800
+      [32m+[0m[0m timeout_reboot          = 1800
+      [32m+[0m[0m timeout_shutdown_vm     = 1800
+      [32m+[0m[0m timeout_start_vm        = 1800
+      [32m+[0m[0m timeout_stop_vm         = 300
+      [32m+[0m[0m vm_id                   = 500
+
+      [32m+[0m[0m agent {
+          [32m+[0m[0m enabled = true
+          [32m+[0m[0m timeout = "15m"
+          [32m+[0m[0m trim    = true
+          [32m+[0m[0m type    = "virtio"
+        }
+
+      [32m+[0m[0m clone {
+          [32m+[0m[0m full      = true
+          [32m+[0m[0m node_name = "homelab"
+          [32m+[0m[0m retries   = 25
+          [32m+[0m[0m vm_id     = 9440
+        }
+
+      [32m+[0m[0m cpu {
+          [32m+[0m[0m cores      = 1
+          [32m+[0m[0m flags      = []
+          [32m+[0m[0m hotplugged = 0
+          [32m+[0m[0m limit      = 0
+          [32m+[0m[0m numa       = true
+          [32m+[0m[0m sockets    = 1
+          [32m+[0m[0m type       = "kvm64"
+          [32m+[0m[0m units      = 1024
+        }
+
+      [32m+[0m[0m disk {
+          [32m+[0m[0m aio               = "io_uring"
+          [32m+[0m[0m backup            = true
+          [32m+[0m[0m cache             = "none"
+          [32m+[0m[0m datastore_id      = "MyStorage"
+          [32m+[0m[0m discard           = "ignore"
+          [32m+[0m[0m file_format       = "raw"
+          [32m+[0m[0m interface         = "virtio0"
+          [32m+[0m[0m iothread          = true
+          [32m+[0m[0m path_in_datastore = (known after apply)
+          [32m+[0m[0m replicate         = true
+          [32m+[0m[0m size              = 20
+          [32m+[0m[0m ssd               = false
+        }
+
+      [32m+[0m[0m initialization {
+          [32m+[0m[0m datastore_id         = "MyStorage"
+          [32m+[0m[0m interface            = "ide2"
+          [32m+[0m[0m meta_data_file_id    = (known after apply)
+          [32m+[0m[0m network_data_file_id = (known after apply)
+          [32m+[0m[0m type                 = (known after apply)
+          [32m+[0m[0m user_data_file_id    = (known after apply)
+          [32m+[0m[0m vendor_data_file_id  = (known after apply)
+
+          [32m+[0m[0m dns {
+              [32m+[0m[0m domain  = "bevz.net"
+              [32m+[0m[0m servers = [
+                  [32m+[0m[0m "10.10.10.187",
+                ]
+            }
+
+          [32m+[0m[0m ip_config {
+              [32m+[0m[0m ipv4 {
+                  [32m+[0m[0m address = "dhcp"
+                }
+            }
+
+          [32m+[0m[0m user_account {
+              [32m+[0m[0m keys     = (sensitive value)
+              [32m+[0m[0m password = (sensitive value)
+              [32m+[0m[0m username = "abevz"
+            }
+        }
+
+      [32m+[0m[0m memory {
+          [32m+[0m[0m dedicated      = 2048
+          [32m+[0m[0m floating       = 0
+          [32m+[0m[0m keep_hugepages = false
+          [32m+[0m[0m shared         = 0
+        }
+
+      [32m+[0m[0m network_device {
+          [32m+[0m[0m bridge      = "vmbr0"
+          [32m+[0m[0m enabled     = true
+          [32m+[0m[0m firewall    = true
+          [32m+[0m[0m mac_address = (known after apply)
+          [32m+[0m[0m model       = "virtio"
+          [32m+[0m[0m mtu         = 0
+          [32m+[0m[0m queues      = 0
+          [32m+[0m[0m rate_limit  = 0
+          [32m+[0m[0m vlan_id     = 0
+        }
+
+      [32m+[0m[0m vga {
+          [32m+[0m[0m memory = 16
+          [32m+[0m[0m type   = "serial0"
+        }
+    }
+
+[1m  # proxmox_virtual_environment_vm.node["suse-worker0-1"][0m will be created
+[0m  [32m+[0m[0m resource "proxmox_virtual_environment_vm" "node" {
+      [32m+[0m[0m acpi                    = true
+      [32m+[0m[0m bios                    = "seabios"
+      [32m+[0m[0m description             = "Managed by Terraform"
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m ipv4_addresses          = (known after apply)
+      [32m+[0m[0m ipv6_addresses          = (known after apply)
+      [32m+[0m[0m keyboard_layout         = "en-us"
+      [32m+[0m[0m mac_addresses           = (known after apply)
+      [32m+[0m[0m migrate                 = true
+      [32m+[0m[0m name                    = "ws1.bevz.net"
+      [32m+[0m[0m network_interface_names = (known after apply)
+      [32m+[0m[0m node_name               = "homelab"
+      [32m+[0m[0m on_boot                 = false
+      [32m+[0m[0m pool_id                 = "SUSE"
+      [32m+[0m[0m protection              = false
+      [32m+[0m[0m reboot                  = false
+      [32m+[0m[0m reboot_after_update     = false
+      [32m+[0m[0m scsi_hardware           = "virtio-scsi-pci"
+      [32m+[0m[0m started                 = true
+      [32m+[0m[0m stop_on_destroy         = true
+      [32m+[0m[0m tablet_device           = true
+      [32m+[0m[0m tags                    = [
+          [32m+[0m[0m "k8s",
+          [32m+[0m[0m "suse",
+          [32m+[0m[0m "worker0",
+        ]
+      [32m+[0m[0m template                = false
+      [32m+[0m[0m timeout_clone           = 1800
+      [32m+[0m[0m timeout_create          = 1800
+      [32m+[0m[0m timeout_migrate         = 1800
+      [32m+[0m[0m timeout_move_disk       = 1800
+      [32m+[0m[0m timeout_reboot          = 1800
+      [32m+[0m[0m timeout_shutdown_vm     = 1800
+      [32m+[0m[0m timeout_start_vm        = 1800
+      [32m+[0m[0m timeout_stop_vm         = 300
+      [32m+[0m[0m vm_id                   = 501
+
+      [32m+[0m[0m agent {
+          [32m+[0m[0m enabled = true
+          [32m+[0m[0m timeout = "15m"
+          [32m+[0m[0m trim    = true
+          [32m+[0m[0m type    = "virtio"
+        }
+
+      [32m+[0m[0m clone {
+          [32m+[0m[0m full      = true
+          [32m+[0m[0m node_name = "homelab"
+          [32m+[0m[0m retries   = 25
+          [32m+[0m[0m vm_id     = 9440
+        }
+
+      [32m+[0m[0m cpu {
+          [32m+[0m[0m cores      = 1
+          [32m+[0m[0m flags      = []
+          [32m+[0m[0m hotplugged = 0
+          [32m+[0m[0m limit      = 0
+          [32m+[0m[0m numa       = true
+          [32m+[0m[0m sockets    = 1
+          [32m+[0m[0m type       = "kvm64"
+          [32m+[0m[0m units      = 1024
+        }
+
+      [32m+[0m[0m disk {
+          [32m+[0m[0m aio               = "io_uring"
+          [32m+[0m[0m backup            = true
+          [32m+[0m[0m cache             = "none"
+          [32m+[0m[0m datastore_id      = "MyStorage"
+          [32m+[0m[0m discard           = "ignore"
+          [32m+[0m[0m file_format       = "raw"
+          [32m+[0m[0m interface         = "virtio0"
+          [32m+[0m[0m iothread          = true
+          [32m+[0m[0m path_in_datastore = (known after apply)
+          [32m+[0m[0m replicate         = true
+          [32m+[0m[0m size              = 20
+          [32m+[0m[0m ssd               = false
+        }
+
+      [32m+[0m[0m initialization {
+          [32m+[0m[0m datastore_id         = "MyStorage"
+          [32m+[0m[0m interface            = "ide2"
+          [32m+[0m[0m meta_data_file_id    = (known after apply)
+          [32m+[0m[0m network_data_file_id = (known after apply)
+          [32m+[0m[0m type                 = (known after apply)
+          [32m+[0m[0m user_data_file_id    = (known after apply)
+          [32m+[0m[0m vendor_data_file_id  = (known after apply)
+
+          [32m+[0m[0m dns {
+              [32m+[0m[0m domain  = "bevz.net"
+              [32m+[0m[0m servers = [
+                  [32m+[0m[0m "10.10.10.187",
+                ]
+            }
+
+          [32m+[0m[0m ip_config {
+              [32m+[0m[0m ipv4 {
+                  [32m+[0m[0m address = "dhcp"
+                }
+            }
+
+          [32m+[0m[0m user_account {
+              [32m+[0m[0m keys     = (sensitive value)
+              [32m+[0m[0m password = (sensitive value)
+              [32m+[0m[0m username = "abevz"
+            }
+        }
+
+      [32m+[0m[0m memory {
+          [32m+[0m[0m dedicated      = 2048
+          [32m+[0m[0m floating       = 0
+          [32m+[0m[0m keep_hugepages = false
+          [32m+[0m[0m shared         = 0
+        }
+
+      [32m+[0m[0m network_device {
+          [32m+[0m[0m bridge      = "vmbr0"
+          [32m+[0m[0m enabled     = true
+          [32m+[0m[0m firewall    = true
+          [32m+[0m[0m mac_address = (known after apply)
+          [32m+[0m[0m model       = "virtio"
+          [32m+[0m[0m mtu         = 0
+          [32m+[0m[0m queues      = 0
+          [32m+[0m[0m rate_limit  = 0
+          [32m+[0m[0m vlan_id     = 0
+        }
+
+      [32m+[0m[0m vga {
+          [32m+[0m[0m memory = 16
+          [32m+[0m[0m type   = "serial0"
+        }
+    }
+
+[1m  # proxmox_virtual_environment_vm.node["suse-worker1-2"][0m will be created
+[0m  [32m+[0m[0m resource "proxmox_virtual_environment_vm" "node" {
+      [32m+[0m[0m acpi                    = true
+      [32m+[0m[0m bios                    = "seabios"
+      [32m+[0m[0m description             = "Managed by Terraform"
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m ipv4_addresses          = (known after apply)
+      [32m+[0m[0m ipv6_addresses          = (known after apply)
+      [32m+[0m[0m keyboard_layout         = "en-us"
+      [32m+[0m[0m mac_addresses           = (known after apply)
+      [32m+[0m[0m migrate                 = true
+      [32m+[0m[0m name                    = "ws2.bevz.net"
+      [32m+[0m[0m network_interface_names = (known after apply)
+      [32m+[0m[0m node_name               = "homelab"
+      [32m+[0m[0m on_boot                 = false
+      [32m+[0m[0m pool_id                 = "SUSE"
+      [32m+[0m[0m protection              = false
+      [32m+[0m[0m reboot                  = false
+      [32m+[0m[0m reboot_after_update     = false
+      [32m+[0m[0m scsi_hardware           = "virtio-scsi-pci"
+      [32m+[0m[0m started                 = true
+      [32m+[0m[0m stop_on_destroy         = true
+      [32m+[0m[0m tablet_device           = true
+      [32m+[0m[0m tags                    = [
+          [32m+[0m[0m "k8s",
+          [32m+[0m[0m "suse",
+          [32m+[0m[0m "worker1",
+        ]
+      [32m+[0m[0m template                = false
+      [32m+[0m[0m timeout_clone           = 1800
+      [32m+[0m[0m timeout_create          = 1800
+      [32m+[0m[0m timeout_migrate         = 1800
+      [32m+[0m[0m timeout_move_disk       = 1800
+      [32m+[0m[0m timeout_reboot          = 1800
+      [32m+[0m[0m timeout_shutdown_vm     = 1800
+      [32m+[0m[0m timeout_start_vm        = 1800
+      [32m+[0m[0m timeout_stop_vm         = 300
+      [32m+[0m[0m vm_id                   = 502
+
+      [32m+[0m[0m agent {
+          [32m+[0m[0m enabled = true
+          [32m+[0m[0m timeout = "15m"
+          [32m+[0m[0m trim    = true
+          [32m+[0m[0m type    = "virtio"
+        }
+
+      [32m+[0m[0m clone {
+          [32m+[0m[0m full      = true
+          [32m+[0m[0m node_name = "homelab"
+          [32m+[0m[0m retries   = 25
+          [32m+[0m[0m vm_id     = 9440
+        }
+
+      [32m+[0m[0m cpu {
+          [32m+[0m[0m cores      = 1
+          [32m+[0m[0m flags      = []
+          [32m+[0m[0m hotplugged = 0
+          [32m+[0m[0m limit      = 0
+          [32m+[0m[0m numa       = true
+          [32m+[0m[0m sockets    = 1
+          [32m+[0m[0m type       = "kvm64"
+          [32m+[0m[0m units      = 1024
+        }
+
+      [32m+[0m[0m disk {
+          [32m+[0m[0m aio               = "io_uring"
+          [32m+[0m[0m backup            = true
+          [32m+[0m[0m cache             = "none"
+          [32m+[0m[0m datastore_id      = "MyStorage"
+          [32m+[0m[0m discard           = "ignore"
+          [32m+[0m[0m file_format       = "raw"
+          [32m+[0m[0m interface         = "virtio0"
+          [32m+[0m[0m iothread          = true
+          [32m+[0m[0m path_in_datastore = (known after apply)
+          [32m+[0m[0m replicate         = true
+          [32m+[0m[0m size              = 20
+          [32m+[0m[0m ssd               = false
+        }
+
+      [32m+[0m[0m initialization {
+          [32m+[0m[0m datastore_id         = "MyStorage"
+          [32m+[0m[0m interface            = "ide2"
+          [32m+[0m[0m meta_data_file_id    = (known after apply)
+          [32m+[0m[0m network_data_file_id = (known after apply)
+          [32m+[0m[0m type                 = (known after apply)
+          [32m+[0m[0m user_data_file_id    = (known after apply)
+          [32m+[0m[0m vendor_data_file_id  = (known after apply)
+
+          [32m+[0m[0m dns {
+              [32m+[0m[0m domain  = "bevz.net"
+              [32m+[0m[0m servers = [
+                  [32m+[0m[0m "10.10.10.187",
+                ]
+            }
+
+          [32m+[0m[0m ip_config {
+              [32m+[0m[0m ipv4 {
+                  [32m+[0m[0m address = "dhcp"
+                }
+            }
+
+          [32m+[0m[0m user_account {
+              [32m+[0m[0m keys     = (sensitive value)
+              [32m+[0m[0m password = (sensitive value)
+              [32m+[0m[0m username = "abevz"
+            }
+        }
+
+      [32m+[0m[0m memory {
+          [32m+[0m[0m dedicated      = 2048
+          [32m+[0m[0m floating       = 0
+          [32m+[0m[0m keep_hugepages = false
+          [32m+[0m[0m shared         = 0
+        }
+
+      [32m+[0m[0m network_device {
+          [32m+[0m[0m bridge      = "vmbr0"
+          [32m+[0m[0m enabled     = true
+          [32m+[0m[0m firewall    = true
+          [32m+[0m[0m mac_address = (known after apply)
+          [32m+[0m[0m model       = "virtio"
+          [32m+[0m[0m mtu         = 0
+          [32m+[0m[0m queues      = 0
+          [32m+[0m[0m rate_limit  = 0
+          [32m+[0m[0m vlan_id     = 0
+        }
+
+      [32m+[0m[0m vga {
+          [32m+[0m[0m memory = 16
+          [32m+[0m[0m type   = "serial0"
+        }
+    }
+
+[1mPlan:[0m 4 to add, 0 to change, 0 to destroy.
+[0m
+Changes to Outputs:
+  [32m+[0m[0m controlplane_vm_id         = 500
+  [32m+[0m[0m debug_node_configs         = {
+      [32m+[0m[0m suse-controlplane-1 = {
+          [32m+[0m[0m clone_node   = "homelab"
+          [32m+[0m[0m clone_source = 9440
+          [32m+[0m[0m core_count   = 1
+          [32m+[0m[0m hostname     = "cs1.bevz.net"
+          [32m+[0m[0m machine_type = [90mnull[0m[0m
+          [32m+[0m[0m memory       = 2048
+          [32m+[0m[0m role         = "c"
+          [32m+[0m[0m socket_count = 1
+          [32m+[0m[0m vm_id        = 500
+        }
+      [32m+[0m[0m suse-worker0-1      = {
+          [32m+[0m[0m clone_node   = "homelab"
+          [32m+[0m[0m clone_source = 9440
+          [32m+[0m[0m core_count   = 1
+          [32m+[0m[0m hostname     = "ws1.bevz.net"
+          [32m+[0m[0m machine_type = [90mnull[0m[0m
+          [32m+[0m[0m memory       = 2048
+          [32m+[0m[0m role         = "w"
+          [32m+[0m[0m socket_count = 1
+          [32m+[0m[0m vm_id        = 501
+        }
+      [32m+[0m[0m suse-worker1-2      = {
+          [32m+[0m[0m clone_node   = "homelab"
+          [32m+[0m[0m clone_source = 9440
+          [32m+[0m[0m core_count   = 1
+          [32m+[0m[0m hostname     = "ws2.bevz.net"
+          [32m+[0m[0m machine_type = [90mnull[0m[0m
+          [32m+[0m[0m memory       = 2048
+          [32m+[0m[0m role         = "w"
+          [32m+[0m[0m socket_count = 1
+          [32m+[0m[0m vm_id        = 502
+        }
+    }
+  [32m+[0m[0m debug_node_map_keys        = [
+      [32m+[0m[0m "suse-controlplane-1",
+      [32m+[0m[0m "suse-worker0-1",
+      [32m+[0m[0m "suse-worker1-2",
+    ]
+  [32m+[0m[0m debug_sops_processing_info = (sensitive value)
+  [32m+[0m[0m debug_template_info        = {
+      [32m+[0m[0m clone_node          = "homelab"
+      [32m+[0m[0m current_workspace   = "suse"
+      [32m+[0m[0m template_id         = 9440
+      [32m+[0m[0m template_vm_ids_map = {
+          [32m+[0m[0m debian = 9410
+          [32m+[0m[0m rocky  = 9430
+          [32m+[0m[0m suse   = 9440
+          [32m+[0m[0m ubuntu = 9420
+        }
+    }
+  [32m+[0m[0m final_nodes_machine_types  = {
+      [32m+[0m[0m suse-controlplane-1 = [90mnull[0m[0m
+      [32m+[0m[0m suse-worker0-1      = [90mnull[0m[0m
+      [32m+[0m[0m suse-worker1-2      = [90mnull[0m[0m
+    }
+  [32m+[0m[0m k8s_node_ips               = {
+      [32m+[0m[0m suse-controlplane-1 = (known after apply)
+      [32m+[0m[0m suse-worker0-1      = (known after apply)
+      [32m+[0m[0m suse-worker1-2      = (known after apply)
+    }
+  [32m+[0m[0m k8s_node_names             = {
+      [32m+[0m[0m suse-controlplane-1 = "cs1.bevz.net"
+      [32m+[0m[0m suse-worker0-1      = "ws1.bevz.net"
+      [32m+[0m[0m suse-worker1-2      = "ws2.bevz.net"
+    }
+  [32m+[0m[0m sops_data_keys_check       = (sensitive value)
+  [32m+[0m[0m worker0_vm_id              = 501
+  [32m+[0m[0m worker1_vm_id              = 502
+[90m
+─────────────────────────────────────────────────────────────────────────────[0m
+
+Saved the plan to: plan.out
+
+To perform exactly these actions, run the following command to apply:
+    tofu apply "plan.out"
+[32m'tofu plan -out=plan.out' completed successfully for context 'suse'.[0m
