@@ -56,3 +56,35 @@ output "final_nodes_machine_types" {
     for k, v in local.final_nodes_map : k => v.machine
   }
 }
+
+output "debug_node_configs" {
+  description = "Debug configuration for all nodes"
+  value = {
+    for k, v in local.final_nodes_map : k => {
+      vm_id = v.vm_id
+      machine_type = v.machine
+      role = v.role
+      clone_source = local.current_template_vm_id
+      clone_node = local.clone_proxmox_node
+      hostname = "${v.role}${local.release_letter}${v.index}${var.vm_domain}"
+      core_count = v.cores
+      socket_count = v.sockets
+      memory = v.memory
+    }
+  }
+}
+
+output "debug_template_info" {
+  description = "Debug information about templates"
+  value = {
+    current_workspace = terraform.workspace
+    template_id = local.current_template_vm_id
+    clone_node = local.clone_proxmox_node
+    template_vm_ids_map = local.template_vm_ids
+  }
+}
+
+output "debug_node_map_keys" {
+  description = "All keys in the final_nodes_map"
+  value = keys(local.final_nodes_map)
+}

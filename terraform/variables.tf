@@ -21,7 +21,7 @@ variable "network_bridge" {
 variable "storage" {
   description = "Storage to use for VM disks"
   type        = string
-  default     = "local-lvm"
+  default     = "MyStorage"
 }
 
 # Add other common variables here that might be overridden by .tfvars files
@@ -34,19 +34,25 @@ variable "vm_cpu_cores" {
 variable "pm_template_debian_id" {
   description = "ID of the Proxmox VM template for Debian."
   type        = number
-  default     = 902 # Please set the correct template ID
+  default     = 9410 # Please set the correct template ID
 }
 
 variable "pm_template_ubuntu_id" {
   description = "ID of the Proxmox VM template for Ubuntu."
   type        = number
-  default     = 912 # Please set the correct template ID
+  default     = 9420 # Please set the correct template ID
 }
 
 variable "pm_template_rocky_id" {
   description = "ID of the Proxmox VM template for Rocky Linux."
   type        = number
-  default     = 931 # Please set the correct template ID
+  default     = 9430 # Please set the correct template ID
+}
+
+variable "pm_template_suse_id" {
+  description = "ID of the Proxmox VM template for SUSE Linux."
+  type        = number
+  default     = 9440 # Please set the correct template ID
 }
 
 variable "vm_domain" {
