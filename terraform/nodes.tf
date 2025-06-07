@@ -73,6 +73,7 @@ resource "proxmox_virtual_environment_vm" "node" {
     memory = 16
     type = "serial0" # Changed from "qxl" to "serial0" as per example, adjust if needed
   }
+  
   initialization {
     interface = "ide2" # For cloud-init via CD-ROM
     user_account {
@@ -81,6 +82,9 @@ resource "proxmox_virtual_environment_vm" "node" {
       password = local.sops_vm_password
     }
     datastore_id = each.value.disks[0].datastore_id # datastore for cloud-init ISO
+    
+    # Use node-specific cloud-init snippet for hostname configuration
+    user_data_file_id = "local:snippets/node-${each.value.role}${each.value.index}-userdata.yaml"
 
     ip_config {
       ipv4 {

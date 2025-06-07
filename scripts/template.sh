@@ -54,6 +54,16 @@ if [ -f "./vm_template/debian-cloud-init-userdata.yaml" ]; then
     scp -q "./vm_template/debian-cloud-init-userdata.yaml" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
 fi
 
+# Copy the Ubuntu cloud-init user-data file if it exists
+if [ -f "./vm_template/ubuntu-cloud-init-userdata.yaml" ]; then
+    scp -q "./vm_template/ubuntu-cloud-init-userdata.yaml" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
+fi
+
+# Copy the machine-id script
+if [ -f "./vm_template/ensure-unique-machine-id.sh" ]; then
+    scp -q "./vm_template/ensure-unique-machine-id.sh" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
+fi
+
 # Clean up temporary files
 rm -f "$TEMP_SSH_KEY" "$TEMP_SSH_PUB_KEY"
 set +e

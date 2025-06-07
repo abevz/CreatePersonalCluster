@@ -104,7 +104,7 @@ echo ""
 
 echo -e "${GREEN}Update, add packages, enable services, edit multipath config, set timezone, set firstboot scripts...${ENDCOLOR}"
 
-# For Rocky Linux and Debian, we need to skip virt-customize due to libguestfs compatibility issues
+# For Rocky Linux, Debian, and Ubuntu, we need to skip virt-customize due to libguestfs compatibility issues
 if [[ "$IMAGE_NAME" == *"Rocky"* || "$IMAGE_NAME" == *"rocky"* ]]; then
     echo -e "${GREEN}Detected Rocky Linux image. Skipping virt-customize due to libguestfs compatibility issues...${ENDCOLOR}"
     echo -e "${GREEN}Rocky Linux configuration will be handled during VM boot via cloud-init...${ENDCOLOR}"
@@ -115,6 +115,11 @@ elif [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     echo -e "${GREEN}All configuration including QEMU Guest Agent installation will be handled during VM boot via cloud-init user-data...${ENDCOLOR}"
     # Create a marker file to indicate Debian image was processed without virt-customize
     touch /tmp/debian_skip_virt_customize
+elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
+    echo -e "${GREEN}Detected Ubuntu image. Skipping virt-customize completely due to compatibility issues...${ENDCOLOR}"
+    echo -e "${GREEN}All configuration including QEMU Guest Agent installation will be handled during VM boot via cloud-init user-data...${ENDCOLOR}"
+    # Create a marker file to indicate Ubuntu image was processed without virt-customize
+    touch /tmp/ubuntu_skip_virt_customize
 else
     sudo virt-customize -a "$PROXMOX_ISO_PATH"/"$IMAGE_NAME" \
          --mkdir /etc/systemd/system/containerd.service.d/ \
@@ -169,7 +174,7 @@ sudo qm create "$TEMPLATE_VM_ID" \
 
 echo -e "${GREEN}Setting the VM options...${ENDCOLOR}"
 
-# Check if this is a Debian image and use custom cloud-init user-data
+# Check if this is a Debian or Ubuntu image and use custom cloud-init user-data
 if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     echo -e "${GREEN}Configuring Debian VM with custom cloud-init user-data...${ENDCOLOR}"
     
@@ -181,7 +186,15 @@ if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     
     # Create temporary cloud-init user-data file for this specific VM
     TEMP_USERDATA="/tmp/debian-userdata-${TEMPLATE_VM_ID}.yaml"
-    cp "./debian-cloud-init-userdata.yaml" "$TEMP_USERDATA"
+    
+    # Replace variables in the cloud-init file
+    echo -e "${GREEN}Processing cloud-init template variables...${ENDCOLOR}"
+    # Set VM_HOSTNAME to template name + ID for better identification
+    VM_HOSTNAME="debian-template-${TEMPLATE_VM_ID}"
+    cat "./debian-cloud-init-userdata.yaml" | \
+        sed "s|\${VM_USERNAME}|$VM_USERNAME|g" | \
+        sed "s|\${VM_SSH_KEY}|$VM_SSH_KEY|g" | \
+        sed "s|\${VM_HOSTNAME}|$VM_HOSTNAME|g" > "$TEMP_USERDATA"
     
     # Copy the user-data file to Proxmox snippets directory first
     echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
@@ -204,6 +217,80 @@ if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
       --searchdomain "$TEMPLATE_VM_SEARCH_DOMAIN" \
       --sshkeys "$SSH_KEY_FILE" \
       --cicustom "user=local:snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml" \
+      --agent "enabled=1,freeze-fs-on-backup=1,fstrim_cloned_disks=1" \
+      --hotplug cpu,disk,network,usb \
+      --tags "$EXTRA_TEMPLATE_TAGS ${KUBERNETES_MEDIUM_VERSION}"
+elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
+    echo -e "${GREEN}Configuring Ubuntu VM with custom cloud-init user-data...${ENDCOLOR}"
+    
+    # Check if the cloud-init user-data file exists
+    if [ ! -f "./ubuntu-cloud-init-userdata.yaml" ]; then
+        echo -e "${RED}Error: ubuntu-cloud-init-userdata.yaml not found!${ENDCOLOR}"
+        exit 1
+    fi
+    
+    # Create temporary cloud-init user-data file for this specific VM
+    TEMP_USERDATA="/tmp/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
+    
+    # Replace variables in the cloud-init file
+    echo -e "${GREEN}Processing cloud-init template variables...${ENDCOLOR}"
+    # Set VM_HOSTNAME to template name + ID for better identification
+    VM_HOSTNAME="ubuntu-template-${TEMPLATE_VM_ID}"
+    cat "./ubuntu-cloud-init-userdata.yaml" | \
+        sed "s|\${VM_USERNAME}|$VM_USERNAME|g" | \
+        sed "s|\${VM_SSH_KEY}|$VM_SSH_KEY|g" | \
+        sed "s|\${VM_HOSTNAME}|$VM_HOSTNAME|g" > "$TEMP_USERDATA"
+    
+    # Copy the user-data file to Proxmox snippets directory first
+    echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
+    sudo mkdir -p "/var/lib/vz/snippets"
+    sudo cp "$TEMP_USERDATA" "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
+    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
+    
+    # Also create a generic ubuntu-userdata.yaml for future VM deployments
+    sudo cp "$TEMP_USERDATA" "/var/lib/vz/snippets/ubuntu-userdata.yaml"
+    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata.yaml"
+    echo -e "${GREEN}Created generic ubuntu-userdata.yaml for VM deployments${ENDCOLOR}"
+    
+    # Copy machine-id script into VM
+    if [ -f "./ensure-unique-machine-id.sh" ]; then
+        echo -e "${GREEN}Copying machine-id script to VM...${ENDCOLOR}"
+        
+        # First try qm guest file-upload (Proxmox 7.0+)
+        if sudo qm guest file-upload "$TEMPLATE_VM_ID" ./ensure-unique-machine-id.sh /root/ensure-unique-machine-id.sh 2>/dev/null; then
+            echo -e "${GREEN}Used guest file-upload feature${ENDCOLOR}"
+        else
+            # Fallback to exec method
+            echo -e "${YELLOW}Falling back to exec method for file upload${ENDCOLOR}"
+            
+            # Create directory
+            sudo qm guest exec "$TEMPLATE_VM_ID" -- mkdir -p /root/ || true
+            
+            # Create base64 encoded content and write to file inside VM
+            base64_content=$(base64 -w0 ./ensure-unique-machine-id.sh)
+            sudo qm guest exec "$TEMPLATE_VM_ID" -- bash -c "echo '$base64_content' | base64 -d > /root/ensure-unique-machine-id.sh" || true
+        fi
+        
+        # Make the script executable
+        sudo qm guest exec "$TEMPLATE_VM_ID" -- chmod +x /root/ensure-unique-machine-id.sh || true
+        echo -e "${GREEN}Machine-id script copied successfully${ENDCOLOR}"
+    fi
+    
+    sudo qm set "$TEMPLATE_VM_ID" \
+      --scsihw virtio-scsi-pci \
+      --virtio0 "${PROXMOX_DISK_DATASTORE}:0,iothread=1,import-from=$PROXMOX_ISO_PATH/$IMAGE_NAME" \
+      --ide2 "${PROXMOX_DISK_DATASTORE}:cloudinit" \
+      --boot c \
+      --bootdisk virtio0 \
+      --serial0 socket \
+      --vga serial0 \
+      --ciuser "$VM_USERNAME" \
+      --cipassword "$VM_PASSWORD" \
+      --ipconfig0 "gw=$TEMPLATE_VM_GATEWAY,ip=$TEMPLATE_VM_IP" \
+      --nameserver "$TWO_DNS_SERVERS $TEMPLATE_VM_GATEWAY" \
+      --searchdomain "$TEMPLATE_VM_SEARCH_DOMAIN" \
+      --sshkeys "$SSH_KEY_FILE" \
+      --cicustom "user=local:snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" \
       --agent "enabled=1,freeze-fs-on-backup=1,fstrim_cloned_disks=1" \
       --hotplug cpu,disk,network,usb \
       --tags "$EXTRA_TEMPLATE_TAGS ${KUBERNETES_MEDIUM_VERSION}"
@@ -283,8 +370,23 @@ while true; do
       echo -e "\n${GREEN}Cloud-init reported as done. Proceeding...${ENDCOLOR}"
       break
     fi
+  elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
+    # For Ubuntu, check cloud-init completion
+    output=$(sudo qm guest exec "$TEMPLATE_VM_ID" cat /var/log/ubuntu-cloud-init-complete.log 2>/dev/null)
+    success=$?
+    if [[ $success -eq 0 ]]; then
+      echo -e "\n${GREEN}Ubuntu cloud-init configuration complete. VM will shutdown automatically...${ENDCOLOR}"
+      break
+    fi
+    
+    # Also check if cloud-init finished (alternative check)
+    cloud_init_status=$(sudo qm guest exec "$TEMPLATE_VM_ID" cloud-init status 2>/dev/null | jq -r '.stdout' 2>/dev/null)
+    if [[ "$cloud_init_status" == *"done"* ]]; then
+      echo -e "\n${GREEN}Cloud-init reported as done. Proceeding...${ENDCOLOR}"
+      break
+    fi
   else
-    # For non-Debian images, check firstboot completion
+    # For non-Debian/Ubuntu images, check firstboot completion
     output=$(sudo qm guest exec "$TEMPLATE_VM_ID" cat /tmp/.firstboot 2>/dev/null)
     success=$?
     if [[ $success -eq 0 ]]; then
@@ -313,16 +415,16 @@ echo -e "${GREEN}Elapsed time installing packages: $((elapsed_time_packages / 60
 
 echo -e "${GREEN}Handling VM shutdown and cleanup...${ENDCOLOR}"
 
-if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
-    echo -e "${GREEN}Debian VM should shutdown automatically. Waiting for shutdown...${ENDCOLOR}"
+if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* || "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
+    echo -e "${GREEN}Debian/Ubuntu VM should shutdown automatically. Waiting for shutdown...${ENDCOLOR}"
     
-    # Wait for Debian VM to shutdown automatically (up to 5 minutes)
+    # Wait for VM to shutdown automatically (up to 5 minutes)
     shutdown_timeout=300
     shutdown_counter=0
     while [[ $shutdown_counter -lt $shutdown_timeout ]]; do
         vm_status=$(sudo qm status "$TEMPLATE_VM_ID" | grep "status:" | awk '{print $2}')
         if [[ "$vm_status" == "stopped" ]]; then
-            echo -e "${GREEN}Debian VM has shutdown automatically.${ENDCOLOR}"
+            echo -e "${GREEN}VM has shutdown automatically.${ENDCOLOR}"
             break
         fi
         echo -n "."
@@ -337,8 +439,8 @@ if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
         sudo qm shutdown "$TEMPLATE_VM_ID" --timeout 60 || sudo qm stop "$TEMPLATE_VM_ID" --skiplock 1
     fi
     
-    # For Debian, skip log cleanup since cloud-init handles this
-    echo -e "${GREEN}Skipping log cleanup for Debian (handled by cloud-init)...${ENDCOLOR}"
+    # Skip log cleanup since cloud-init handles this
+    echo -e "${GREEN}Skipping log cleanup (handled by cloud-init)...${ENDCOLOR}"
 else
     echo -e "${GREEN}Print out disk space stats...${ENDCOLOR}"
     log_output=$(sudo qm guest exec "$TEMPLATE_VM_ID" -- /bin/sh -c "cat /var/log/watch-disk-space.txt" | jq -r '.["out-data"]' 2>/dev/null || echo "Failed to retrieve disk space log")
@@ -375,17 +477,42 @@ else
     sudo qm shutdown "$TEMPLATE_VM_ID"
 fi
 
+# For Ubuntu, ensure machine-id is cleaned before templating to avoid duplicate IPs
+if [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
+    echo -e "${GREEN}Cleaning machine-id for Ubuntu template...${ENDCOLOR}"
+    # Try to clean up machine-id in the template itself if possible
+    if sudo qm guest exec "$TEMPLATE_VM_ID" -- /bin/sh -c "truncate -s 0 /etc/machine-id && rm -f /var/lib/dbus/machine-id" >/dev/null 2>&1; then
+        echo -e "${GREEN}Successfully cleared machine-id files in the template${ENDCOLOR}"
+    else
+        echo -e "${YELLOW}Could not clear machine-id directly, VM may already be stopped${ENDCOLOR}"
+    fi
+    sudo qm set "$TEMPLATE_VM_ID" -description "Machine-ID will be regenerated on clone to ensure unique DHCP IPs"
+fi
+
 echo -e "${GREEN}Converting the shut-down VM into a template...${ENDCOLOR}"
 sudo qm template "$TEMPLATE_VM_ID"
 
 echo -e "${GREEN}Deleting the downloaded image...${ENDCOLOR}"
 sudo rm -f "${PROXMOX_ISO_PATH:?PROXMOX_ISO_PATH is not set}/${IMAGE_NAME:?IMAGE_NAME is not set}"*
 
-# Clean up temporary Debian cloud-init files
+# Clean up temporary cloud-init files
 if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     echo -e "${GREEN}Cleaning up temporary Debian cloud-init files...${ENDCOLOR}"
     sudo rm -f "/var/lib/vz/snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
     rm -f "/tmp/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
+elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
+    echo -e "${GREEN}Preserving Ubuntu cloud-init files for VM deployments...${ENDCOLOR}"
+    # Create a generic cloud-init file for all Ubuntu VMs
+    sudo cp "./ubuntu-cloud-init-userdata.yaml" "/var/lib/vz/snippets/ubuntu-userdata.yaml"
+    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata.yaml"
+    
+    # Important: ALSO KEEP the template-specific file (this is what Terraform/OpenTofu references)
+    sudo cp "./ubuntu-cloud-init-userdata.yaml" "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
+    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
+    echo -e "${GREEN}Created permanent ubuntu cloud-init files in snippets for VM deployments${ENDCOLOR}"
+    
+    # Clean up only the temp file
+    rm -f "/tmp/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
 fi
 
 echo -e "${GREEN}Template created successfully${ENDCOLOR}"

@@ -6,6 +6,22 @@
 package_update: true
 package_upgrade: true
 
+# Set the hostname - This will be replaced during VM creation
+hostname: ${VM_HOSTNAME}
+fqdn: ${VM_HOSTNAME}
+preserve_hostname: false
+
+# Define users - This ensures the VM_USERNAME from template.sh is used
+users:
+  - default
+  - name: ${VM_USERNAME}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${VM_SSH_KEY}
+
 # Add network configuration for DHCP on common interface names
 network:
   version: 2
@@ -45,10 +61,29 @@ packages:
 runcmd:
   # Unmask and enable QEMU Guest Agent
   - systemctl unmask qemu-guest-agent.service
-  - systemctl enable qemu-guest-agent
+  - systemctl enable qemu-guest-agent.service
+  - systemctl start qemu-guest-agent.service
   
   # Set timezone
   - timedatectl set-timezone America/New_York
+  
+  # Generate a fresh machine-id to ensure unique IPs when using DHCP
+  - |
+    # Remove old machine IDs
+    rm -f /etc/machine-id /var/lib/dbus/machine-id
+    
+    # Create a truly random machine-id based on hostname and date
+    random_id=$(hostname | md5sum | cut -d' ' -f1)
+    current_time=$(date +%s%N)
+    
+    # Combine and create a deterministic but unique id
+    echo "${random_id}${current_time}" | md5sum | cut -d' ' -f1 > /etc/machine-id
+    
+    # Copy to dbus location
+    mkdir -p /var/lib/dbus
+    cp /etc/machine-id /var/lib/dbus/machine-id
+    
+    echo "Generated new machine-id: $(cat /etc/machine-id)"
   
   # Enable systemd-timesyncd - REMOVED
   # - systemctl enable systemd-timesyncd
@@ -112,8 +147,10 @@ runcmd:
   - systemctl enable chrony
   - systemctl start chrony
 
-  # Restart QEMU Guest Agent late in the process
+  # Restart QEMU Guest Agent and network services late in the process
   - systemctl restart qemu-guest-agent
+  - systemctl restart systemd-networkd || true
+  - systemctl restart systemd-resolved || true
   
   # Clean up package cache
   - apt-get autoremove -y
@@ -122,10 +159,5 @@ runcmd:
   # Signal that cloud-init setup is complete
   - echo "Debian cloud-init configuration completed at $(date)" > /var/log/debian-cloud-init-complete.log
 
-# Configure power state - shutdown after configuration is complete
-# This allows the template to be created cleanly
-power_state:
-  mode: poweroff
-  delay: 30
-  timeout: 60
-  condition: True
+# Final message instead of power_state to avoid premature shutdown
+final_message: "Debian template setup completed successfully after $UPTIME seconds"
