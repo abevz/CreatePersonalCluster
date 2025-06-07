@@ -52,12 +52,12 @@ runcmd:
   - echo "${hostname}" > /etc/hostname
   - hostname ${hostname}
   
-  # For Ubuntu specifically - create network config file
-  - 'echo "network:" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg'
-  - 'echo "  config: disabled" >> /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg'
+  # For Ubuntu specifically  
+  - echo 'network:' > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+  - echo '  config: disabled' >> /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
   
   # Ensure cloud-init doesn't change hostname on next boot
-  - 'echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg'
+  - echo 'preserve_hostname: true' > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
   
   # Restart network services to apply new machine-id for DHCP
   - |
