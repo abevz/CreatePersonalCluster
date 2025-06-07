@@ -1,0 +1,52 @@
+#cloud-config
+# Simplified Cloud-init configuration for Debian template
+# Minimal configuration to ensure basic functionality
+
+# Update package cache and install essential packages
+package_update: true
+package_upgrade: false
+
+# Set the hostname
+hostname: ${VM_HOSTNAME}
+preserve_hostname: false
+
+# Define users
+users:
+  - default
+  - name: ${VM_USERNAME}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${VM_SSH_KEY}
+
+# Install only essential packages for template
+packages:
+  - qemu-guest-agent
+  - curl
+  - wget
+  - openssh-server
+
+# Enable services
+runcmd:
+  # Enable and start QEMU Guest Agent
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
+  
+  # Set timezone
+  - timedatectl set-timezone America/New_York
+  
+  # Ensure SSH is enabled
+  - systemctl enable ssh
+  - systemctl start ssh
+  
+  # Create completion marker
+  - echo "Debian simple cloud-init completed at $(date)" > /var/log/debian-simple-init-complete.log
+
+# Configure power state - shutdown after configuration
+power_state:
+  mode: poweroff
+  delay: 30
+  timeout: 120
+  condition: True

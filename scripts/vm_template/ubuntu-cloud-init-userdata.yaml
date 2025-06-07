@@ -1,0 +1,127 @@
+#cloud-config
+# Cloud-init configuration for Ubuntu template
+# This handles all configuration that would normally be done by virt-customize
+
+# Update package cache and upgrade system
+package_update: true
+package_upgrade: true
+
+# Set the hostname - This will be replaced during VM creation
+hostname: ${VM_HOSTNAME}
+fqdn: ${VM_HOSTNAME}
+preserve_hostname: false
+
+# Define users - This ensures the VM_USERNAME from template.sh is used
+users:
+  - default
+  - name: ${VM_USERNAME}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${VM_SSH_KEY}
+
+# Add network configuration for DHCP on common interface names
+network:
+  version: 2
+  ethernets:
+    id0: # You can name this logical ID anything, e.g., main_nic
+      match:
+        name: "en* OR eth*" # Matches ensX, enpXsX, ethX etc.
+      dhcp4: true
+      # dhcp6: true # Uncomment if IPv6 DHCP is also desired/available
+
+# Install essential packages including QEMU Guest Agent
+packages:
+  - qemu-guest-agent
+  - curl
+  - wget
+  - apt-transport-https
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - htop
+  - vim
+  - git
+  - jq
+  - unzip
+  - tree
+  - net-tools
+  - iputils-ping
+  - dnsutils
+  # - systemd-timesyncd # Removed, as chrony will be used
+  - open-iscsi
+  - nfs-common
+  - multipath-tools
+  - chrony
+
+# Enable services
+runcmd:
+  # Unmask and enable QEMU Guest Agent
+  - systemctl unmask qemu-guest-agent.service
+  - systemctl enable qemu-guest-agent.service
+  - systemctl start qemu-guest-agent.service
+  
+  # Set timezone
+  - timedatectl set-timezone America/New_York
+  
+  # Generate a fresh machine-id to ensure unique IPs when using DHCP
+  - |
+    # Remove old machine IDs
+    rm -f /etc/machine-id /var/lib/dbus/machine-id
+    
+    # Create a truly random machine-id based on hostname and date
+    random_id=$(hostname | md5sum | cut -d' ' -f1)
+    current_time=$(date +%s%N)
+    
+    # Combine and create a deterministic but unique id
+    echo "${random_id}${current_time}" | md5sum | cut -d' ' -f1 > /etc/machine-id
+    
+    # Copy to dbus location
+    mkdir -p /var/lib/dbus
+    cp /etc/machine-id /var/lib/dbus/machine-id
+    
+    echo "Generated new machine-id: $(cat /etc/machine-id)"
+    
+    # Apply hostname and network changes
+    hostnamectl apply
+    netplan apply
+    systemctl restart systemd-networkd
+    systemctl restart systemd-resolved
+    
+    # Setup startup script for machine-id regeneration on each boot
+    mkdir -p /var/lib/cloud/scripts/per-instance/
+    if [ -f "/root/ensure-unique-machine-id.sh" ]; then
+      cp /root/ensure-unique-machine-id.sh /var/lib/cloud/scripts/per-instance/
+      chmod +x /var/lib/cloud/scripts/per-instance/ensure-unique-machine-id.sh
+    else
+      echo "Warning: ensure-unique-machine-id.sh not found in /root!"
+    fi
+    
+    # Create systemd service to make absolutely sure we get unique machine-id
+    cat > /etc/systemd/system/ensure-unique-machineid.service << 'EOL'
+    [Unit]
+    Description=Ensure unique machine-id for DHCP
+    After=network.target
+    Before=network-online.target
+    
+    [Service]
+    Type=oneshot
+    ExecStart=/var/lib/cloud/scripts/per-instance/ensure-unique-machine-id.sh
+    RemainAfterExit=yes
+    
+    [Install]
+    WantedBy=multi-user.target
+    EOL
+    
+    # Enable the service
+    systemctl daemon-reload
+    systemctl enable ensure-unique-machineid.service
+  
+  # Create a completion marker file - this helps the template creation script know when cloud-init is done
+  - touch /var/log/ubuntu-cloud-init-complete.log
+
+# Final message
+final_message: "The system is finally up, after $UPTIME seconds"

@@ -1,0 +1,34 @@
+#cloud-config
+# Set the hostname
+hostname: u.
+fqdn: u.
+preserve_hostname: false
+manage_etc_hosts: true
+
+# Add hostname to /etc/hosts
+write_files:
+  - path: /etc/hosts
+    content: |
+      127.0.0.1 localhost
+      127.0.1.1 u.
+
+      # The following lines are desirable for IPv6 capable hosts
+      ::1     ip6-localhost ip6-loopback
+      fe00::0 ip6-localnet
+      ff00::0 ip6-mcastprefix
+      ff02::1 ip6-allnodes
+      ff02::2 ip6-allrouters
+    append: false
+
+runcmd:
+  # Apply hostname changes with different methods for better compatibility
+  - hostnamectl set-hostname u.
+  - echo "u." > /etc/hostname
+  - hostname u.
+  
+  # For Ubuntu specifically
+  - echo 'network:' > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+  - echo '  config: disabled' >> /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+  
+  # Ensure cloud-init doesn't change hostname on next boot
+  - echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg

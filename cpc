@@ -344,6 +344,7 @@ display_usage() {
   echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)."
   echo "  template             Creates a VM template for Kubernetes"
   echo "  update-pihole <action>         Manage Pi-hole DNS records. Action can be 'add' or 'unregister-dns'." # Changed
+  echo "  gen_hostnames                   Generate hostname configurations for VMs in Proxmox"
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
   echo "  start-vms                      Start all VMs in the current context."
   echo "  stop-vms                       Stop all VMs in the current context."
@@ -588,6 +589,25 @@ case "$COMMAND" in
     shift # Remove subcommand, rest are its arguments
 
     final_tofu_cmd_array=(tofu "$tofu_subcommand")
+    
+    # Generate node hostname configurations for Proxmox if applying or planning
+    if [ "$tofu_subcommand" = "apply" ] || [ "$tofu_subcommand" = "plan" ]; then
+      echo -e "${BLUE}Generating node hostname configurations...${ENDCOLOR}"
+      if [ -x "$REPO_PATH/scripts/generate_node_hostnames.sh" ]; then
+        pushd "$REPO_PATH/scripts" > /dev/null
+        ./generate_node_hostnames.sh
+        HOSTNAME_SCRIPT_STATUS=$?
+        popd > /dev/null
+        
+        if [ $HOSTNAME_SCRIPT_STATUS -ne 0 ]; then
+          echo -e "${YELLOW}Warning: Hostname generation script returned non-zero status. Some VMs may have incorrect hostnames.${ENDCOLOR}"
+        else
+          echo -e "${GREEN}Hostname configurations generated successfully.${ENDCOLOR}"
+        fi
+      else
+        echo -e "${YELLOW}Warning: Hostname generation script not found or not executable. Some VMs may have incorrect hostnames.${ENDCOLOR}"
+      fi
+    fi
 
     # Check if the subcommand is one that accepts -var-file
     case "$tofu_subcommand" in
@@ -617,6 +637,26 @@ case "$COMMAND" in
       exit 1
     fi
     echo -e "${GREEN}'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'.${ENDCOLOR}"
+    ;;
+
+  gen_hostnames)
+    echo "Generating node hostname configurations..."
+    if [[ -f "$REPO_PATH/scripts/generate_node_hostnames.sh" ]]; then
+      pushd "$REPO_PATH/scripts" > /dev/null
+      ./generate_node_hostnames.sh
+      HOSTNAME_SCRIPT_STATUS=$?
+      popd > /dev/null
+      
+      if [ $HOSTNAME_SCRIPT_STATUS -ne 0 ]; then
+        echo -e "${RED}Error: Hostname generation failed with status $HOSTNAME_SCRIPT_STATUS${ENDCOLOR}"
+        exit 1
+      else
+        echo -e "${GREEN}Hostname configurations generated successfully.${ENDCOLOR}"
+      fi
+    else 
+      echo -e "${RED}Hostname generation script not found at $REPO_PATH/scripts/generate_node_hostnames.sh${ENDCOLOR}"
+      exit 1
+    fi
     ;;
 
   start-vms)
