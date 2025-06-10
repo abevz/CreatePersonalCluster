@@ -27,20 +27,26 @@ This project provides a complete solution for deploying production-ready Kuberne
    ```bash
    cp cpc.env.example cpc.env
    # Edit cpc.env with your configuration
+   ./cpc setup-cpc
    ```
 
-2. **Create VM template**:
+2. **Set cluster context and create VM template**:
    ```bash
-   ./cpc template --workspace ubuntu
+   ./cpc ctx ubuntu
+   ./cpc template
    ```
 
-3. **Deploy cluster**:
+3. **Deploy infrastructure and bootstrap cluster**:
    ```bash
-   ./cpc bootstrap --workspace ubuntu
+   ./cpc deploy apply                # Deploy VMs
+   ./cpc bootstrap                   # Bootstrap Kubernetes cluster
+   ./cpc get-kubeconfig             # Get cluster access
    ```
 
 4. **Install addons**:
    ```bash
+   ./cpc upgrade-addons             # Interactive menu
+   # or direct installation:
    ./cpc upgrade-addons --addon all
    ```
 
@@ -91,6 +97,7 @@ This project provides a complete solution for deploying production-ready Kuberne
 - [CPC Template Variables Guide](docs/cpc_template_variables_guide.md) - Configuration reference
 
 ### Troubleshooting Guides
+- [SSH Management Commands](docs/ssh_management_commands.md) - SSH connection and known_hosts management
 - [SSH Key Troubleshooting](docs/ssh_key_troubleshooting.md) - SSH authentication issues
 - [Template SSH Troubleshooting](docs/template_ssh_troubleshooting.md) - VM template SSH problems
 - [Cloud-Init User Issues](docs/cloud_init_user_issues.md) - User account creation problems

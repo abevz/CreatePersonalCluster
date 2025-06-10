@@ -89,8 +89,20 @@ sops -d terraform/secrets.sops.yaml
 ./cpc deploy output k8s_node_names
 ```
 
-### 4. Kubernetes Installation
+### 4. Kubernetes Cluster Bootstrap
 
+```bash
+# Bootstrap complete Kubernetes cluster (automated)
+./cpc bootstrap
+
+# Get cluster access configuration
+./cpc get-kubeconfig
+
+# Verify cluster is working
+kubectl get nodes -o wide
+```
+
+**Alternative Manual Method:**
 ```bash
 # Install Kubernetes components on all nodes
 ansible-playbook -i ansible/inventory/tofu_inventory.py ansible/playbooks/install_kubernetes_cluster.yml

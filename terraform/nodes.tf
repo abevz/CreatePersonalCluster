@@ -84,7 +84,7 @@ resource "proxmox_virtual_environment_vm" "node" {
     datastore_id = each.value.disks[0].datastore_id # datastore for cloud-init ISO
     
     # Use node-specific cloud-init snippet for hostname configuration
-    user_data_file_id = "local:snippets/node-${each.value.role}${each.value.index}-userdata.yaml"
+    user_data_file_id = "${var.storage}:snippets/node-${each.value.role}${local.release_letter}${each.value.index}-userdata.yaml"
 
     ip_config {
       ipv4 {

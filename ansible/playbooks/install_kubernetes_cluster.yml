@@ -125,8 +125,7 @@
       ansible.builtin.shell: |
         containerd config default > /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-      args:
-        creates: /etc/containerd/config.toml # Avoid re-running if config exists
+        sed -i 's/disabled_plugins = \[\"cri\"\]/disabled_plugins = []/g' /etc/containerd/config.toml
       changed_when: true # Assume it changes if it runs
       notify: Restart containerd
 

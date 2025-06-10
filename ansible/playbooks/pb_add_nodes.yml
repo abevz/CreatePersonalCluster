@@ -5,11 +5,21 @@
   gather_facts: yes
 
   vars:
-    join_token: "{{ join_token | default('') }}" # Will be generated if not provided
-    discovery_token_ca_cert_hash: "{{ discovery_token_ca_cert_hash | default('') }}" # Will be discovered if not provided
-    control_plane_endpoint: "{{ control_plane_endpoint | default(hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443') }}"
+    join_token: "" # Will be generated if not provided
+    discovery_token_ca_cert_hash: "" # Will be discovered if not provided
 
   tasks:
+    - name: Gather facts from control plane
+      setup:
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      delegate_facts: yes
+      run_once: true
+
+    - name: Set control plane endpoint
+      set_fact:
+        control_plane_endpoint: "{{ hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443' }}"
+      run_once: true
+
     - name: Generate join token if not provided
       delegate_to: "{{ groups['control_plane'][0] }}"
       shell: kubeadm token create --print-join-command

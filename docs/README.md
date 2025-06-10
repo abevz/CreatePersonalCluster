@@ -1,5 +1,33 @@
 # Project: Proxmox VM and Kubernetes Cluster Automation
 
+## 📚 Documentation Index
+
+### 🚀 Quick Start Guides
+- **[Complete Cluster Creation Guide](complete_cluster_creation_guide.md)** - ⭐ **НОВОЕ** Полное руководство по созданию кластера (РЕКОМЕНДУЕТСЯ)
+- **[Complete Workflow Guide](complete_workflow_guide.md)** - End-to-end cluster deployment walkthrough
+- **[Bootstrap Command Guide](bootstrap_command_guide.md)** - Detailed guide for the `cpc bootstrap` command
+- **[Cluster Deployment Guide](cluster_deployment_guide.md)** - Comprehensive deployment documentation
+
+### 🔧 Core Documentation
+- **[Architecture Overview](architecture.md)** - System architecture and design principles
+- **[CPC Template Variables Guide](cpc_template_variables_guide.md)** - Configuration reference
+- **[Project Status Summary](project_status_summary.md)** - Current development status
+
+### 🛠️ Troubleshooting Guides
+- **[SSH Management Commands](ssh_management_commands.md)** - SSH connection and known_hosts management
+- **[SSH Key Troubleshooting](ssh_key_troubleshooting.md)** - SSH authentication issues
+- **[Template SSH Troubleshooting](template_ssh_troubleshooting.md)** - VM template SSH problems
+- **[Cloud-Init User Issues](cloud_init_user_issues.md)** - User account creation problems
+- **[Proxmox VM Helper](proxmox_vm_helper.md)** - VM management utilities
+
+### 📊 Status Reports
+- **[SSH Bootstrap Fix Summary](ssh_bootstrap_fix_summary.md)** - SSH host key verification automation
+- **[Project Status Report](project_status_report.md)** - Development progress tracking
+- **[Addon Installation Report](addon_installation_completion_report.md)** - Recent addon improvements
+- **[Template Status Updates](template_status_update.md)** - VM template development status
+
+---
+
 ## 1. Overview
 
 This project automates the provisioning of Virtual Machines (VMs) in a Proxmox VE environment using Terraform, and subsequently bootstraps a Kubernetes cluster on these VMs using Ansible. It includes features for managing DNS records in Pi-hole based on VM deployments and utilizes SOPS for encrypting sensitive data. The primary interface for managing these operations is the `cpc` (Cluster Provisioning Control) shell script.

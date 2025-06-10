@@ -69,6 +69,7 @@ echo -e "${GREEN}Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_US
 
 # Essential variable checks (variables from cpc.env - SOPS secrets already loaded above)
 : "${PROXMOX_ISO_PATH:?PROXMOX_ISO_PATH is not set in cpc.env}"
+: "${PROXMOX_STORAGE_BASE_PATH:?PROXMOX_STORAGE_BASE_PATH is not set in cpc.env}"
 : "${IMAGE_NAME:?IMAGE_NAME is not set in cpc.env}"
 : "${IMAGE_LINK:?IMAGE_LINK is not set in cpc.env}"
 : "${TIMEZONE:?TIMEZONE is not set in cpc.env}"
@@ -95,11 +96,71 @@ fi
 
 set -e
 
-echo -e "${GREEN}Removing old image if it exists...${ENDCOLOR}"
-sudo rm -f "${PROXMOX_ISO_PATH:?PROXMOX_ISO_PATH is not set}/${IMAGE_NAME:?IMAGE_NAME is not set}"* 2>/dev/null || true
+# Smart image download with caching
+download_image_legacy() {
+    local image_path="$PROXMOX_ISO_PATH/$IMAGE_NAME"
+    local temp_headers="/tmp/image_headers_${TEMPLATE_VM_ID}.txt"
+    local force_download="${FORCE_IMAGE_DOWNLOAD:-false}"
+    
+    echo -e "${GREEN}Checking if image download is needed...${ENDCOLOR}"
+    
+    # If forced download is enabled, skip all checks
+    if [[ "$force_download" == "true" ]]; then
+        echo -e "${YELLOW}Force download enabled. Skipping cache checks.${ENDCOLOR}"
+    elif [[ -f "$image_path" ]]; then
+        echo -e "${YELLOW}Image already exists: $image_path${ENDCOLOR}"
+        
+        # Get remote file info (Last-Modified and Content-Length)
+        if sudo wget --no-check-certificate --spider --server-response "$IMAGE_LINK" 2>&1 | grep -E "(Last-Modified|Content-Length)" > "$temp_headers"; then
+            local remote_size=$(grep "Content-Length" "$temp_headers" | tail -1 | awk '{print $2}' | tr -d '\r')
+            local remote_date=$(grep "Last-Modified" "$temp_headers" | tail -1 | cut -d' ' -f2- | tr -d '\r')
+            
+            # Get local file info
+            local local_size=$(stat -c%s "$image_path" 2>/dev/null || echo "0")
+            local local_date=$(date -r "$image_path" -u "+%a, %d %b %Y %H:%M:%S GMT" 2>/dev/null || echo "")
+            
+            echo -e "${BLUE}Remote: ${remote_size} bytes, ${remote_date}${ENDCOLOR}"
+            echo -e "${BLUE}Local:  ${local_size} bytes, ${local_date}${ENDCOLOR}"
+            
+            # Compare sizes and dates
+            if [[ "$remote_size" != "$local_size" ]] || [[ "$remote_date" != "$local_date" ]]; then
+                echo -e "${YELLOW}Image has changed. Download needed.${ENDCOLOR}"
+                force_download=true
+            else
+                echo -e "${GREEN}Image is up to date. Skipping download.${ENDCOLOR}"
+                rm -f "$temp_headers"
+                return 0
+            fi
+        else
+            echo -e "${YELLOW}Could not check remote image info. Will re-download to be safe.${ENDCOLOR}"
+            force_download=true
+        fi
+    else
+        echo -e "${YELLOW}Image not found locally. Download needed.${ENDCOLOR}"
+        force_download=true
+    fi
+    
+    # Clean up temp headers file
+    rm -f "$temp_headers"
+    
+    # Download image if needed
+    if [[ "$force_download" == "true" ]]; then
+        echo -e "${GREEN}Removing old image if it exists...${ENDCOLOR}"
+        sudo rm -f "${image_path}"* 2>/dev/null || true
 
-echo -e "${GREEN}Downloading the image to get new updates...${ENDCOLOR}"
-sudo wget --no-check-certificate -qO "$PROXMOX_ISO_PATH"/"$IMAGE_NAME" "$IMAGE_LINK"
+        echo -e "${GREEN}Downloading the image...${ENDCOLOR}"
+        if ! sudo wget --no-check-certificate -qO "$image_path" "$IMAGE_LINK"; then
+            echo -e "${RED}Failed to download image from $IMAGE_LINK${ENDCOLOR}"
+            return 1
+        fi
+        echo -e "${GREEN}Image downloaded successfully.${ENDCOLOR}"
+    fi
+    
+    return 0
+}
+
+# Call the smart download function
+download_image_legacy
 echo ""
 
 echo -e "${GREEN}Update, add packages, enable services, edit multipath config, set timezone, set firstboot scripts...${ENDCOLOR}"
@@ -198,9 +259,10 @@ if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     
     # Copy the user-data file to Proxmox snippets directory first
     echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
-    sudo mkdir -p "/var/lib/vz/snippets"
-    sudo cp "$TEMP_USERDATA" "/var/lib/vz/snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml"
-    sudo chmod 644 "/var/lib/vz/snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml"
+    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    sudo mkdir -p "$snippets_path"
+    sudo cp "$TEMP_USERDATA" "${snippets_path}/debian-userdata-${TEMPLATE_VM_ID}.yaml"
+    sudo chmod 644 "${snippets_path}/debian-userdata-${TEMPLATE_VM_ID}.yaml"
     
     sudo qm set "$TEMPLATE_VM_ID" \
       --scsihw virtio-scsi-pci \
@@ -216,7 +278,7 @@ if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
       --nameserver "$TWO_DNS_SERVERS $TEMPLATE_VM_GATEWAY" \
       --searchdomain "$TEMPLATE_VM_SEARCH_DOMAIN" \
       --sshkeys "$SSH_KEY_FILE" \
-      --cicustom "user=local:snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml" \
+      --cicustom "user=${PROXMOX_DISK_DATASTORE}:snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml" \
       --agent "enabled=1,freeze-fs-on-backup=1,fstrim_cloned_disks=1" \
       --hotplug cpu,disk,network,usb \
       --tags "$EXTRA_TEMPLATE_TAGS ${KUBERNETES_MEDIUM_VERSION}"
@@ -243,13 +305,16 @@ elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
     
     # Copy the user-data file to Proxmox snippets directory first
     echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
-    sudo mkdir -p "/var/lib/vz/snippets"
-    sudo cp "$TEMP_USERDATA" "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
-    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
+    # Copy the user-data file to Proxmox snippets directory first
+    echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
+    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    sudo mkdir -p "$snippets_path"
+    sudo cp "$TEMP_USERDATA" "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
+    sudo chmod 644 "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
     
     # Also create a generic ubuntu-userdata.yaml for future VM deployments
-    sudo cp "$TEMP_USERDATA" "/var/lib/vz/snippets/ubuntu-userdata.yaml"
-    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata.yaml"
+    sudo cp "$TEMP_USERDATA" "${snippets_path}/ubuntu-userdata.yaml"
+    sudo chmod 644 "${snippets_path}/ubuntu-userdata.yaml"
     echo -e "${GREEN}Created generic ubuntu-userdata.yaml for VM deployments${ENDCOLOR}"
     
     # Copy machine-id script into VM
@@ -290,7 +355,7 @@ elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
       --nameserver "$TWO_DNS_SERVERS $TEMPLATE_VM_GATEWAY" \
       --searchdomain "$TEMPLATE_VM_SEARCH_DOMAIN" \
       --sshkeys "$SSH_KEY_FILE" \
-      --cicustom "user=local:snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" \
+      --cicustom "user=${PROXMOX_DISK_DATASTORE}:snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" \
       --agent "enabled=1,freeze-fs-on-backup=1,fstrim_cloned_disks=1" \
       --hotplug cpu,disk,network,usb \
       --tags "$EXTRA_TEMPLATE_TAGS ${KUBERNETES_MEDIUM_VERSION}"
@@ -498,17 +563,20 @@ sudo rm -f "${PROXMOX_ISO_PATH:?PROXMOX_ISO_PATH is not set}/${IMAGE_NAME:?IMAGE
 # Clean up temporary cloud-init files
 if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     echo -e "${GREEN}Cleaning up temporary Debian cloud-init files...${ENDCOLOR}"
-    sudo rm -f "/var/lib/vz/snippets/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
+    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    sudo rm -f "${snippets_path}/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
     rm -f "/tmp/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
 elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
     echo -e "${GREEN}Preserving Ubuntu cloud-init files for VM deployments...${ENDCOLOR}"
     # Create a generic cloud-init file for all Ubuntu VMs
-    sudo cp "./ubuntu-cloud-init-userdata.yaml" "/var/lib/vz/snippets/ubuntu-userdata.yaml"
-    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata.yaml"
+    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    sudo cp "./ubuntu-cloud-init-userdata.yaml" "${snippets_path}/ubuntu-userdata.yaml"
+    sudo chmod 644 "${snippets_path}/ubuntu-userdata.yaml"
     
     # Important: ALSO KEEP the template-specific file (this is what Terraform/OpenTofu references)
-    sudo cp "./ubuntu-cloud-init-userdata.yaml" "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
-    sudo chmod 644 "/var/lib/vz/snippets/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
+    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    sudo cp "./ubuntu-cloud-init-userdata.yaml" "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
+    sudo chmod 644 "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
     echo -e "${GREEN}Created permanent ubuntu cloud-init files in snippets for VM deployments${ENDCOLOR}"
     
     # Clean up only the temp file

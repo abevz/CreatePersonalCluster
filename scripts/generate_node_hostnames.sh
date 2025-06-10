@@ -10,12 +10,22 @@ if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ]; then
     exit 1
 fi
 
+# Load additional configuration variables from cpc.env
+if [ -f "$REPO_PATH/cpc.env" ]; then
+    source "$REPO_PATH/cpc.env"
+else
+    echo "Warning: cpc.env not found. Using default storage paths."
+    PROXMOX_STORAGE_BASE_PATH="/DataPool"
+    PROXMOX_DISK_DATASTORE="MyStorage"
+fi
+
 echo "Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, PROXMOX_USERNAME: $PROXMOX_USERNAME)"
+echo "Using storage configuration: ${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
 
 # Get the current workspace to determine release letter
-cd ../terraform
+cd "$REPO_PATH/terraform"
 CURRENT_WORKSPACE=$(tofu workspace show)
-cd ../scripts
+cd "$REPO_PATH/scripts"
 
 # Map workspace to release letter (same logic as in locals.tf)
 case "$CURRENT_WORKSPACE" in
@@ -27,14 +37,14 @@ case "$CURRENT_WORKSPACE" in
 esac
 
 # Get cluster domain from Terraform variables
-VM_DOMAIN=$(grep -A 3 'variable "vm_domain"' ../terraform/variables.tf | grep 'default' | cut -d'"' -f2)
+VM_DOMAIN=$(grep -A 3 'variable "vm_domain"' "$REPO_PATH/terraform/variables.tf" | grep 'default' | cut -d'"' -f2)
 
 # Get node information from the terraform output instead of parsing the configuration files
 # This is more reliable as it uses the actual data structure that Terraform/OpenTofu has built
 echo "Getting node information from terraform output..."
-cd ../terraform
+cd "$REPO_PATH/terraform"
 NODE_INFO=$(tofu output -json k8s_node_names)
-cd ../scripts
+cd "$REPO_PATH/scripts"
 
 # Parse the JSON output to extract roles and hostnames
 HOSTNAMES=()
@@ -66,7 +76,7 @@ else
   
   # Fallback to grep-based parsing if the tofu command fails
   # Parse the node_definitions section to get the structure
-  NODE_DEFS=$(grep -A 10 "node_definitions = {" ../terraform/locals.tf | grep -E "(controlplane|worker[0-9]*)" | awk '{print $1}')
+  NODE_DEFS=$(grep -A 10 "node_definitions = {" "$REPO_PATH/terraform/locals.tf" | grep -E "(controlplane|worker[0-9]*)" | awk '{print $1}')
   
   # Create arrays for roles and indices
   ROLES=()
@@ -88,7 +98,7 @@ else
 fi
 
 # Create snippets directory if it doesn't exist
-mkdir -p ../terraform/snippets
+mkdir -p "$REPO_PATH/terraform/snippets"
 
 echo "Generating cloud-init snippets for each node..."
 
@@ -111,20 +121,20 @@ for i in "${!ROLES[@]}"; do
   fi
   
   # Create a cloud-init snippet for this node - naming format must match what's expected in nodes.tf
-  NODE_KEY="node-${ROLE}${INDEX}-userdata.yaml"
-  cat ../terraform/snippets/hostname-template.yaml | 
-    sed "s|\${hostname}|$FQDN|g" > "../terraform/snippets/$NODE_KEY"
+  NODE_KEY="node-${ROLE}${RELEASE_LETTER}${INDEX}-userdata.yaml"
+  cat "$REPO_PATH/terraform/snippets/hostname-template.yaml" | 
+    sed "s|\${hostname}|$FQDN|g" > "$REPO_PATH/terraform/snippets/$NODE_KEY"
   
   echo "Created cloud-init snippet for $FQDN"
 done
 
-echo "Done. Created $(ls -la ../terraform/snippets/node-*-userdata.yaml | wc -l) cloud-init snippets."
+echo "Done. Created $(ls -la $REPO_PATH/terraform/snippets/node-*-userdata.yaml | wc -l) cloud-init snippets."
 
 # Create a summary file for Terraform to use
 echo "Creating summary file for Terraform..."
-echo "# Auto-generated cloud-init snippets" > ../terraform/snippets/summary.txt
-echo "# Generated on $(date)" >> ../terraform/snippets/summary.txt
-echo "# Node count: ${#ROLES[@]}" >> ../terraform/snippets/summary.txt
+echo "# Auto-generated cloud-init snippets" > $REPO_PATH/terraform/snippets/summary.txt
+echo "# Generated on $(date)" >> $REPO_PATH/terraform/snippets/summary.txt
+echo "# Node count: ${#ROLES[@]}" >> $REPO_PATH/terraform/snippets/summary.txt
 
 # Copy snippets to Proxmox host
 echo "Debug: PROXMOX_HOST='$PROXMOX_HOST', PROXMOX_USERNAME='$PROXMOX_USERNAME'"
@@ -136,17 +146,20 @@ if [ -n "$PROXMOX_HOST" ] && [ -n "$PROXMOX_USERNAME" ]; then
     INDEX="${INDICES[$i]}"
     
     # Get the node key for the snippet filename
-    NODE_KEY="node-${ROLE}${INDEX}-userdata.yaml"
+    NODE_KEY="node-${ROLE}${RELEASE_LETTER}${INDEX}-userdata.yaml"
     
     # Copy the snippet to Proxmox
-    scp "../terraform/snippets/$NODE_KEY" "$PROXMOX_USERNAME@$PROXMOX_HOST:/tmp/"
-    ssh "$PROXMOX_USERNAME@$PROXMOX_HOST" "sudo mkdir -p /var/lib/vz/snippets && sudo cp /tmp/$NODE_KEY /var/lib/vz/snippets/"
+    scp "$REPO_PATH/terraform/snippets/$NODE_KEY" "$PROXMOX_USERNAME@$PROXMOX_HOST:/tmp/"
+    
+    # Use configurable storage path instead of hardcoded /var/lib/vz/snippets
+    SNIPPETS_PATH="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    ssh "$PROXMOX_USERNAME@$PROXMOX_HOST" "sudo mkdir -p $SNIPPETS_PATH && sudo cp /tmp/$NODE_KEY $SNIPPETS_PATH/"
     
     # Ensure the file has correct permissions
-    ssh "$PROXMOX_USERNAME@$PROXMOX_HOST" "sudo chmod 644 /var/lib/vz/snippets/$NODE_KEY"
+    ssh "$PROXMOX_USERNAME@$PROXMOX_HOST" "sudo chmod 644 $SNIPPETS_PATH/$NODE_KEY"
     
-    echo "Copied $NODE_KEY to Proxmox host"
+    echo "Copied $NODE_KEY to Proxmox host at $SNIPPETS_PATH/"
   done
   
-  echo "Done copying snippets to Proxmox host"
+  echo "Done copying snippets to Proxmox host at $SNIPPETS_PATH/"
 fi
