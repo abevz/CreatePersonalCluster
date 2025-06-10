@@ -1,24 +1,236 @@
 ---
-- name: Upgrade Kubernetes Control Plane (Placeholder)
-  hosts: "{{ target_hosts | default('k8s_control_plane') }}" # Target your control plane group
+- name: Upgrade Kubernetes Control Plane
+  hosts: "{{ target_hosts | default('control_plane') }}"
   become: yes
   gather_facts: yes
+  serial: 1  # Upgrade one control plane node at a time
 
   vars:
-    target_k8s_version: "{{ kubernetes_version }}.{{ kubernetes_patch_version }}" # Example, ensure this is the desired UPGRADE version
+    target_k8s_version: "{{ kubernetes_version | default('1.31') }}"
+    target_k8s_patch_version: "{{ kubernetes_patch_version | default('9') }}"
+    full_k8s_version: "{{ target_k8s_version }}.{{ target_k8s_patch_version }}"
+    first_control_plane: "{{ groups['control_plane'][0] }}"
+
+  pre_tasks:
+    - name: Check current Kubernetes version
+      shell: kubelet --version | cut -d' ' -f2 | cut -d'v' -f2
+      register: current_k8s_version
+      changed_when: false
+
+    - name: Skip if already at target version
+      meta: end_host
+      when: current_k8s_version.stdout == full_k8s_version
+
+    - name: Verify this is a control plane node
+      fail:
+        msg: "This playbook should only run on control plane nodes"
+      when: inventory_hostname not in groups['control_plane']
 
   tasks:
-    - name: Display placeholder message for upgrading Kubernetes control plane
-      ansible.builtin.debug:
+    - name: Determine if this is the first control plane node
+      set_fact:
+        is_first_control_plane: "{{ inventory_hostname == first_control_plane }}"
+
+    - name: Backup etcd (first control plane only)
+      block:
+        - name: Create etcd backup directory
+          file:
+            path: /opt/etcd-backup
+            state: directory
+            mode: '0755'
+
+        - name: Create etcd snapshot
+          shell: |
+            ETCDCTL_API=3 etcdctl \
+              --endpoints=https://127.0.0.1:2379 \
+              --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+              --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
+              --key=/etc/kubernetes/pki/etcd/healthcheck-client.key \
+              snapshot save /opt/etcd-backup/etcd-snapshot-$(date +%Y%m%d-%H%M%S).db
+          register: etcd_backup_result
+
+        - name: Display etcd backup result
+          debug:
+            msg: "etcd backup created: {{ etcd_backup_result.stdout }}"
+
+      when: is_first_control_plane
+
+    - name: Drain control plane node (for additional control planes)
+      shell: |
+        kubectl drain {{ inventory_hostname }} \
+          --ignore-daemonsets \
+          --delete-emptydir-data \
+          --force \
+          --grace-period=300
+      delegate_to: "{{ first_control_plane }}"
+      when: not is_first_control_plane
+
+    - name: Stop kubelet service
+      systemd:
+        name: kubelet
+        state: stopped
+
+    - name: Unhold kubeadm package (Ubuntu/Debian)
+      shell: apt-mark unhold kubeadm
+      when: ansible_os_family == "Debian"
+
+    - name: Update package cache (Ubuntu/Debian)
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Upgrade kubeadm (Ubuntu/Debian)
+      apt:
+        name: "kubeadm={{ full_k8s_version }}-1.1"
+        state: present
+        force: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Hold kubeadm package (Ubuntu/Debian)
+      shell: apt-mark hold kubeadm
+      when: ansible_os_family == "Debian"
+
+    - name: Remove version lock for kubeadm (RHEL/CentOS)
+      shell: dnf versionlock delete kubeadm || yum versionlock delete kubeadm || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Upgrade kubeadm (RHEL/CentOS)
+      dnf:
+        name: "kubeadm-{{ full_k8s_version }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Lock kubeadm version (RHEL/CentOS)
+      shell: dnf versionlock add kubeadm || yum versionlock add kubeadm || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Verify kubeadm version
+      shell: kubeadm version -o short
+      register: kubeadm_version_check
+
+    - name: Display kubeadm version
+      debug:
+        msg: "kubeadm version: {{ kubeadm_version_check.stdout }}"
+
+    - name: Plan upgrade (first control plane only)
+      shell: kubeadm upgrade plan
+      register: upgrade_plan
+      when: is_first_control_plane
+
+    - name: Display upgrade plan (first control plane only)
+      debug:
+        var: upgrade_plan.stdout_lines
+      when: is_first_control_plane
+
+    - name: Apply upgrade (first control plane)
+      shell: kubeadm upgrade apply {{ target_k8s_version }} --yes
+      register: upgrade_apply_result
+      when: is_first_control_plane
+
+    - name: Apply upgrade (additional control planes)
+      shell: kubeadm upgrade node
+      register: upgrade_node_result
+      when: not is_first_control_plane
+
+    - name: Display upgrade result
+      debug:
+        var: "{{ upgrade_apply_result.stdout_lines if is_first_control_plane else upgrade_node_result.stdout_lines }}"
+
+    - name: Unhold kubelet and kubectl packages (Ubuntu/Debian)
+      shell: apt-mark unhold kubelet kubectl
+      when: ansible_os_family == "Debian"
+
+    - name: Upgrade kubelet and kubectl (Ubuntu/Debian)
+      apt:
+        name: 
+          - "kubelet={{ full_k8s_version }}-1.1"
+          - "kubectl={{ full_k8s_version }}-1.1"
+        state: present
+        force: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Hold kubelet and kubectl packages (Ubuntu/Debian)
+      shell: apt-mark hold kubelet kubectl
+      when: ansible_os_family == "Debian"
+
+    - name: Remove version lock for kubelet and kubectl (RHEL/CentOS)
+      shell: |
+        dnf versionlock delete kubelet kubectl || yum versionlock delete kubelet kubectl || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Upgrade kubelet and kubectl (RHEL/CentOS)
+      dnf:
+        name: 
+          - "kubelet-{{ full_k8s_version }}"
+          - "kubectl-{{ full_k8s_version }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Lock kubelet and kubectl versions (RHEL/CentOS)
+      shell: dnf versionlock add kubelet kubectl || yum versionlock add kubelet kubectl || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start kubelet service
+      systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+
+    - name: Wait for node to be Ready
+      shell: kubectl get nodes {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      register: node_ready
+      retries: 30
+      delay: 10
+      until: node_ready.stdout == "True"
+      delegate_to: "{{ first_control_plane }}"
+
+    - name: Uncordon control plane node (for additional control planes)
+      shell: kubectl uncordon {{ inventory_hostname }}
+      delegate_to: "{{ first_control_plane }}"
+      when: not is_first_control_plane
+
+    - name: Verify control plane components
+      shell: kubectl get pods -n kube-system | grep -E "(kube-apiserver|kube-controller-manager|kube-scheduler|etcd)"
+      register: control_plane_pods
+      delegate_to: "{{ first_control_plane }}"
+
+    - name: Display control plane status
+      debug:
+        var: control_plane_pods.stdout_lines
+
+    - name: Verify cluster version
+      shell: kubectl version --short
+      register: cluster_version
+      delegate_to: "{{ first_control_plane }}"
+
+    - name: Display cluster version
+      debug:
+        var: cluster_version.stdout_lines
+
+    - name: Check cluster health
+      shell: kubectl get nodes -o wide
+      register: cluster_nodes
+      delegate_to: "{{ first_control_plane }}"
+
+    - name: Display cluster nodes status
+      debug:
+        var: cluster_nodes.stdout_lines
+
+    - name: Verify upgraded control plane version
+      shell: kubelet --version | cut -d' ' -f2 | cut -d'v' -f2
+      register: upgraded_version
+
+    - name: Display final upgrade status
+      debug:
         msg:
-          - "This playbook is a placeholder for upgrading the Kubernetes control plane on {{ inventory_hostname }}."
-          - "Target Kubernetes version for upgrade: {{ target_k8s_version }}"
-          - "High-level steps for the first control plane node:"
-          - "  1. kubectl drain <control_plane_node> (if not the only one or handled carefully)"
-          - "  2. apt-mark unhold kubeadm && apt-get update && apt-get install -y kubeadm='{{ target_k8s_version }}-xx'"
-          - "     (or dnf equivalent: dnf versionlock delete kubeadm; dnf install kubeadm-'{{ target_k8s_version }}')"
-          - "  3. kubeadm upgrade plan"
-          - "  4. kubeadm upgrade apply {{ target_k8s_version }}"
+          - "Control plane node {{ inventory_hostname }} upgraded successfully"
+          - "Previous version: {{ current_k8s_version.stdout }}"
+          - "Current version: {{ upgraded_version.stdout }}"
+          - "Cluster is ready for worker node upgrades"
           - "  5. apt-mark unhold kubelet kubectl && apt-get update && apt-get install -y kubelet='{{ target_k8s_version }}-xx' kubectl='{{ target_k8s_version }}-xx'"
           - "     (or dnf equivalent for kubelet/kubectl)"
           - "  6. systemctl daemon-reload && systemctl restart kubelet"

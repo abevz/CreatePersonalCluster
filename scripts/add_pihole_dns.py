@@ -373,8 +373,8 @@ def main():
     if args.debug: # Conditional print
         print(f"DEBUG: Terraform outputs: {json.dumps(tf_outputs, indent=2)}")
 
-    vm_ipv4_addresses_output = tf_outputs.get('vm_ipv4_addresses', {}).get('value')
-    vm_fqdns_output = tf_outputs.get('vm_fqdns', {}).get('value')
+    vm_ipv4_addresses_output = tf_outputs.get('k8s_node_ips', {}).get('value')
+    vm_fqdns_output = tf_outputs.get('k8s_node_names', {}).get('value')
 
     if args.debug:
         print(f"DEBUG: Extracted vm_ipv4_addresses_output: {vm_ipv4_addresses_output} (type: {type(vm_ipv4_addresses_output)})")
@@ -435,7 +435,14 @@ def main():
         print("INFO: No matching DNS records found to process based on Terraform outputs after matching.")
         # sys.exit(0) # Allow script to finish normally even if no records
     else:
-        print(f"DEBUG: Records to process ({args.action}): {records_to_process}")
+        if args.debug:
+            print(f"DEBUG: Records to process ({args.action}): {records_to_process}")
+            print("DEBUG: Debug mode enabled, showing records and exiting without processing:")
+            for record in records_to_process:
+                print(f"  - {record['domain']} -> {record['ip']}")
+            sys.exit(0)
+        else:
+            print(f"INFO: Found {len(records_to_process)} DNS records to process with action '{args.action}'")
 
     for record in records_to_process:
         domain = record["domain"]

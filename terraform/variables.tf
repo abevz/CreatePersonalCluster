@@ -28,7 +28,7 @@ variable "storage" {
 variable "vm_cpu_cores" {
   type        = number
   description = "Number of CPU cores for VMs."
-  default     = 1
+  default     = 2
 }
 
 variable "pm_template_debian_id" {

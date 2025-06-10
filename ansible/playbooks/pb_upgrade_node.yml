@@ -1,23 +1,163 @@
 ---
-- name: Upgrade Kubernetes on a Specific Node (Placeholder)
-  hosts: "{{ target_node | default('all') }}" # Expect target_node to be passed
+- name: Upgrade Kubernetes on a Specific Node
+  hosts: "{{ target_node | default('all') }}" 
   become: yes
   gather_facts: yes
+  serial: 1  # Upgrade one node at a time
 
   vars:
-    target_k8s_version: "{{ kubernetes_version }}.{{ kubernetes_patch_version }}" # Example, refine as needed
+    target_k8s_version: "{{ kubernetes_version | default('1.31') }}"
+    target_k8s_patch_version: "{{ kubernetes_patch_version | default('9') }}"
+    full_k8s_version: "{{ target_k8s_version }}.{{ target_k8s_patch_version }}"
+    control_plane_node: "{{ groups['control_plane'][0] }}"
+
+  pre_tasks:
+    - name: Check current Kubernetes version
+      shell: kubelet --version | cut -d' ' -f2 | cut -d'v' -f2
+      register: current_k8s_version
+      changed_when: false
+
+    - name: Skip if already at target version
+      meta: end_host
+      when: current_k8s_version.stdout == full_k8s_version
 
   tasks:
-    - name: Display placeholder message for upgrading a node
-      ansible.builtin.debug:
+    - name: Determine if this is a control plane node
+      set_fact:
+        is_control_plane: "{{ inventory_hostname in groups['control_plane'] }}"
+
+    - name: Drain node (from control plane)
+      shell: |
+        kubectl drain {{ inventory_hostname }} \
+          --ignore-daemonsets \
+          --delete-emptydir-data \
+          --force \
+          --grace-period=300
+      delegate_to: "{{ control_plane_node }}"
+      when: inventory_hostname != control_plane_node
+
+    - name: Stop kubelet service
+      systemd:
+        name: kubelet
+        state: stopped
+
+    - name: Unhold kubeadm package (Ubuntu/Debian)
+      shell: apt-mark unhold kubeadm
+      when: ansible_os_family == "Debian"
+
+    - name: Update package cache (Ubuntu/Debian)
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Upgrade kubeadm (Ubuntu/Debian)
+      apt:
+        name: "kubeadm={{ full_k8s_version }}-1.1"
+        state: present
+        force: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Hold kubeadm package (Ubuntu/Debian)
+      shell: apt-mark hold kubeadm
+      when: ansible_os_family == "Debian"
+
+    - name: Remove version lock for kubeadm (RHEL/CentOS)
+      shell: dnf versionlock delete kubeadm || yum versionlock delete kubeadm || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Upgrade kubeadm (RHEL/CentOS)
+      dnf:
+        name: "kubeadm-{{ full_k8s_version }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Lock kubeadm version (RHEL/CentOS)
+      shell: dnf versionlock add kubeadm || yum versionlock add kubeadm || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Upgrade control plane node
+      shell: kubeadm upgrade apply {{ target_k8s_version }} --yes
+      when: is_control_plane and inventory_hostname == control_plane_node
+
+    - name: Upgrade worker node or additional control plane nodes
+      shell: kubeadm upgrade node
+      when: not is_control_plane or inventory_hostname != control_plane_node
+
+    - name: Unhold kubelet and kubectl packages (Ubuntu/Debian)
+      shell: apt-mark unhold kubelet kubectl
+      when: ansible_os_family == "Debian"
+
+    - name: Upgrade kubelet and kubectl (Ubuntu/Debian)
+      apt:
+        name: 
+          - "kubelet={{ full_k8s_version }}-1.1"
+          - "kubectl={{ full_k8s_version }}-1.1"
+        state: present
+        force: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Hold kubelet and kubectl packages (Ubuntu/Debian)
+      shell: apt-mark hold kubelet kubectl
+      when: ansible_os_family == "Debian"
+
+    - name: Remove version lock for kubelet and kubectl (RHEL/CentOS)
+      shell: |
+        dnf versionlock delete kubelet kubectl || yum versionlock delete kubelet kubectl || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Upgrade kubelet and kubectl (RHEL/CentOS)
+      dnf:
+        name: 
+          - "kubelet-{{ full_k8s_version }}"
+          - "kubectl-{{ full_k8s_version }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Lock kubelet and kubectl versions (RHEL/CentOS)
+      shell: dnf versionlock add kubelet kubectl || yum versionlock add kubelet kubectl || true
+      when: ansible_os_family == "RedHat"
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start kubelet service
+      systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+
+    - name: Wait for node to be Ready
+      shell: kubectl get nodes {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      delegate_to: "{{ control_plane_node }}"
+      register: node_ready
+      retries: 30
+      delay: 10
+      until: node_ready.stdout == "True"
+
+    - name: Uncordon node (from control plane)
+      shell: kubectl uncordon {{ inventory_hostname }}
+      delegate_to: "{{ control_plane_node }}"
+      when: inventory_hostname != control_plane_node
+
+    - name: Verify upgraded version
+      shell: kubelet --version | cut -d' ' -f2 | cut -d'v' -f2
+      register: upgraded_version
+
+    - name: Display upgrade result
+      debug:
         msg:
-          - "This playbook is a placeholder for upgrading Kubernetes on node: {{ inventory_hostname }}."
-          - "Target Kubernetes version: {{ target_k8s_version }}"
-          - "Steps would include:"
-          - "  1. Drain the node (using kubectl from control machine or a delegated task)."
-          - "  2. Stop kubelet service."
-          - "  3. Upgrade kubeadm package."
-          - "  4. Run 'kubeadm upgrade node'."
-          - "  5. Upgrade kubelet and kubectl packages."
+          - "Node {{ inventory_hostname }} upgraded successfully"
+          - "Previous version: {{ current_k8s_version.stdout }}"
+          - "Current version: {{ upgraded_version.stdout }}"
+
+    - name: Check node status
+      shell: kubectl get nodes {{ inventory_hostname }} -o wide
+      delegate_to: "{{ control_plane_node }}"
+      register: final_node_status
+
+    - name: Show final node status
+      debug:
+        var: final_node_status.stdout_lines
           - "  6. Restart kubelet service."
           - "  7. Uncordon the node."

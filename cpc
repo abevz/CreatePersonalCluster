@@ -190,6 +190,9 @@ set_workspace_template_vars() {
       export ETCD_VERSION="${ETCD_VERSION_DEBIAN:-v3.5.12}"
       export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_DEBIAN:-v0.1.9}"
       export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_DEBIAN:-v0.0.26}"
+      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_DEBIAN:-v1.16.2}"
+      export ARGOCD_VERSION="${ARGOCD_VERSION_DEBIAN:-v2.13.2}"
+      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_DEBIAN:-v1.12.0}"
       ;;
     ubuntu)
       # Template VM configuration
@@ -210,6 +213,9 @@ set_workspace_template_vars() {
       export ETCD_VERSION="${ETCD_VERSION_UBUNTU:-v3.5.15}"
       export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_UBUNTU:-v0.1.9}"
       export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_UBUNTU:-v0.0.28}"
+      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_UBUNTU:-v1.16.2}"
+      export ARGOCD_VERSION="${ARGOCD_VERSION_UBUNTU:-v2.13.2}"
+      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_UBUNTU:-v1.12.0}"
       ;;
     rocky)
       # Template VM configuration
@@ -230,6 +236,9 @@ set_workspace_template_vars() {
       export ETCD_VERSION="${ETCD_VERSION_ROCKY:-v3.5.10}"
       export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_ROCKY:-v0.1.8}"
       export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_ROCKY:-v0.0.24}"
+      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_ROCKY:-v1.15.3}"
+      export ARGOCD_VERSION="${ARGOCD_VERSION_ROCKY:-v2.12.3}"
+      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_ROCKY:-v1.11.2}"
       ;;
     suse)
       # Template VM configuration
@@ -250,6 +259,9 @@ set_workspace_template_vars() {
       export ETCD_VERSION="${ETCD_VERSION_SUSE:-v3.5.12}"
       export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_SUSE:-v0.1.9}"
       export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_SUSE:-v0.0.26}"
+      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_SUSE:-v1.16.2}"
+      export ARGOCD_VERSION="${ARGOCD_VERSION_SUSE:-v2.13.2}"
+      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_SUSE:-v1.12.0}"
       ;;
     *)
       echo -e "${YELLOW}Warning: Unknown workspace '$workspace'. Template variables not set.${ENDCOLOR}"
@@ -349,14 +361,15 @@ display_usage() {
   echo "  start-vms                      Start all VMs in the current context."
   echo "  stop-vms                       Stop all VMs in the current context."
   echo ""
-  echo "  add-nodes                      (Not Implemented) Add new worker nodes to the cluster."
+  echo "  get-kubeconfig                 Retrieve and merge Kubernetes cluster config into local kubeconfig."
+  echo "  add-nodes                      Add new worker nodes to the cluster."
   echo "  drain-node <node_name>         Drain workloads from a node."
   echo "  delete-node <node_name>        Delete a node from the Kubernetes cluster."
-  echo "  upgrade-node <node_name>       (Not Implemented) Upgrade Kubernetes on a specific node."
+  echo "  upgrade-node <node_name>       Upgrade Kubernetes on a specific node."
   echo "  reset-node <node_name>         Reset Kubernetes on a specific node."
   echo "  reset-all-nodes                Reset Kubernetes on all nodes in the current context."
-  echo "  upgrade-addons                 (Not Implemented) Upgrade cluster addons."
-  echo "  upgrade-k8s                    (Not Implemented) Upgrade Kubernetes control plane."
+  echo "  upgrade-addons                 Install/upgrade cluster addons (CNI, MetalLB, cert-manager, ArgoCD, etc.)."
+  echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
   echo "  vmctl                          (Placeholder) Suggests using Tofu for VM control." # Changed from Terraform
   echo "  run-command <target> "<cmd>"   Run a shell command on target host(s) or group."
   echo ""
@@ -391,6 +404,196 @@ case "$COMMAND" in
     echo -e "${BLUE}You might want to add this script to your PATH, e.g., by creating a symlink in /usr/local/bin/cpc${ENDCOLOR}" # Changed from ccr
     echo -e "${BLUE}Example: sudo ln -s "$current_script_path/cpc" /usr/local/bin/cpc${ENDCOLOR}" # Changed from ccr
     echo -e "${BLUE}Also, create a 'cpc.env' file in '$current_script_path' for version management (see cpc.env.example).${ENDCOLOR}" # Changed from ccr.env and ccr.env.example
+    ;;
+
+  get-kubeconfig)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc get-kubeconfig [--context-name <name>] [--force]"
+      echo ""
+      echo "Retrieves the Kubernetes cluster configuration from the control plane node"
+      echo "and merges it into your local kubeconfig file (~/.kube/config)."
+      echo ""
+      echo "Options:"
+      echo "  --context-name <name>  Set a custom context name (default: cluster-<cpc_context>)"
+      echo "  --force               Overwrite existing context if it already exists"
+      echo ""
+      echo "The command will:"
+      echo "  1. Connect to the control plane node and retrieve /etc/kubernetes/admin.conf"
+      echo "  2. Update server endpoint to use the control plane node's IP"
+      echo "  3. Merge the configuration into your local kubeconfig"
+      echo "  4. Set the new context as the current context"
+      exit 0
+    fi
+
+    # Parse command line arguments
+    custom_context_name=""
+    force_overwrite=false
+    
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --context-name)
+          custom_context_name="$2"
+          shift 2
+          ;;
+        --force)
+          force_overwrite=true
+          shift
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    # Get current cluster context and repo path
+    current_ctx=$(get_current_cluster_context)
+    repo_root=$(get_repo_path)
+    
+    # Set context name
+    if [ -z "$custom_context_name" ]; then
+      context_name="cluster-${current_ctx}"
+    else
+      context_name="$custom_context_name"
+    fi
+
+    echo -e "${BLUE}Retrieving kubeconfig for cluster context: $current_ctx${ENDCOLOR}"
+    echo -e "${BLUE}Kubernetes context will be named: $context_name${ENDCOLOR}"
+
+    # Check if context already exists and force flag is not set
+    if kubectl config get-contexts "$context_name" &>/dev/null && [ "$force_overwrite" = false ]; then
+      echo -e "${YELLOW}Context '$context_name' already exists in kubeconfig.${ENDCOLOR}"
+      echo -e "${YELLOW}Use --force to overwrite or --context-name to use a different name.${ENDCOLOR}"
+      exit 1
+    fi
+
+    # Get control plane IP from Terraform/Tofu output
+    pushd "$repo_root/terraform" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
+    
+    # Ensure we're in the correct workspace
+    if ! tofu workspace select "$current_ctx" &>/dev/null; then
+      echo -e "${RED}Failed to select Tofu workspace '$current_ctx'${ENDCOLOR}" >&2
+      popd > /dev/null
+      exit 1
+    fi
+
+    # Get control plane node IP
+    control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value')
+    if [ -z "$control_plane_ip" ] || [ "$control_plane_ip" = "null" ]; then
+      echo -e "${RED}Failed to get control plane IP from Tofu output${ENDCOLOR}" >&2
+      echo -e "${RED}Make sure the cluster is deployed and 'tofu output k8s_node_ips' returns valid data${ENDCOLOR}" >&2
+      popd > /dev/null
+      exit 1
+    fi
+
+    popd > /dev/null
+
+    echo -e "${BLUE}Control plane IP: $control_plane_ip${ENDCOLOR}"
+
+    # Create temporary directory for kubeconfig operations
+    temp_dir=$(mktemp -d)
+    temp_kubeconfig="$temp_dir/admin.conf"
+    
+    # Cleanup function
+    cleanup_temp() {
+      rm -rf "$temp_dir"
+    }
+    trap cleanup_temp EXIT
+
+    # Get ansible config to determine remote user
+    ansible_dir="$repo_root/ansible"
+    remote_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'root')
+
+    echo -e "${BLUE}Retrieving kubeconfig from control plane node...${ENDCOLOR}"
+    
+    # Copy kubeconfig from control plane node using sudo
+    if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+         "${remote_user}@${control_plane_ip}" \
+         "sudo cat /etc/kubernetes/admin.conf" > "$temp_kubeconfig" 2>/dev/null; then
+      echo -e "${RED}Failed to retrieve kubeconfig from control plane node${ENDCOLOR}" >&2
+      echo -e "${RED}Make sure you can SSH to $control_plane_ip as user $remote_user and use sudo${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    # Update server endpoint in the kubeconfig
+    if ! sed -i "s|server: https://.*:6443|server: https://${control_plane_ip}:6443|g" "$temp_kubeconfig"; then
+      echo -e "${RED}Failed to update server endpoint in kubeconfig${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    # Update context and user names to avoid conflicts
+    if ! sed -i "s|kubernetes-admin@kubernetes|${context_name}|g" "$temp_kubeconfig"; then
+      echo -e "${RED}Failed to update context name in kubeconfig${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    if ! sed -i "s|name: kubernetes-admin|name: ${context_name}-admin|g" "$temp_kubeconfig"; then
+      echo -e "${RED}Failed to update user name in kubeconfig${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    if ! sed -i "s|name: kubernetes|name: ${context_name}-cluster|g" "$temp_kubeconfig"; then
+      echo -e "${RED}Failed to update cluster name in kubeconfig${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    if ! sed -i "s|cluster: kubernetes|cluster: ${context_name}-cluster|g" "$temp_kubeconfig"; then
+      echo -e "${RED}Failed to update cluster reference in kubeconfig${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    if ! sed -i "s|user: kubernetes-admin|user: ${context_name}-admin|g" "$temp_kubeconfig"; then
+      echo -e "${RED}Failed to update user reference in kubeconfig${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    # Merge the kubeconfig
+    echo -e "${BLUE}Merging kubeconfig into ~/.kube/config...${ENDCOLOR}"
+    
+    # Backup existing kubeconfig if it exists
+    if [ -f ~/.kube/config ]; then
+      cp ~/.kube/config ~/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
+      echo -e "${BLUE}Existing kubeconfig backed up${ENDCOLOR}"
+    fi
+
+    # Ensure .kube directory exists
+    mkdir -p ~/.kube
+
+    # Merge kubeconfig
+    if [ -f ~/.kube/config ] && [ -s ~/.kube/config ]; then
+      # Existing config exists and is not empty
+      KUBECONFIG=~/.kube/config:$temp_kubeconfig kubectl config view --flatten > ~/.kube/config.tmp
+      if [ -s ~/.kube/config.tmp ]; then
+        mv ~/.kube/config.tmp ~/.kube/config
+      else
+        echo -e "${YELLOW}Warning: Merge resulted in empty config, using new config only${ENDCOLOR}"
+        cp "$temp_kubeconfig" ~/.kube/config
+      fi
+    else
+      # No existing config or empty config
+      cp "$temp_kubeconfig" ~/.kube/config
+    fi
+
+    # Set the new context as current
+    if kubectl config use-context "$context_name" &>/dev/null; then
+      echo -e "${GREEN}Successfully set '$context_name' as the current context${ENDCOLOR}"
+    else
+      echo -e "${YELLOW}Kubeconfig merged but failed to set '$context_name' as current context${ENDCOLOR}"
+      echo -e "${YELLOW}You can manually switch using: kubectl config use-context $context_name${ENDCOLOR}"
+    fi
+
+    # Test the connection
+    echo -e "${BLUE}Testing connection to cluster...${ENDCOLOR}"
+    if kubectl cluster-info --context "$context_name" &>/dev/null; then
+      echo -e "${GREEN}Successfully connected to Kubernetes cluster!${ENDCOLOR}"
+      echo -e "${BLUE}Cluster information:${ENDCOLOR}"
+      kubectl cluster-info --context "$context_name"
+    else
+      echo -e "${YELLOW}Kubeconfig retrieved but connection test failed${ENDCOLOR}"
+      echo -e "${YELLOW}Please check cluster status and network connectivity${ENDCOLOR}"
+    fi
+
+    echo -e "${GREEN}Kubeconfig setup completed for context: $context_name${ENDCOLOR}"
     ;;
 
   ctx)
@@ -439,10 +642,42 @@ case "$COMMAND" in
     ;;
 
   add-nodes)
-    echo -e "${YELLOW}Command 'add-nodes' is not fully implemented yet.${ENDCOLOR}"
-    echo -e "${BLUE}This would typically involve running 'kubeadm join' on new nodes.${ENDCOLOR}"
-    echo -e "${BLUE}You'd need a join token and discovery hash from the control plane.${ENDCOLOR}"
-    # run_ansible_playbook "pb_add_nodes.yml" "new_workers_group" "-e join_token=xxx -e discovery_hash=sha256:yyy"
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc add-nodes [--target-hosts <hosts>] [--node-type <worker|control>]"
+      echo ""
+      echo "Add new nodes to the Kubernetes cluster."
+      echo ""
+      echo "Options:"
+      echo "  --target-hosts <hosts>  Specify target hosts (default: new_workers)"
+      echo "  --node-type <type>      Node type: worker or control (default: worker)"
+      echo ""
+      echo "Note: Ensure new nodes are added to your Terraform configuration first."
+      exit 0
+    fi
+
+    # Parse command line arguments
+    target_hosts="new_workers"
+    node_type="worker"
+    
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --target-hosts)
+          target_hosts="$2"
+          shift 2
+          ;;
+        --node-type)
+          node_type="$2"
+          shift 2
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    echo -e "${BLUE}Adding $node_type nodes to the cluster...${ENDCOLOR}"
+    run_ansible_playbook "pb_add_nodes.yml" "$target_hosts" "-e node_type=$node_type"
     ;;
 
   drain-node)
@@ -467,8 +702,54 @@ case "$COMMAND" in
     ;;
 
   upgrade-node)
-    echo -e "${YELLOW}Command 'upgrade-node' is not fully implemented yet.${ENDCOLOR}"
-    # run_ansible_playbook "pb_upgrade_node.yml" "$1" "-e target_k8s_version=1.x.y"
+    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc upgrade-node <node_name> [--target-version <version>] [--skip-drain]"
+      echo ""
+      echo "Upgrade Kubernetes on a specific node."
+      echo ""
+      echo "Options:"
+      echo "  --target-version <version>  Target Kubernetes version (default: from environment)"
+      echo "  --skip-drain               Skip draining the node before upgrade"
+      echo ""
+      echo "The upgrade process will:"
+      echo "  1. Drain the node (unless --skip-drain is specified)"
+      echo "  2. Upgrade Kubernetes packages"
+      echo "  3. Restart kubelet service"
+      echo "  4. Uncordon the node"
+      exit 1
+    fi
+    
+    node_name="$1"
+    shift
+    
+    # Parse remaining arguments
+    target_version=""
+    skip_drain="false"
+    
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --target-version)
+          target_version="$2"
+          shift 2
+          ;;
+        --skip-drain)
+          skip_drain="true"
+          shift
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    extra_vars="-e target_node=$node_name -e skip_drain=$skip_drain"
+    if [ -n "$target_version" ]; then
+      extra_vars="$extra_vars -e target_k8s_version=$target_version"
+    fi
+
+    echo -e "${BLUE}Upgrading Kubernetes on node: $node_name${ENDCOLOR}"
+    run_ansible_playbook "pb_upgrade_node.yml" "$node_name" "$extra_vars"
     ;;
 
   reset-node)
@@ -490,13 +771,125 @@ case "$COMMAND" in
     ;;
 
   upgrade-addons)
-    echo -e "${YELLOW}Command 'upgrade-addons' is not fully implemented yet.${ENDCOLOR}"
-    # run_ansible_playbook "pb_upgrade_addons.yml" "control_plane_group" "-e addon_name=calico -e addon_version=v3.x.y"
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc upgrade-addons [--addon <name>] [--version <version>]"
+      echo ""
+      echo "Install or upgrade cluster addons."
+      echo ""
+      echo "Options:"
+      echo "  --addon <name>     Specific addon to install/upgrade or 'all' (default: all)"
+      echo "  --version <version> Target version for the addon (default: from environment variables)"
+      echo ""
+      echo "Available addons:"
+      echo "  - calico: Calico CNI networking"
+      echo "  - metallb: MetalLB load balancer"
+      echo "  - metrics-server: Kubernetes Metrics Server"
+      echo "  - coredns: CoreDNS DNS server"
+      echo "  - cert-manager: Certificate manager for Kubernetes"
+      echo "  - kubelet-serving-cert-approver: Automatic approval of kubelet serving certificates"
+      echo "  - argocd: ArgoCD GitOps continuous delivery"
+      echo "  - ingress-nginx: NGINX Ingress Controller"
+      echo "  - all: Install/upgrade all addons"
+      exit 0
+    fi
+
+    # Parse command line arguments
+    addon_name="all"
+    addon_version=""
+    
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --addon)
+          addon_name="$2"
+          shift 2
+          ;;
+        --version)
+          addon_version="$2"
+          shift 2
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    # Validate addon name
+    case "$addon_name" in
+      calico|metallb|metrics-server|coredns|cert-manager|kubelet-serving-cert-approver|argocd|ingress-nginx|all)
+        ;;
+      *)
+        echo -e "${RED}Invalid addon name: $addon_name${ENDCOLOR}" >&2
+        echo -e "${RED}Valid options: calico, metallb, metrics-server, coredns, cert-manager, kubelet-serving-cert-approver, argocd, ingress-nginx, all${ENDCOLOR}" >&2
+        exit 1
+        ;;
+    esac
+
+    extra_vars="-e addon_name=$addon_name"
+    if [ -n "$addon_version" ]; then
+      extra_vars="$extra_vars -e addon_version=$addon_version"
+    fi
+
+    echo -e "${BLUE}Installing/upgrading cluster addon(s): $addon_name${ENDCOLOR}"
+    run_ansible_playbook "pb_upgrade_addons_extended.yml" "control_plane" "$extra_vars"
     ;;
 
   upgrade-k8s)
-    echo -e "${YELLOW}Command 'upgrade-k8s' (control plane) is not fully implemented yet.${ENDCOLOR}"
-    # run_ansible_playbook "pb_upgrade_k8s_control_plane.yml" "control_plane_group" "-e target_k8s_version=1.x.y"
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc upgrade-k8s [--target-version <version>] [--skip-etcd-backup]"
+      echo ""
+      echo "Upgrade Kubernetes control plane components."
+      echo ""
+      echo "Options:"
+      echo "  --target-version <version>  Target Kubernetes version (default: from environment)"
+      echo "  --skip-etcd-backup         Skip etcd backup before upgrade"
+      echo ""
+      echo "The upgrade process will:"
+      echo "  1. Backup etcd (unless --skip-etcd-backup is specified)"
+      echo "  2. Upgrade control plane components on each control plane node"
+      echo "  3. Verify cluster health after upgrade"
+      echo ""
+      echo "Warning: This will upgrade the control plane. Ensure you have backups!"
+      exit 0
+    fi
+
+    # Parse command line arguments
+    target_version=""
+    skip_etcd_backup="false"
+    
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --target-version)
+          target_version="$2"
+          shift 2
+          ;;
+        --skip-etcd-backup)
+          skip_etcd_backup="true"
+          shift
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    # Confirmation prompt
+    current_ctx=$(get_current_cluster_context)
+    echo -e "${YELLOW}Warning: This will upgrade the Kubernetes control plane for context '$current_ctx'.${ENDCOLOR}"
+    read -r -p "Are you sure you want to continue? [y/N] " response
+    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+      echo "Operation cancelled."
+      exit 0
+    fi
+
+    extra_vars="-e skip_etcd_backup=$skip_etcd_backup"
+    if [ -n "$target_version" ]; then
+      extra_vars="$extra_vars -e target_k8s_version=$target_version"
+    fi
+
+    echo -e "${BLUE}Upgrading Kubernetes control plane...${ENDCOLOR}"
+    run_ansible_playbook "pb_upgrade_k8s_control_plane.yml" "control_plane" "$extra_vars"
     ;;
 
   vmctl)
