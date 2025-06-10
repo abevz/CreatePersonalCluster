@@ -1,0 +1,113 @@
+#cloud-config
+# Cloud-init configuration for SUSE template
+# This handles all configuration that would normally be done by virt-customize
+
+# Update package cache and upgrade system
+package_update: true
+package_upgrade: true
+
+# Set the hostname - This will be replaced during VM creation
+hostname: ${VM_HOSTNAME}
+fqdn: ${VM_HOSTNAME}
+preserve_hostname: false
+
+# Define users - This ensures the VM_USERNAME from template.sh is used
+users:
+  - default
+  - name: ${VM_USERNAME}
+    groups: wheel
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${VM_SSH_KEY}
+
+# Install essential packages including QEMU Guest Agent
+packages:
+  - qemu-guest-agent
+  - curl
+  - wget
+  - ca-certificates
+  - gpg2
+  - htop
+  - vim
+  - git
+  - jq
+  - unzip
+  - tree
+  - net-tools
+  - iputils
+  - bind-utils
+  - open-iscsi
+  - nfs-client
+  - multipath-tools
+  - chrony
+
+# Enable services
+runcmd:
+  # Enable and start QEMU Guest Agent
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
+
+  # Enable and start SSH
+  - systemctl enable sshd
+  - systemctl start sshd
+
+  # Set timezone
+  - timedatectl set-timezone America/New_York
+
+  # Generate a fresh machine-id to ensure unique IPs when using DHCP
+  - |
+    # Remove old machine IDs
+    rm -f /etc/machine-id /var/lib/dbus/machine-id
+
+    # Create a truly random machine-id based on hostname and date
+    random_id=$(hostname | md5sum | cut -d' ' -f1)
+    current_time=$(date +%s%N)
+
+    # Combine and create a deterministic but unique id
+    echo "${random_id}${current_time}" | md5sum | cut -d' ' -f1 > /etc/machine-id
+
+    # Copy to dbus location
+    mkdir -p /var/lib/dbus
+    cp /etc/machine-id /var/lib/dbus/machine-id
+
+    echo "Generated new machine-id: $(cat /etc/machine-id)"
+
+    # Apply hostname changes
+    hostnamectl apply
+
+    # Setup startup script for machine-id regeneration on each boot
+    mkdir -p /var/lib/cloud/scripts/per-instance/
+    if [ -f "/root/ensure-unique-machine-id.sh" ]; then
+      cp /root/ensure-unique-machine-id.sh /var/lib/cloud/scripts/per-instance/
+      chmod +x /var/lib/cloud/scripts/per-instance/ensure-unique-machine-id.sh
+    else
+      echo "Warning: ensure-unique-machine-id.sh not found in /root!"
+    fi
+
+    # Create systemd service to make absolutely sure we get unique machine-id
+    cat > /etc/systemd/system/ensure-unique-machineid.service << 'EOL'
+    [Unit]
+    Description=Ensure unique machine-id for DHCP
+    After=network.target
+    Before=network-online.target
+
+    [Service]
+    Type=oneshot
+    ExecStart=/var/lib/cloud/scripts/per-instance/ensure-unique-machine-id.sh
+    RemainAfterExit=yes
+
+    [Install]
+    WantedBy=multi-user.target
+    EOL
+
+    # Enable the service
+    systemctl daemon-reload
+    systemctl enable ensure-unique-machineid.service
+
+  # Create a completion marker file - this helps the template creation script know when cloud-init is done
+  - touch /var/log/suse-cloud-init-complete.log
+
+# Final message
+final_message: "The system is finally up, after $UPTIME seconds"

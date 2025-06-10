@@ -1,7 +1,7 @@
 #cloud-config
 # Set the hostname
-hostname: ws2.bevz.net
-fqdn: ws2.bevz.net
+hostname: wr2.bevz.net
+fqdn: wr2.bevz.net
 preserve_hostname: false
 manage_etc_hosts: true
 
@@ -10,7 +10,7 @@ write_files:
   - path: /etc/hosts
     content: |
       127.0.0.1 localhost
-      127.0.1.1 ws2.bevz.net
+      127.0.1.1 wr2.bevz.net
 
       # The following lines are desirable for IPv6 capable hosts
       ::1     ip6-localhost ip6-loopback
@@ -23,12 +23,12 @@ write_files:
 runcmd:
   # Generate unique machine-id first (before network operations)
   - |
-    echo "Generating unique machine-id for ws2.bevz.net..." > /var/log/machine-id-setup.log
+    echo "Generating unique machine-id for wr2.bevz.net..." > /var/log/machine-id-setup.log
     HOSTNAME=$(hostname)
     MAC_ADDRESS=$(cat /sys/class/net/$(ip route show default | awk "/default/ {print \\$5}")/address 2>/dev/null || echo "unknown")
     RANDOM_DATA=$(dd if=/dev/urandom bs=512 count=1 2>/dev/null | md5sum)
     TIMESTAMP=$(date +%s%N)
-    UNIQUE_ID="ws2.bevz.net-${HOSTNAME}-${MAC_ADDRESS}-${RANDOM_DATA}-${TIMESTAMP}-$(uuidgen)"
+    UNIQUE_ID="wr2.bevz.net-${HOSTNAME}-${MAC_ADDRESS}-${RANDOM_DATA}-${TIMESTAMP}-$(uuidgen)"
     MACHINE_ID=$(echo $UNIQUE_ID | md5sum | cut -c1-32)
     
     if [ -f /etc/machine-id ]; then
@@ -48,9 +48,9 @@ runcmd:
     echo "New machine-id: $MACHINE_ID" >> /var/log/machine-id-setup.log
   
   # Apply hostname changes with different methods for better compatibility
-  - hostnamectl set-hostname ws2.bevz.net
-  - echo "ws2.bevz.net" > /etc/hostname
-  - hostname ws2.bevz.net
+  - hostnamectl set-hostname wr2.bevz.net
+  - echo "wr2.bevz.net" > /etc/hostname
+  - hostname wr2.bevz.net
   
   # For Ubuntu specifically - create network config file
   - 'echo "network:" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg'

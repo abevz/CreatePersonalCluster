@@ -1,0 +1,163 @@
+#cloud-config
+# Cloud-init configuration for Debian template
+# This handles all configuration that would normally be done by virt-customize
+
+# Update package cache and upgrade system
+package_update: true
+package_upgrade: true
+
+# Set the hostname - This will be replaced during VM creation
+hostname: ${VM_HOSTNAME}
+fqdn: ${VM_HOSTNAME}
+preserve_hostname: false
+
+# Define users - This ensures the VM_USERNAME from template.sh is used
+users:
+  - default
+  - name: ${VM_USERNAME}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ${VM_SSH_KEY}
+
+# Add network configuration for DHCP on common interface names
+network:
+  version: 2
+  ethernets:
+    id0: # You can name this logical ID anything, e.g., main_nic
+      match:
+        name: "en* OR eth*" # Matches ensX, enpXsX, ethX etc.
+      dhcp4: true
+      # dhcp6: true # Uncomment if IPv6 DHCP is also desired/available
+
+# Install essential packages including QEMU Guest Agent
+packages:
+  - qemu-guest-agent
+  - curl
+  - wget
+  - apt-transport-https
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - htop
+  - vim
+  - git
+  - jq
+  - unzip
+  - tree
+  - net-tools
+  - iputils-ping
+  - dnsutils
+  # - systemd-timesyncd # Removed, as chrony will be used
+  - open-iscsi
+  - nfs-common
+  - multipath-tools
+  - chrony
+
+# Enable services
+runcmd:
+  # Unmask and enable QEMU Guest Agent
+  - systemctl unmask qemu-guest-agent.service
+  - systemctl enable qemu-guest-agent.service
+  - systemctl start qemu-guest-agent.service
+  
+  # Set timezone
+  - timedatectl set-timezone America/New_York
+  
+  # Generate a fresh machine-id to ensure unique IPs when using DHCP
+  - |
+    # Remove old machine IDs
+    rm -f /etc/machine-id /var/lib/dbus/machine-id
+    
+    # Create a truly random machine-id based on hostname and date
+    random_id=$(hostname | md5sum | cut -d' ' -f1)
+    current_time=$(date +%s%N)
+    
+    # Combine and create a deterministic but unique id
+    echo "${random_id}${current_time}" | md5sum | cut -d' ' -f1 > /etc/machine-id
+    
+    # Copy to dbus location
+    mkdir -p /var/lib/dbus
+    cp /etc/machine-id /var/lib/dbus/machine-id
+    
+    echo "Generated new machine-id: $(cat /etc/machine-id)"
+  
+  # Enable systemd-timesyncd - REMOVED
+  # - systemctl enable systemd-timesyncd
+  # - systemctl start systemd-timesyncd
+  
+  # Create Kubernetes configuration directories
+  - mkdir -p /etc/systemd/system/containerd.service.d/
+  - mkdir -p /etc/modules-load.d/
+  - mkdir -p /etc/sysctl.d/
+  
+  # Configure kernel modules for Kubernetes
+  - echo 'overlay' >> /etc/modules-load.d/k8s_mods.conf
+  - echo 'br_netfilter' >> /etc/modules-load.d/k8s_mods.conf
+  
+  # Configure storage modules
+  - echo 'dm_multipath' >> /etc/modules-load.d/storage_mods.conf
+  - echo 'dm_mod' >> /etc/modules-load.d/storage_mods.conf
+  - echo 'scsi_dh_alua' >> /etc/modules-load.d/storage_mods.conf
+  
+  # Configure sysctl for Kubernetes
+  - echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/k8s_sysctl.conf
+  - echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/k8s_sysctl.conf
+  - echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/k8s_sysctl.conf
+  
+  # Configure inotify limits
+  - echo 'fs.inotify.max_user_instances = 8192' >> /etc/sysctl.d/99-inotify-limits.conf
+  - echo 'fs.inotify.max_user_watches = 524288' >> /etc/sysctl.d/99-inotify-limits.conf
+  
+  # Load kernel modules
+  - modprobe overlay
+  - modprobe br_netfilter
+  - modprobe dm_multipath
+  - modprobe dm_mod
+  - modprobe scsi_dh_alua
+  
+  # Apply sysctl settings
+  - sysctl --system
+  
+  # Configure multipath
+  - echo 'defaults {' > /etc/multipath.conf
+  - echo '  polling_interval 2' >> /etc/multipath.conf
+  - echo '  path_selector "round-robin 0"' >> /etc/multipath.conf
+  - echo '  path_grouping_policy multibus' >> /etc/multipath.conf
+  - echo '  uid_attribute ID_SERIAL' >> /etc/multipath.conf
+  - echo '  rr_min_io 100' >> /etc/multipath.conf
+  - echo '  failback immediate' >> /etc/multipath.conf
+  - echo '  no_path_retry queue' >> /etc/multipath.conf
+  - echo '  user_friendly_names yes' >> /etc/multipath.conf
+  - echo '}' >> /etc/multipath.conf
+  
+  # Enable multipath
+  - systemctl enable multipathd
+  - systemctl start multipathd
+  
+  # Configure containerd service override
+  - echo '[Service]' > /etc/systemd/system/containerd.service.d/override.conf
+  - echo 'ExecStartPre=' >> /etc/systemd/system/containerd.service.d/override.conf
+  - echo 'ExecStartPre=/sbin/modprobe overlay' >> /etc/systemd/system/containerd.service.d/override.conf
+  
+  # Enable and configure chronyd for time synchronization
+  - systemctl enable chrony
+  - systemctl start chrony
+
+  # Restart QEMU Guest Agent and network services late in the process
+  - systemctl restart qemu-guest-agent
+  - systemctl restart systemd-networkd || true
+  - systemctl restart systemd-resolved || true
+  
+  # Clean up package cache
+  - apt-get autoremove -y
+  - apt-get autoclean
+  
+  # Signal that cloud-init setup is complete
+  - echo "Debian cloud-init configuration completed at $(date)" > /var/log/debian-cloud-init-complete.log
+
+# Final message instead of power_state to avoid premature shutdown
+final_message: "Debian template setup completed successfully after $UPTIME seconds"

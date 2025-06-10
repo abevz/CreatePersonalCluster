@@ -2,6 +2,19 @@
 
 Complete documentation index for the **Kubernetes The Hard Way - CPC** project.
 
+## 🆕 **Recent Updates** (June 10, 2025)
+
+### ✨ **CPC upgrade-addons Enhancement**
+- **NEW:** Interactive menu interface for addon selection
+- **BEHAVIOR CHANGE:** `./cpc upgrade-addons` now shows a menu instead of installing all addons
+- **USAGE:** Use `./cpc upgrade-addons --addon all` for direct installation of all addons
+- **Documentation Updated:** All guides reflect the new interactive behavior
+
+### 🎯 **Cluster Creation Status**
+- **✅ WORKING:** Complete 3-node cluster creation workflow verified
+- **✅ FIXED:** Worker node joining issues resolved
+- **✅ TESTED:** Kubernetes v1.31.9 with Calico CNI on Ubuntu 24.04.2
+
 ## 📁 Project Structure Overview
 
 ```
@@ -46,6 +59,12 @@ my-kthw/
 - **[Scripts and Utilities](../scripts/README.md)** - Helper scripts and tools
 - **[Terraform Modules](../terraform/modules/)** - Reusable infrastructure modules
 
+### 🖥️ VM Template System
+- **[VM Template Reorganization](../docs/vm_template_reorganization_final.md)** - Modular template system architecture
+- **[SUSE Template Completion](../docs/suse_template_completion.md)** - SUSE template system implementation
+- **[Hostname Configuration Update](../docs/hostname_configuration_update.md)** - VM hostname management
+- **[Template Status Update](../docs/template_status_update.md)** - Template system status
+
 ### 🔧 Troubleshooting
 - **[SSH Key Troubleshooting](../docs/ssh_key_troubleshooting.md)** - SSH authentication issues
 - **[Template SSH Troubleshooting](../docs/template_ssh_troubleshooting.md)** - VM template SSH problems
@@ -80,6 +99,7 @@ my-kthw/
 |----------|----------|--------|
 | Getting Started | ✅ Complete | Production ready |
 | Technical Details | ✅ Complete | Comprehensive |
+| VM Template System | ✅ Complete | All OS types supported |
 | Troubleshooting | ✅ Complete | Well documented |
 | API Reference | ✅ Complete | Detailed |
 | Examples | ✅ Complete | Working examples |

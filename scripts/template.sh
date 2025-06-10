@@ -43,25 +43,26 @@ echo "$VM_SSH_KEY" > "$TEMP_SSH_PUB_KEY"
 # For now, we'll assume the SSH key is already set up for the current user
 ssh-copy-id -f "$PROXMOX_USERNAME"@"$PROXMOX_HOST" 2>/dev/null || echo "SSH key copy failed, but may already be present"
 
-# Copy the vm_template directory (containing create_template_helper.sh and other assets)
-scp -q -r ./vm_template "$PROXMOX_USERNAME"@"$PROXMOX_HOST":
+# Copy the vm_template directory to create the correct structure on Proxmox host
+ssh "$PROXMOX_USERNAME"@"$PROXMOX_HOST" "mkdir -p scripts"
+scp -q -r ./vm_template "$PROXMOX_USERNAME"@"$PROXMOX_HOST":scripts/
 # Copy the main cpc.env file to the vm_template directory on the Proxmox host
-scp -q "${REPO_PATH}/cpc.env" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
+scp -q "${REPO_PATH}/cpc.env" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":scripts/vm_template/
 # Copy the SSH public key from our temporary file
-scp -q "$TEMP_SSH_PUB_KEY" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/vm_ssh_key.pub
+scp -q "$TEMP_SSH_PUB_KEY" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":scripts/vm_template/vm_ssh_key.pub
 # Copy the Debian cloud-init user-data file if it exists
 if [ -f "./vm_template/debian-cloud-init-userdata.yaml" ]; then
-    scp -q "./vm_template/debian-cloud-init-userdata.yaml" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
+    scp -q "./vm_template/debian-cloud-init-userdata.yaml" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":scripts/vm_template/
 fi
 
 # Copy the Ubuntu cloud-init user-data file if it exists
 if [ -f "./vm_template/ubuntu-cloud-init-userdata.yaml" ]; then
-    scp -q "./vm_template/ubuntu-cloud-init-userdata.yaml" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
+    scp -q "./vm_template/ubuntu-cloud-init-userdata.yaml" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":scripts/vm_template/
 fi
 
 # Copy the machine-id script
 if [ -f "./vm_template/ensure-unique-machine-id.sh" ]; then
-    scp -q "./vm_template/ensure-unique-machine-id.sh" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":vm_template/
+    scp -q "./vm_template/ensure-unique-machine-id.sh" "$PROXMOX_USERNAME"@"$PROXMOX_HOST":scripts/vm_template/
 fi
 
 # Clean up temporary files
@@ -93,6 +94,9 @@ export METRICS_SERVER_VERSION='$METRICS_SERVER_VERSION'
 export ETCD_VERSION='$ETCD_VERSION'
 export KUBELET_SERVING_CERT_APPROVER_VERSION='$KUBELET_SERVING_CERT_APPROVER_VERSION'
 export LOCAL_PATH_PROVISIONER_VERSION='$LOCAL_PATH_PROVISIONER_VERSION'
-cd vm_template && chmod +x ./create_template_helper.sh && ./create_template_helper.sh
+export PROXMOX_STORAGE_BASE_PATH='$PROXMOX_STORAGE_BASE_PATH'
+export PROXMOX_DISK_DATASTORE='$PROXMOX_DISK_DATASTORE'
+export PROXMOX_ISO_PATH='$PROXMOX_ISO_PATH'
+cd scripts/vm_template && chmod +x ./create_template_dispatcher.sh && ./create_template_dispatcher.sh
 "
-ssh "$PROXMOX_USERNAME"@"$PROXMOX_HOST" "rm -rf vm_template"
+ssh "$PROXMOX_USERNAME"@"$PROXMOX_HOST" "rm -rf scripts"
