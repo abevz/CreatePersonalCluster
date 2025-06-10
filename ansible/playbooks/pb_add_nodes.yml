@@ -1,21 +1,82 @@
 ---
-- name: Add New Nodes to Kubernetes Cluster (Placeholder)
-  hosts: "{{ target_hosts | default('new_nodes_group') }}" # Expect a group of new nodes
+- name: Add New Nodes to Kubernetes Cluster
+  hosts: "{{ target_hosts | default('workers') }}" # Target new worker nodes
   become: yes
   gather_facts: yes
 
   vars:
-    join_token: "YOUR_JOIN_TOKEN" # Must be passed or discovered
-    discovery_token_ca_cert_hash: "sha256:YOUR_DISCOVERY_HASH" # Must be passed or discovered
-    control_plane_endpoint: "YOUR_CONTROL_PLANE_IP_OR_DNS:6443" # Must be passed or discovered
+    join_token: "{{ join_token | default('') }}" # Will be generated if not provided
+    discovery_token_ca_cert_hash: "{{ discovery_token_ca_cert_hash | default('') }}" # Will be discovered if not provided
+    control_plane_endpoint: "{{ control_plane_endpoint | default(hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443') }}"
 
   tasks:
-    - name: Display placeholder message for adding nodes
-      ansible.builtin.debug:
+    - name: Generate join token if not provided
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      shell: kubeadm token create --print-join-command
+      register: join_command_output
+      when: join_token == '' or discovery_token_ca_cert_hash == ''
+      run_once: true
+
+    - name: Parse join command
+      set_fact:
+        join_token: "{{ join_command_output.stdout.split(' ')[4] }}"
+        discovery_token_ca_cert_hash: "{{ join_command_output.stdout.split(' ')[6] }}"
+      when: join_command_output is defined and join_command_output.stdout is defined
+      run_once: true
+
+    - name: Display join information
+      debug:
         msg:
-          - "This playbook is a placeholder for adding new nodes."
-          - "It would typically run 'kubeadm join' with the following parameters:"
-          - "  Join Token: {{ join_token }}"
-          - "  Discovery Hash: {{ discovery_token_ca_cert_hash }}"
-          - "  Control Plane Endpoint: {{ control_plane_endpoint }}"
-          - "Targeted hosts: {{ ansible_play_hosts_all | join(', ') }}"
+          - "Join Token: {{ join_token }}"
+          - "Discovery Hash: {{ discovery_token_ca_cert_hash }}"
+          - "Control Plane Endpoint: {{ control_plane_endpoint }}"
+
+    - name: Check if node is already part of cluster
+      shell: kubectl get nodes --no-headers | grep -w "{{ inventory_hostname }}" || true
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: node_exists
+      changed_when: false
+
+    - name: Reset node if it exists in cluster but kubelet is not running
+      shell: kubeadm reset --force
+      when: 
+        - node_exists.stdout != ""
+        - not ansible_facts.services['kubelet.service'].state == 'running'
+
+    - name: Join node to Kubernetes cluster
+      shell: |
+        kubeadm join {{ control_plane_endpoint }} \
+          --token {{ join_token }} \
+          --discovery-token-ca-cert-hash {{ discovery_token_ca_cert_hash }}
+      when: node_exists.stdout == ""
+      register: join_result
+
+    - name: Display join result
+      debug:
+        var: join_result.stdout_lines
+      when: join_result is defined
+
+    - name: Verify node joined successfully
+      shell: kubectl get nodes --no-headers | grep -w "{{ inventory_hostname }}"
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: verify_join
+      retries: 5
+      delay: 10
+      until: verify_join.rc == 0
+
+    - name: Wait for node to be Ready
+      shell: kubectl get nodes {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: node_ready
+      retries: 30
+      delay: 10
+      until: node_ready.stdout == "True"
+
+    - name: Display node status
+      shell: kubectl get nodes {{ inventory_hostname }} -o wide
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: node_status
+
+    - name: Show final node status
+      debug:
+        var: node_status.stdout_lines

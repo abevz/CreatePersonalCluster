@@ -1,0 +1,479 @@
+---
+- name: Upgrade and Install Cluster Addons
+  hosts: "{{ target_hosts | default('control_plane') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    addon_name: "{{ addon_name | default('all') }}" # calico, coredns, metallb, metrics-server, cert-manager, kubelet-serving-cert-approver, argocd, ingress-nginx, or 'all'
+    requested_version: "{{ addon_version | default('') }}" # Specific version or empty for defaults
+    control_plane_node: "{{ groups['control_plane'][0] }}"
+    
+    # Default addon versions from environment
+    default_calico_version: "{{ calico_version | default('v3.28.0') }}"
+    default_metallb_version: "{{ metallb_version | default('v0.14.8') }}"
+    default_metrics_server_version: "{{ metrics_server_version | default('v0.7.2') }}"
+    default_coredns_version: "{{ coredns_version | default('v1.11.3') }}"
+    default_cert_manager_version: "{{ cert_manager_version | default('v1.16.2') }}"
+    default_kubelet_serving_cert_approver_version: "{{ kubelet_serving_cert_approver_version | default('v0.9.2') }}"
+    default_argocd_version: "{{ argocd_version | default('v2.13.2') }}"
+    default_ingress_nginx_version: "{{ ingress_nginx_version | default('v1.12.0') }}"
+    
+    # Resolved versions
+    calico_target_version: "{{ requested_version if requested_version != '' else default_calico_version }}"
+    metallb_target_version: "{{ requested_version if requested_version != '' else default_metallb_version }}"
+    metrics_server_target_version: "{{ requested_version if requested_version != '' else default_metrics_server_version }}"
+    coredns_target_version: "{{ requested_version if requested_version != '' else default_coredns_version }}"
+    cert_manager_target_version: "{{ requested_version if requested_version != '' else default_cert_manager_version }}"
+    kubelet_serving_cert_approver_target_version: "{{ requested_version if requested_version != '' else default_kubelet_serving_cert_approver_version }}"
+    argocd_target_version: "{{ requested_version if requested_version != '' else default_argocd_version }}"
+    ingress_nginx_target_version: "{{ requested_version if requested_version != '' else default_ingress_nginx_version }}"
+
+  tasks:
+    - name: Set target host to control plane
+      set_fact:
+        ansible_host: "{{ hostvars[control_plane_node]['ansible_host'] }}"
+      when: inventory_hostname != control_plane_node
+
+    # ===========================
+    # CALICO CNI - ENHANCED LOGIC
+    # ===========================
+    - name: Check current Calico version
+      shell: kubectl get pods -n calico-system -o jsonpath='{.items[0].spec.containers[0].image}' | cut -d':' -f2 2>/dev/null || echo "not_installed"
+      register: current_calico_version
+      when: addon_name in ['calico', 'all']
+      ignore_errors: true
+
+    - name: Upgrade Calico CNI
+      block:
+        - name: Download Calico operator manifest
+          get_url:
+            url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_target_version }}/manifests/tigera-operator.yaml"
+            dest: "/tmp/tigera-operator-{{ calico_target_version }}.yaml"
+
+        - name: Download Calico custom resources
+          get_url:
+            url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_target_version }}/manifests/custom-resources.yaml"
+            dest: "/tmp/calico-custom-resources-{{ calico_target_version }}.yaml"
+
+        - name: Check if Calico is already running and healthy
+          shell: kubectl get pods -n calico-system -l k8s-app=calico-node --field-selector=status.phase=Running 2>/dev/null | grep -c calico-node || echo "0"
+          register: calico_running_pods
+          ignore_errors: true
+
+        - name: Check if exact same version is already installed
+          shell: |
+            if [ "{{ calico_running_pods.stdout }}" -gt 0 ]; then
+              current_version=$(kubectl get pods -n calico-system -o jsonpath='{.items[0].spec.containers[0].image}' | cut -d':' -f2 2>/dev/null)
+              if [ "$current_version" = "{{ calico_target_version }}" ]; then
+                echo "same_version"
+              else
+                echo "different_version"
+              fi
+            else
+              echo "not_running"
+            fi
+          register: calico_version_check
+
+        - name: Display Calico version check result
+          debug:
+            msg:
+              - "Calico running pods: {{ calico_running_pods.stdout }}"
+              - "Version check result: {{ calico_version_check.stdout }}"
+              - "Current version: {{ current_calico_version.stdout }}"
+              - "Target version: {{ calico_target_version }}"
+
+        # Check for problematic CRD annotations that cause the 262144 byte limit issue
+        - name: Check Calico CRD annotation sizes
+          shell: |
+            if kubectl get crd installations.operator.tigera.io >/dev/null 2>&1; then
+              annotation_size=$(kubectl get crd installations.operator.tigera.io -o json | jq -r '.metadata.annotations."kubectl.kubernetes.io/last-applied-configuration" // ""' | wc -c)
+              if [ "$annotation_size" -gt 200000 ]; then
+                echo "large_annotations"
+              else
+                echo "normal_annotations"
+              fi
+            else
+              echo "no_crd"
+            fi
+          register: calico_crd_annotation_check
+
+        - name: Clean up problematic Calico CRD annotations if needed
+          shell: |
+            if [ "{{ calico_crd_annotation_check.stdout }}" = "large_annotations" ]; then
+              echo "Removing large annotations from Calico CRDs to prevent 262144 byte limit issue..."
+              kubectl annotate crd installations.operator.tigera.io kubectl.kubernetes.io/last-applied-configuration- || true
+              kubectl annotate crd tigerastatuses.operator.tigera.io kubectl.kubernetes.io/last-applied-configuration- || true
+              kubectl annotate crd apiservers.operator.tigera.io kubectl.kubernetes.io/last-applied-configuration- || true
+              kubectl annotate crd imagesets.operator.tigera.io kubectl.kubernetes.io/last-applied-configuration- || true
+              echo "Large annotations removed"
+            else
+              echo "No large annotations found, continuing normally"
+            fi
+          register: calico_annotation_cleanup
+          when: calico_crd_annotation_check.stdout == "large_annotations"
+
+        - name: Display annotation cleanup result
+          debug:
+            msg: "{{ calico_annotation_cleanup.stdout_lines }}"
+          when: calico_annotation_cleanup is defined and calico_annotation_cleanup.stdout_lines is defined
+
+        # Apply Calico operator with strategy to avoid annotation issues
+        - name: Apply Calico operator (with annotation-safe strategy)
+          shell: |
+            if [ "{{ calico_version_check.stdout }}" = "same_version" ]; then
+              echo "Calico {{ calico_target_version }} is already running and healthy, skipping update"
+              exit 0
+            fi
+            
+            echo "Installing or updating Calico to {{ calico_target_version }}"
+            
+            # Use server-side apply to avoid client-side annotation accumulation
+            if kubectl version --short | grep -q "Server Version.*v1.1[8-9]\|Server Version.*v1.[2-9][0-9]"; then
+              echo "Using server-side apply (Kubernetes 1.18+)"
+              kubectl apply --server-side=true -f /tmp/tigera-operator-{{ calico_target_version }}.yaml --force-conflicts
+            else
+              # For older Kubernetes versions, use replace strategy
+              echo "Using replace strategy for older Kubernetes"
+              if kubectl get crd installations.operator.tigera.io >/dev/null 2>&1; then
+                echo "CRDs exist, using replace to avoid annotation buildup..."
+                kubectl replace --force -f /tmp/tigera-operator-{{ calico_target_version }}.yaml
+              else
+                echo "CRDs don't exist, using create for clean installation..."
+                kubectl create -f /tmp/tigera-operator-{{ calico_target_version }}.yaml
+              fi
+            fi
+          register: calico_apply_result
+
+        - name: Display Calico operator apply result
+          debug:
+            msg: "{{ calico_apply_result.stdout_lines }}"
+
+        - name: Wait for tigera operator to be ready (when applied)
+          shell: kubectl wait --for=condition=ready pod -l k8s-app=tigera-operator -n tigera-operator --timeout=300s
+          when: calico_version_check.stdout != "same_version"
+          ignore_errors: true
+
+        - name: Apply Calico custom resources (when needed)
+          shell: |
+            if [ "{{ calico_version_check.stdout }}" != "same_version" ]; then
+              echo "Applying Calico custom resources..."
+              # Use server-side apply for custom resources as well
+              if kubectl version --short | grep -q "Server Version.*v1.1[8-9]\|Server Version.*v1.[2-9][0-9]"; then
+                kubectl apply --server-side=true -f /tmp/calico-custom-resources-{{ calico_target_version }}.yaml --force-conflicts
+              else
+                kubectl apply -f /tmp/calico-custom-resources-{{ calico_target_version }}.yaml
+              fi
+            else
+              echo "Skipping custom resources application (same version already running)"
+            fi
+          register: calico_custom_resources_result
+          when: calico_version_check.stdout != "same_version"
+
+        - name: Wait for Calico pods to be created (when applied)
+          shell: |
+            if [ "{{ calico_version_check.stdout }}" != "same_version" ]; then
+              echo "Waiting for Calico pods to be created..."
+              timeout 300 bash -c '
+                while true; do
+                  if kubectl get pods -n calico-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -q calico-node; then
+                    echo "Calico pods found"
+                    break
+                  fi
+                  echo "Waiting for Calico pods to be created..."
+                  sleep 5
+                done
+              '
+            else
+              echo "Skipping pod wait (same version already running)"
+            fi
+          when: calico_version_check.stdout != "same_version"
+
+        - name: Wait for Calico pods to be ready (when applied)
+          shell: kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=300s
+          when: calico_version_check.stdout != "same_version"
+          ignore_errors: true
+
+        - name: Verify Calico installation
+          shell: kubectl get pods -n calico-system -o jsonpath='{.items[0].spec.containers[0].image}' | cut -d':' -f2 2>/dev/null || echo "verification_failed"
+          register: new_calico_version
+
+        - name: Display Calico installation result
+          debug:
+            msg:
+              - "Calico installation completed"
+              - "Previous version: {{ current_calico_version.stdout | default('unknown') }}"
+              - "Current version: {{ new_calico_version.stdout }}"
+              - "Installation was {{ 'skipped (same version)' if calico_version_check.stdout == 'same_version' else 'applied' }}"
+
+      when: addon_name in ['calico', 'all']
+
+    # MetalLB Load Balancer
+    - name: Check current MetalLB version
+      shell: kubectl get deployment -n metallb-system controller -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_metallb_version
+      when: addon_name in ['metallb', 'all']
+      ignore_errors: true
+
+    - name: Install/Upgrade MetalLB
+      block:
+        - name: Apply MetalLB native manifests
+          shell: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/{{ metallb_target_version }}/config/manifests/metallb-native.yaml
+
+        - name: Wait for MetalLB pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app=metallb -n metallb-system --timeout=300s
+
+        - name: Create MetalLB IP pool configuration
+          shell: |
+            kubectl apply -f - <<EOF
+            apiVersion: metallb.io/v1beta1
+            kind: IPAddressPool
+            metadata:
+              name: default-pool
+              namespace: metallb-system
+            spec:
+              addresses:
+              - 10.10.10.200-10.10.10.220
+            ---
+            apiVersion: metallb.io/v1beta1
+            kind: L2Advertisement
+            metadata:
+              name: default
+              namespace: metallb-system
+            spec:
+              ipAddressPools:
+              - default-pool
+            EOF
+
+        - name: Verify MetalLB installation
+          shell: kubectl get deployment -n metallb-system controller -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_metallb_version
+
+        - name: Display MetalLB installation result
+          debug:
+            msg:
+              - "MetalLB installation completed"
+              - "Previous version: {{ current_metallb_version.stdout | default('not installed') }}"
+              - "Current version: {{ new_metallb_version.stdout }}"
+
+      when: addon_name in ['metallb', 'all']
+
+    # Cert-Manager
+    - name: Check current cert-manager version
+      shell: kubectl get deployment -n cert-manager cert-manager -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_cert_manager_version
+      when: addon_name in ['cert-manager', 'all']
+      ignore_errors: true
+
+    - name: Install/Upgrade cert-manager
+      block:
+        - name: Apply cert-manager CRDs
+          shell: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_target_version }}/cert-manager.crds.yaml
+
+        - name: Apply cert-manager
+          shell: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_target_version }}/cert-manager.yaml
+
+        - name: Wait for cert-manager pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=300s
+
+        - name: Verify cert-manager installation
+          shell: kubectl get deployment -n cert-manager cert-manager -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_cert_manager_version
+
+        - name: Display cert-manager installation result
+          debug:
+            msg:
+              - "cert-manager installation completed"
+              - "Previous version: {{ current_cert_manager_version.stdout | default('not installed') }}"
+              - "Current version: {{ new_cert_manager_version.stdout }}"
+
+      when: addon_name in ['cert-manager', 'all']
+
+    # Kubelet Serving Cert Approver
+    - name: Check current kubelet-serving-cert-approver version
+      shell: kubectl get deployment -n kubelet-serving-cert-approver kubelet-serving-cert-approver -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_kubelet_serving_cert_approver_version
+      when: addon_name in ['kubelet-serving-cert-approver', 'all']
+      ignore_errors: true
+
+    - name: Install/Upgrade kubelet-serving-cert-approver
+      block:
+        - name: Apply kubelet-serving-cert-approver
+          shell: kubectl apply -f https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml
+
+        - name: Wait for kubelet-serving-cert-approver pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kubelet-serving-cert-approver -n kubelet-serving-cert-approver --timeout=300s
+
+        - name: Verify kubelet-serving-cert-approver installation
+          shell: kubectl get deployment -n kubelet-serving-cert-approver kubelet-serving-cert-approver -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_kubelet_serving_cert_approver_version
+
+        - name: Display kubelet-serving-cert-approver installation result
+          debug:
+            msg:
+              - "kubelet-serving-cert-approver installation completed"
+              - "Previous version: {{ current_kubelet_serving_cert_approver_version.stdout | default('not installed') }}"
+              - "Current version: {{ new_kubelet_serving_cert_approver_version.stdout }}"
+
+      when: addon_name in ['kubelet-serving-cert-approver', 'all']
+
+    # ArgoCD
+    - name: Check current ArgoCD version
+      shell: kubectl get deployment -n argocd argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_argocd_version
+      when: addon_name in ['argocd', 'all']
+      ignore_errors: true
+
+    - name: Install/Upgrade ArgoCD
+      block:
+        - name: Create ArgoCD namespace
+          shell: kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+
+        - name: Apply ArgoCD
+          shell: kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/{{ argocd_target_version }}/manifests/install.yaml
+
+        - name: Wait for ArgoCD pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-server -n argocd --timeout=600s
+
+        - name: Verify ArgoCD installation
+          shell: kubectl get deployment -n argocd argocd-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_argocd_version
+
+        - name: Display ArgoCD installation result
+          debug:
+            msg:
+              - "ArgoCD installation completed"
+              - "Previous version: {{ current_argocd_version.stdout | default('not installed') }}"
+              - "Current version: {{ new_argocd_version.stdout }}"
+
+        - name: Get ArgoCD admin password
+          shell: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+          register: argocd_password
+
+        - name: Display ArgoCD access information
+          debug:
+            msg:
+              - "ArgoCD is accessible at: https://argocd.local (configure ingress or port-forward)"
+              - "Username: admin"
+              - "Password: {{ argocd_password.stdout }}"
+
+      when: addon_name in ['argocd', 'all']
+
+    # Ingress NGINX
+    - name: Check current ingress-nginx version
+      shell: kubectl get deployment -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_ingress_nginx_version
+      when: addon_name in ['ingress-nginx', 'all']
+      ignore_errors: true
+
+    - name: Install/Upgrade ingress-nginx
+      block:
+        - name: Apply ingress-nginx
+          shell: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{ ingress_nginx_target_version }}/deploy/static/provider/baremetal/deploy.yaml
+
+        - name: Wait for ingress-nginx pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=controller -n ingress-nginx --timeout=300s
+
+        - name: Verify ingress-nginx installation
+          shell: kubectl get deployment -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_ingress_nginx_version
+
+        - name: Display ingress-nginx installation result
+          debug:
+            msg:
+              - "ingress-nginx installation completed"
+              - "Previous version: {{ current_ingress_nginx_version.stdout | default('not installed') }}"
+              - "Current version: {{ new_ingress_nginx_version.stdout }}"
+
+      when: addon_name in ['ingress-nginx', 'all']
+
+    # Metrics Server
+    - name: Check current Metrics Server version
+      shell: kubectl get deployment -n kube-system metrics-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_metrics_server_version
+      when: addon_name in ['metrics-server', 'all']
+      ignore_errors: true
+
+    - name: Upgrade Metrics Server
+      block:
+        - name: Download Metrics Server manifests
+          get_url:
+            url: "https://github.com/kubernetes-sigs/metrics-server/releases/download/{{ metrics_server_target_version }}/components.yaml"
+            dest: "/tmp/metrics-server-{{ metrics_server_target_version }}.yaml"
+
+        - name: Patch Metrics Server for self-hosted clusters
+          shell: |
+            sed -i '/--metric-resolution=15s/a\        - --kubelet-insecure-tls' /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+
+        - name: Apply Metrics Server manifests
+          shell: kubectl apply -f /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+
+        - name: Wait for Metrics Server to be ready
+          shell: kubectl wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=300s
+
+        - name: Verify Metrics Server upgrade
+          shell: kubectl get deployment -n kube-system metrics-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_metrics_server_version
+
+        - name: Display Metrics Server upgrade result
+          debug:
+            msg:
+              - "Metrics Server upgrade completed"
+              - "Previous version: {{ current_metrics_server_version.stdout | default('unknown') }}"
+              - "Current version: {{ new_metrics_server_version.stdout }}"
+
+      when: addon_name in ['metrics-server', 'all'] and current_metrics_server_version is not failed
+
+    # CoreDNS
+    - name: Check current CoreDNS version
+      shell: kubectl get deployment -n kube-system coredns -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_coredns_version
+      when: addon_name in ['coredns', 'all']
+      ignore_errors: true
+
+    - name: Upgrade CoreDNS
+      block:
+        - name: Update CoreDNS image
+          shell: |
+            kubectl set image deployment/coredns -n kube-system \
+              coredns=registry.k8s.io/coredns/coredns:{{ coredns_target_version }}
+
+        - name: Wait for CoreDNS rollout to complete
+          shell: kubectl rollout status deployment/coredns -n kube-system --timeout=300s
+
+        - name: Verify CoreDNS upgrade
+          shell: kubectl get deployment -n kube-system coredns -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_coredns_version
+
+        - name: Display CoreDNS upgrade result
+          debug:
+            msg:
+              - "CoreDNS upgrade completed"
+              - "Previous version: {{ current_coredns_version.stdout | default('unknown') }}"
+              - "Current version: {{ new_coredns_version.stdout }}"
+
+      when: addon_name in ['coredns', 'all'] and current_coredns_version is not failed
+
+    # Final status check
+    - name: Final addon status check
+      shell: kubectl get pods --all-namespaces | grep -E "(calico|metallb|cert-manager|kubelet-serving-cert-approver|argocd|ingress-nginx|metrics-server|coredns)"
+      register: final_addon_status
+      ignore_errors: true
+
+    - name: Display final addon status
+      debug:
+        msg:
+          - "Final addon status:"
+          - "{{ final_addon_status.stdout_lines }}"
+      when: final_addon_status.stdout_lines is defined
+
+    # Cleanup temporary files
+    - name: Cleanup temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/tigera-operator-{{ calico_target_version }}.yaml"
+        - "/tmp/calico-custom-resources-{{ calico_target_version }}.yaml"
+        - "/tmp/metrics-server-{{ metrics_server_target_version }}.yaml"
+      when: addon_name in ['calico', 'metrics-server', 'all']

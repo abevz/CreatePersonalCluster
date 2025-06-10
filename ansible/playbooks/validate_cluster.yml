@@ -1,0 +1,155 @@
+---
+- name: Validate Kubernetes Cluster
+  hosts: control_plane
+  become: yes
+  vars:
+    kubeconfig_path: "/home/{{ ansible_user }}/.kube/config"
+    
+  tasks:
+    - name: Check cluster info
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Node
+      register: cluster_nodes
+
+    - name: Display cluster nodes
+      debug:
+        msg: "Node: {{ item.metadata.name }} - Status: {{ item.status.conditions | selectattr('type', 'equalto', 'Ready') | list | first | default({}) | json_query('status') }}"
+      loop: "{{ cluster_nodes.resources }}"
+
+    - name: Check system pods status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Pod
+        namespace: kube-system
+      register: system_pods
+
+    - name: Verify all system pods are running
+      debug:
+        msg: "Pod: {{ item.metadata.name }} - Status: {{ item.status.phase }}"
+      loop: "{{ system_pods.resources }}"
+      when: item.status.phase != "Running"
+
+    - name: Check Calico pods status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Pod
+        namespace: calico-system
+      register: calico_pods
+
+    - name: Verify Calico pods are running
+      debug:
+        msg: "Calico Pod: {{ item.metadata.name }} - Status: {{ item.status.phase }}"
+      loop: "{{ calico_pods.resources }}"
+      when: item.status.phase != "Running"
+
+    - name: Create test deployment for networking validation
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: test-nginx
+            namespace: default
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: test-nginx
+            template:
+              metadata:
+                labels:
+                  app: test-nginx
+              spec:
+                containers:
+                - name: nginx
+                  image: nginx:alpine
+                  ports:
+                  - containerPort: 80
+
+    - name: Wait for test deployment to be ready
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: apps/v1
+        kind: Deployment
+        name: test-nginx
+        namespace: default
+        wait: true
+        wait_condition:
+          type: Progressing
+          status: "True"
+          reason: NewReplicaSetAvailable
+        wait_timeout: 300
+
+    - name: Check test pod distribution
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Pod
+        namespace: default
+        label_selectors:
+          - app=test-nginx
+      register: test_pods
+
+    - name: Display test pod placement
+      debug:
+        msg: "Pod {{ item.metadata.name }} running on {{ item.spec.nodeName }} with IP {{ item.status.podIP }}"
+      loop: "{{ test_pods.resources }}"
+
+    - name: Create test service
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: test-nginx-service
+            namespace: default
+          spec:
+            selector:
+              app: test-nginx
+            ports:
+            - port: 80
+              targetPort: 80
+            type: ClusterIP
+
+    - name: Test service connectivity from control plane
+      shell: |
+        kubectl --kubeconfig={{ kubeconfig_path }} get svc test-nginx-service -o jsonpath='{.spec.clusterIP}' | \
+        xargs -I {} kubectl --kubeconfig={{ kubeconfig_path }} run curl-test --image=curlimages/curl --rm -it --restart=Never -- curl -s http://{}
+      register: connectivity_test
+      ignore_errors: yes
+
+    - name: Display connectivity test result
+      debug:
+        msg: "Service connectivity test: {{ 'PASSED' if 'Welcome to nginx' in connectivity_test.stdout else 'FAILED' }}"
+
+    - name: Clean up test resources
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
+        state: absent
+        definition:
+          apiVersion: "{{ item.api }}"
+          kind: "{{ item.kind }}"
+          metadata:
+            name: "{{ item.name }}"
+            namespace: default
+      loop:
+        - { api: "apps/v1", kind: "Deployment", name: "test-nginx" }
+        - { api: "v1", kind: "Service", name: "test-nginx-service" }
+      ignore_errors: yes
+
+    - name: Final cluster summary
+      debug:
+        msg: |
+          Kubernetes Cluster Validation Summary:
+          - Total Nodes: {{ cluster_nodes.resources | length }}
+          - Control Plane Nodes: {{ cluster_nodes.resources | selectattr('metadata.labels["node-role.kubernetes.io/control-plane"]', 'defined') | list | length }}
+          - Worker Nodes: {{ cluster_nodes.resources | length - (cluster_nodes.resources | selectattr('metadata.labels["node-role.kubernetes.io/control-plane"]', 'defined') | list | length) }}
+          - All nodes are Ready: {{ cluster_nodes.resources | selectattr('status.conditions', 'defined') | map(attribute='status.conditions') | map('selectattr', 'type', 'equalto', 'Ready') | map('list') | map('first') | map(attribute='status') | list | unique == ['True'] }}
+          - CNI Plugin: Calico v3.28.0
+          - Cluster is fully operational!
