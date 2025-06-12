@@ -3,7 +3,7 @@
 ## 📚 Documentation Index
 
 ### 🚀 Quick Start Guides
-- **[Complete Cluster Creation Guide](complete_cluster_creation_guide.md)** - ⭐ **НОВОЕ** Полное руководство по созданию кластера (РЕКОМЕНДУЕТСЯ)
+- **[Complete Cluster Creation Guide](complete_cluster_creation_guide.md)** - ⭐ **NEW** Complete cluster creation guide (RECOMMENDED)
 - **[Complete Workflow Guide](complete_workflow_guide.md)** - End-to-end cluster deployment walkthrough
 - **[Bootstrap Command Guide](bootstrap_command_guide.md)** - Detailed guide for the `cpc bootstrap` command
 - **[Cluster Deployment Guide](cluster_deployment_guide.md)** - Comprehensive deployment documentation
