@@ -1,304 +1,313 @@
-# Полное Руководство по Созданию Kubernetes Кластера с CPC
+# Complete Kubernetes Cluster Creation Guide with CPC
 
-## 📋 **ОБЗОР**
+## 📋 **OVERVIEW**
 
-Это руководство описывает правильную последовательность создания Kubernetes кластера с помощью CPC (Cluster Provisioning Control) на базе нашего успешного опыта развертывания.
+This guide describes the correct sequence for creating a Kubernetes cluster using CPC (Cluster Provisioning Control) based on our successful deployment experience.
 
-**Дата обновления:** 10 июня 2025  
-**Статус:** Проверено и работает  
-**Версия Kubernetes:** v1.31.9  
+**Update Date:** June 12, 2025  
+**Status:** Tested and working  
+**Kubernetes Version:** v1.31.9  
 
-## 🎯 **ЦЕЛЬ**
+## 🎯 **GOAL**
 
-Создать полностью функциональный 3-узловой Kubernetes кластер:
+Create a fully functional 3-node Kubernetes cluster:
 - 1 Control Plane node
 - 2 Worker nodes
 - Calico CNI
-- Все системные компоненты
+- All system components
 
-## 🚀 **ПОШАГОВОЕ РУКОВОДСТВО**
+## 🚀 **STEP-BY-STEP GUIDE**
 
-### **Шаг 1: Подготовка и настройка**
+### **Step 1: Preparation and Setup**
 
 ```bash
-# Настройка CPC (если еще не сделано)
+# Setup CPC (if not already done)
 ./cpc setup-cpc
 
-# Установка контекста (например, ubuntu)
+# Set context (e.g., ubuntu)
 ./cpc ctx ubuntu
 
-# Загрузка секретов
+# Load secrets
 ./cpc load_secrets
 ```
 
-**Проверка:**
+**Verification:**
 ```bash
-# Должны увидеть загруженные секреты и переменные
+# Should see loaded secrets and variables
 Loading secrets from secrets.sops.yaml...
 Successfully loaded secrets (PROXMOX_HOST: homelab.bevz.net, VM_USERNAME: abevz)
 ```
 
-### **Шаг 2: Создание инфраструктуры**
+### **Step 2: Infrastructure Creation**
 
 ```bash
-# Планирование изменений (опционально, но рекомендуется)
+# Plan changes (optional but recommended)
 ./cpc deploy plan
 
-# Создание VM
+# Create VMs
 ./cpc deploy apply -auto-approve
 
-# Проверка созданных VM
+# Verify created VMs
 ./cpc deploy output k8s_node_ips
 ```
 
-**Ожидаемый результат:**
-```
-control_plane_ips = ["10.10.10.116"]
-worker_ips = ["10.10.10.101", "10.10.10.29"]
+**Expected output:**
+```json
+{
+  "controlplane1": "10.10.10.X",
+  "worker1": "10.10.10.Y", 
+  "worker2": "10.10.10.Z"
+}
 ```
 
-### **Шаг 3: Подготовка узлов**
+### **Step 3: Kubernetes Components Installation**
 
 ```bash
-# Установка Kubernetes компонентов на всех узлах
+# Install Kubernetes, containerd on all nodes
 ./cpc run-ansible install_kubernetes_cluster.yml
 ```
 
-**Что происходит:**
-- Установка containerd с правильной CRI конфигурацией
-- Установка kubelet, kubeadm, kubectl
-- Настройка системных параметров для Kubernetes
+**What this does:**
+- Installs kubeadm, kubelet, kubectl
+- Configures containerd with proper CRI settings
+- Sets up network prerequisites
+- Disables swap
 
-### **Шаг 4: Инициализация кластера**
+### **Step 4: Cluster Initialization**
 
 ```bash
-# Полная инициализация кластера (control plane + Calico CNI)
+# Complete cluster initialization (control plane + CNI)
 ./cpc bootstrap
 ```
 
-**Что происходит:**
-- Инициализация control plane с kubeadm
-- Установка Calico CNI
-- Настройка сети кластера
+**This command:**
+- Initializes control plane with kubeadm
+- Installs Calico CNI
+- Configures cluster networking
+- Sets up kubectl access
 
-### **Шаг 5: Добавление worker nodes**
+### **Step 5: Worker Nodes Addition**
 
 ```bash
-# Присоединение worker узлов к кластеру
+# Join worker nodes to cluster
 ./cpc add-nodes --target-hosts "workers"
 ```
 
-**Что происходит:**
-- Генерация join token
-- Присоединение worker nodes к кластеру
-- Проверка статуса узлов
+**What happens:**
+- Generates join tokens
+- Dynamically resolves control plane IP
+- Joins all worker nodes
+- Verifies node status
 
-### **Шаг 6: Получение доступа к кластеру**
+### **Step 6: Access Configuration**
 
 ```bash
-# Получение kubeconfig
+# Get kubeconfig
 ./cpc get-kubeconfig
 
-# Проверка статуса кластера
+# Verify cluster access
 kubectl get nodes -o wide
 kubectl get pods --all-namespaces
 ```
 
-## 🔧 **УПРАВЛЕНИЕ ДОПОЛНИТЕЛЬНЫМИ КОМПОНЕНТАМИ**
-
-### **Команда upgrade-addons**
-
-✨ **НОВОЕ:** Команда `./cpc upgrade-addons` теперь показывает **интерактивное меню** для выбора компонентов!
-
-**Правильное использование:**
+### **Step 7: Additional Components (Optional)**
 
 ```bash
-# Показать справку и доступные addons
+# Install additional components (shows interactive menu)
+./cpc upgrade-addons
+# or direct installation:
+./cpc upgrade-addons --addon metallb
+./cpc upgrade-addons --addon cert-manager
+```
+
+### **Step 8: Final Verification**
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods --all-namespaces
+```
+
+## 🔧 **MANAGING ADDITIONAL COMPONENTS**
+
+### **upgrade-addons Command**
+
+✨ **NEW:** The `./cpc upgrade-addons` command now shows an **interactive menu** for component selection!
+
+**Proper usage:**
+
+```bash
+# Show help and available addons
 ./cpc upgrade-addons --help
 
-# Интерактивное меню (новое поведение по умолчанию)
+# Interactive menu (new default behavior)
 ./cpc upgrade-addons
-# Покажет меню:
+# Shows menu:
 # 1) all - Install/upgrade all addons
 # 2) calico - Calico CNI networking
 # 3) metallb - MetalLB load balancer
-# ... и т.д.
+# ... etc.
 
-# Прямая установка всех addons (пропуск меню)
+# Direct installation of all addons (skip menu)
 ./cpc upgrade-addons --addon all
 
-# Установить конкретный addon (пропуск меню)
+# Install specific addon (skip menu)
 ./cpc upgrade-addons --addon metallb
 ./cpc upgrade-addons --addon cert-manager
 ./cpc upgrade-addons --addon ingress-nginx
 
-# Установить addon с конкретной версией
+# Install addon with specific version
 ./cpc upgrade-addons --addon metallb --version v0.14.8
 ```
 
-**Доступные addons:**
+**Available addons:**
 - `calico` - Calico CNI networking
-- `metallb` - MetalLB load balancer  
+- `metallb` - MetalLB load balancer
 - `metrics-server` - Kubernetes Metrics Server
 - `coredns` - CoreDNS DNS server
 - `cert-manager` - Certificate manager
 - `kubelet-serving-cert-approver` - Automatic certificate approval
 - `argocd` - ArgoCD GitOps
 - `ingress-nginx` - NGINX Ingress Controller
-- `all` - Все вышеперечисленные
 
-## 🔄 **ПОЛНЫЙ WORKFLOW ДЛЯ НОВОГО КЛАСТЕРА**
+## 📋 **COMPLETE WORKFLOW FOR NEW CLUSTER**
 
 ```bash
-# 1. Полная очистка (если нужно пересоздать)
-./cpc stop-vms                           # Остановить VM
-./cpc deploy destroy -auto-approve       # Удалить инфраструктуру
-./cpc clear-ssh-hosts && ./cpc clear-ssh-maps  # Очистить SSH cache
+# 1. Full cleanup (if recreating)
+./cpc stop-vms                           # Stop VMs
+./cpc deploy destroy -auto-approve       # Remove infrastructure
+./cpc clear-ssh-hosts && ./cpc clear-ssh-maps  # Clear SSH cache
 
-# 2. Создание новой инфраструктуры
+# 2. Create new infrastructure
 ./cpc deploy apply -auto-approve
 
-# 3. Установка компонентов
+# 3. Install components
 ./cpc run-ansible install_kubernetes_cluster.yml
 
-# 4. Инициализация кластера
+# 4. Initialize cluster
 ./cpc bootstrap
 
-# 5. Добавление worker nodes
+# 5. Add worker nodes
 ./cpc add-nodes --target-hosts "workers"
 
-# 6. Получение доступа
+# 6. Get access
 ./cpc get-kubeconfig
 
-# 7. Установка дополнительных компонентов (опционально)
-./cpc upgrade-addons  # Покажет интерактивное меню
-# или прямая установка:
+# 7. Install additional components (optional)
+./cpc upgrade-addons  # Shows interactive menu
+# or direct installation:
 ./cpc upgrade-addons --addon metallb
 ./cpc upgrade-addons --addon cert-manager
 
-# 8. Финальная проверка
+# 8. Final verification
 kubectl get nodes -o wide
 kubectl get pods --all-namespaces
 ```
 
-## ⚠️ **ВАЖНЫЕ ИСПРАВЛЕНИЯ**
+## ⚠️ **IMPORTANT PRINCIPLES**
 
-### **1. Containerd CRI конфигурация**
+### **DO's (What to do):**
+- ✅ Always use **step sequence 1-8**
+- ✅ Check each step before proceeding to next
+- ✅ Use `./cpc deploy plan` before `apply`
+- ✅ After each infrastructure change, clear SSH cache:
+  ```bash
+  ./cpc clear-ssh-hosts
+  ./cpc clear-ssh-maps
+  ```
 
-**Проблема:** Containerd не настраивался правильно для CRI.
+### **DON'T's (What not to do):**
+- ❌ Don't run `./cpc add-nodes` before `./cpc bootstrap`
+- ❌ Don't skip component installation (`install_kubernetes_cluster.yml`)
+- ❌ Don't use static IPs in playbooks - they may change
 
-**Исправление в `install_kubernetes_cluster.yml` (строка ~133):**
+## 🔍 **KEY FIXES IMPLEMENTED**
+
+### **1. Containerd CRI Configuration** 
+Fixed in `ansible/playbooks/install_kubernetes_cluster.yml` (line ~133):
 ```yaml
-# УБРАЛИ эту строку для перегенерации конфигурации:
+# REMOVED this line to allow configuration regeneration:
 # args:
 #   creates: /etc/containerd/config.toml
 ```
 
-### **2. Рекурсивная ошибка в pb_add_nodes.yml**
-
-**Проблема:** Переменная `control_plane_endpoint` ссылалась сама на себя.
-
-**Исправление:**
+### **2. Worker Node Joining**
+Fixed recursive error in `ansible/playbooks/pb_add_nodes.yml`:
 ```yaml
-# Добавили сбор facts для control plane
+# Added facts gathering for control plane
 - name: Gather facts from control plane
   setup:
   delegate_to: "{{ groups['control_plane'][0] }}"
   delegate_facts: yes
   run_once: true
 
-# Динамическое определение endpoint
+# Dynamic endpoint definition
 - name: Set control plane endpoint
   set_fact:
     control_plane_endpoint: "{{ hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443' }}"
 ```
 
-## ✅ **ПРОВЕРКА УСПЕШНОСТИ**
+## 📊 **EXPECTED RESULTS**
 
-После выполнения всех шагов должно быть:
+After completing all steps, you will have:
+- **3-node cluster**: 1 control plane + 2 workers
+- **All nodes Ready**
+- **Calico CNI installed and working**
+- **All system pods Running**
+- **kubeconfig configured locally**
 
-**Статус узлов:**
+### **Sample successful output:**
 ```bash
-$ kubectl get nodes -o wide
-NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP    EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION     CONTAINER-RUNTIME
-cu1.bevz.net   Ready    control-plane   13m   v1.31.9   10.10.10.116   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic   containerd://1.7.27
-wu1.bevz.net   Ready    <none>          90s   v1.31.9   10.10.10.101   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic   containerd://1.7.27
-wu2.bevz.net   Ready    <none>          90s   v1.31.9   10.10.10.29    <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic   containerd://1.7.27
+kubectl get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP    
+cu1.bevz.net   Ready    control-plane   15m   v1.31.9   10.10.10.116   
+wu1.bevz.net   Ready    <none>          12m   v1.31.9   10.10.10.101   
+wu2.bevz.net   Ready    <none>          12m   v1.31.9   10.10.10.29    
 ```
 
-**Системные pods:**
+## 🛠️ **TROUBLESHOOTING**
+
+### **Common Issues and Solutions:**
+
+#### **API server not responding**
 ```bash
-$ kubectl get pods --all-namespaces
-NAMESPACE          NAME                                       READY   STATUS    RESTARTS   AGE
-calico-system      calico-kube-controllers-8448d764cc-2p65v   1/1     Running   0          13m
-calico-system      calico-node-chpz4                          1/1     Running   0          112s
-calico-system      calico-node-pbwtd                          1/1     Running   0          112s
-calico-system      calico-node-pd5h7                          1/1     Running   0          13m
-kube-system        coredns-7c65d6cfc9-4f6tl                   1/1     Running   0          13m
-kube-system        coredns-7c65d6cfc9-mvm6r                   1/1     Running   0          13m
-kube-system        etcd-cu1.bevz.net                          1/1     Running   0          13m
-kube-system        kube-apiserver-cu1.bevz.net                1/1     Running   0          13m
-kube-system        kube-controller-manager-cu1.bevz.net       1/1     Running   0          13m
-kube-system        kube-proxy-fgl5n                           1/1     Running   0          112s
-kube-system        kube-proxy-l28bk                           1/1     Running   0          13m
-kube-system        kube-proxy-vfnfp                           1/1     Running   0          112s
-kube-system        kube-scheduler-cu1.bevz.net                1/1     Running   0          13m
-```
+# 1. Check IP in kubeconfig
+kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.server}'
 
-## 🚨 **РАСПРОСТРАНЕННЫЕ ОШИБКИ И РЕШЕНИЯ**
-
-### **Ошибка 1: "recursive template loop"**
-```
-FAILED! => {"msg": "The task includes an option with an undefined variable.. recursive template loop."}
-```
-**Решение:** Проверьте, что `pb_add_nodes.yml` использует исправленную версию с правильным сбором facts.
-
-### **Ошибка 2: "CRI not enabled"**
-```
-[ERROR CRI]: container runtime is not running
-```
-**Решение:** Убедитесь, что в `install_kubernetes_cluster.yml` удалена строка `creates: /etc/containerd/config.toml`.
-
-### **Ошибка 3: Worker nodes не присоединяются**
-```
-[ERROR] Failed to connect to API server
-```
-**Решение:** 
-1. Проверьте, что bootstrap выполнен успешно
-2. Проверьте сетевую связность между узлами
-3. Убедитесь, что control plane готов
-
-## 📚 **ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ**
-
-```bash
-# Проверка статуса VM
+# 2. Check real control plane IP
 ./cpc deploy output k8s_node_ips
 
-# Прямое подключение к узлам
-ssh abevz@<node-ip> "kubectl get nodes"
-
-# Сброс кластера (если нужно переустановить)
-./cpc reset-all-nodes
-
-# Остановка и запуск VM
-./cpc stop-vms
-./cpc start-vms
-
-# Очистка SSH кеша (после пересоздания VM)
-./cpc clear-ssh-hosts
-./cpc clear-ssh-maps
+# 3. If IPs differ - get new kubeconfig
+./cpc get-kubeconfig
 ```
 
-## 🎉 **ЗАКЛЮЧЕНИЕ**
+#### **Nodes in NotReady status**
+```bash
+# 1. Check node status
+kubectl get nodes
 
-Следуя этому руководству, вы получите полностью работающий Kubernetes кластер с:
-- ✅ 3 узла (1 control plane + 2 workers)
-- ✅ Calico CNI
-- ✅ Все системные компоненты
-- ✅ Готовность к установке дополнительных компонентов
+# 2. Check CNI pods
+kubectl get pods -n calico-system
 
-**Время развертывания:** ~10-15 минут  
-**Совместимость:** Ubuntu 24.04, Kubernetes v1.31.9  
+# 3. Check containerd CRI
+ssh -o StrictHostKeyChecking=no abevz@<node_ip> "sudo cat /etc/containerd/config.toml | grep disabled_plugins"
+```
+
+#### **Bootstrap interrupted on SSH**
+```bash
+# 1. Clear SSH cache
+./cpc clear-ssh-hosts
+./cpc clear-ssh-maps
+
+# 2. Run bootstrap again
+./cpc bootstrap
+```
+
+## 📚 **RELATED DOCUMENTATION**
+
+- [CPC upgrade-addons Reference](cpc_upgrade_addons_reference.md)
+- [Cluster Troubleshooting Commands](cluster_troubleshooting_commands.md)
+- [Architecture Overview](architecture.md)
 
 ---
-*Документ создан на основе успешного опыта развертывания кластера 10 июня 2025*
+*This guide ensures stable cluster creation without errors!*  
+*Date: June 12, 2025*
