@@ -2,29 +2,14 @@
 
 ## 📚 Documentation Index
 
-### 🚀 Quick Start Guides
-- **[Complete Cluster Creation Guide](complete_cluster_creation_guide.md)** - ⭐ **NEW** Complete cluster creation guide (RECOMMENDED)
-- **[Complete Workflow Guide](complete_workflow_guide.md)** - End-to-end cluster deployment walkthrough
-- **[Bootstrap Command Guide](bootstrap_command_guide.md)** - Detailed guide for the `cpc bootstrap` command
-- **[Cluster Deployment Guide](cluster_deployment_guide.md)** - Comprehensive deployment documentation
+**For complete navigation through all project documentation, see:**  
+**[📋 Complete Documentation Index](index.md)** 🏠 - **MAIN NAVIGATION HUB**
 
-### 🔧 Core Documentation
-- **[Architecture Overview](architecture.md)** - System architecture and design principles
-- **[CPC Template Variables Guide](cpc_template_variables_guide.md)** - Configuration reference
-- **[Project Status Summary](project_status_summary.md)** - Current development status
-
-### 🛠️ Troubleshooting Guides
-- **[SSH Management Commands](ssh_management_commands.md)** - SSH connection and known_hosts management
-- **[SSH Key Troubleshooting](ssh_key_troubleshooting.md)** - SSH authentication issues
-- **[Template SSH Troubleshooting](template_ssh_troubleshooting.md)** - VM template SSH problems
-- **[Cloud-Init User Issues](cloud_init_user_issues.md)** - User account creation problems
-- **[Proxmox VM Helper](proxmox_vm_helper.md)** - VM management utilities
-
-### 📊 Status Reports
-- **[SSH Bootstrap Fix Summary](ssh_bootstrap_fix_summary.md)** - SSH host key verification automation
-- **[Project Status Report](project_status_report.md)** - Development progress tracking
-- **[Addon Installation Report](addon_installation_completion_report.md)** - Recent addon improvements
-- **[Template Status Updates](template_status_update.md)** - VM template development status
+### 🚀 Quick Start Links
+- **[Complete Cluster Creation Guide](complete_cluster_creation_guide.md)** ⭐ **RECOMMENDED** - Start here for new deployments
+- **[Quick DNS Certificate Fix](quick_dns_certificate_fix.md)** ⚡ **URGENT FIXES** - DNS/certificate troubleshooting
+- **[CPC Commands Comparison](cpc_commands_comparison.md)** 📊 **REFERENCE** - Command usage guide
+- **[Cluster Troubleshooting Commands](cluster_troubleshooting_commands.md)** 🔍 **DEBUG** - Diagnostic commands
 
 ---
 
