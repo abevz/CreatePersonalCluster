@@ -294,17 +294,16 @@ export -f set_workspace_template_vars
 
 run_ansible_playbook() {
   local playbook_name="$1"
-  local target_hosts="$2" # Optional: specific host or group for the playbook, defaults to 'all'
-  local extra_vars_string="$3" # Optional: additional extra vars
+  shift # Remove playbook name, rest are ansible options
 
   local repo_root
   repo_root=$(get_repo_path)
   local ansible_dir="$repo_root/ansible"
-  local inventory_file="$ansible_dir/inventory/tofu_inventory.py" # Changed from terraform_inventory.py
+  local inventory_file="$ansible_dir/inventory/tofu_inventory.py"
 
   if [ ! -f "$inventory_file" ]; then
     echo -e "${RED}Error: Ansible inventory file not found at $inventory_file${ENDCOLOR}" >&2
-    echo -e "${RED}Ensure Tofu has been run and the inventory script is in place.${ENDCOLOR}" >&2 # Changed from Terraform
+    echo -e "${RED}Ensure Tofu has been run and the inventory script is in place.${ENDCOLOR}" >&2
     return 1
   fi
 
@@ -320,35 +319,36 @@ run_ansible_playbook() {
   local current_cluster
   current_cluster=$(get_current_cluster_context)
 
-  # Base Ansible command
-  # Ensure ansible_dir is quoted if it can contain spaces, though REPO_PATH usually doesn't.
-  # Using ansible.cfg from the ansible_dir for settings like remote_user
+  # Change to ansible directory
   pushd "$ansible_dir" > /dev/null || { echo -e "${RED}Failed to change directory to $ansible_dir${ENDCOLOR}"; return 1; }
 
-  local ansible_cmd="ansible-playbook -i $inventory_file playbooks/$playbook_name --ssh-extra-args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+  # Build ansible command array
+  local ansible_cmd_array=(
+    "ansible-playbook"
+    "-i" "$inventory_file"
+    "playbooks/$playbook_name"
+    "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+  )
 
   # Add common extra vars
-  ansible_cmd+=" -e ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' ansible.cfg || echo 'root')" # Get user from ansible.cfg
-  ansible_cmd+=" -e current_cluster_context=$current_cluster"
+  local ansible_user
+  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' ansible.cfg || echo 'root')
+  ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
+  ansible_cmd_array+=("-e" "current_cluster_context=$current_cluster")
+  
   # Remove 'v' prefix from kubernetes version if present, default to 1.31
   local k8s_version="${KUBERNETES_VERSION:-v1.31}"
   k8s_version="${k8s_version#v}"  # Remove 'v' prefix
-  ansible_cmd+=" -e kubernetes_version=$k8s_version"
-  ansible_cmd+=" -e kubernetes_patch_version=${kubernetes_patch_version:-latest}"
+  ansible_cmd_array+=("-e" "kubernetes_version=$k8s_version")
+  ansible_cmd_array+=("-e" "kubernetes_patch_version=${kubernetes_patch_version:-latest}")
 
-
-  # Add target hosts if specified
-  if [ -n "$target_hosts" ] && [ "$target_hosts" != "all" ]; then
-    ansible_cmd+=" --limit $target_hosts"
+  # Add all remaining user-provided arguments
+  if [[ $# -gt 0 ]]; then
+    ansible_cmd_array+=("$@")
   fi
 
-  # Add any other specific extra vars passed to the function
-  if [ -n "$extra_vars_string" ]; then
-    ansible_cmd+=" $extra_vars_string"
-  fi
-
-  echo -e "${BLUE}Running: $ansible_cmd${ENDCOLOR}"
-  eval "$ansible_cmd" # Use eval to correctly interpret quotes in extra_vars_string if any
+  echo -e "${BLUE}Running: ${ansible_cmd_array[*]}${ENDCOLOR}"
+  "${ansible_cmd_array[@]}"
   local exit_code=$?
 
   popd > /dev/null || return 1
@@ -500,7 +500,7 @@ case "$COMMAND" in
       exit 1
     fi
 
-    # Get control plane node IP
+    # Get control plane node IP and try to resolve hostname
     control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value')
     if [ -z "$control_plane_ip" ] || [ "$control_plane_ip" = "null" ]; then
       echo -e "${RED}Failed to get control plane IP from Tofu output${ENDCOLOR}" >&2
@@ -509,9 +509,30 @@ case "$COMMAND" in
       exit 1
     fi
 
+    # Get hostname information from inventory
+    control_plane_hostname=$(python3 "$repo_root/ansible/inventory/tofu_inventory.py" --list 2>/dev/null | jq -r '._meta.hostvars["'$control_plane_ip'"].hostname // empty')
+    
     popd > /dev/null
 
+    # Determine the best endpoint to use (prefer DNS hostname if resolvable)
+    api_server_endpoint=""
+    if [ -n "$control_plane_hostname" ]; then
+      echo -e "${BLUE}Found control plane hostname: $control_plane_hostname${ENDCOLOR}"
+      # Test if hostname resolves
+      if nslookup "$control_plane_hostname" >/dev/null 2>&1; then
+        api_server_endpoint="$control_plane_hostname"
+        echo -e "${GREEN}Using DNS hostname: $api_server_endpoint${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}DNS hostname $control_plane_hostname does not resolve, falling back to IP${ENDCOLOR}"
+        api_server_endpoint="$control_plane_ip"
+      fi
+    else
+      echo -e "${YELLOW}No hostname found in inventory, using IP address${ENDCOLOR}"
+      api_server_endpoint="$control_plane_ip"
+    fi
+
     echo -e "${BLUE}Control plane IP: $control_plane_ip${ENDCOLOR}"
+    echo -e "${BLUE}API server endpoint: $api_server_endpoint:6443${ENDCOLOR}"
 
     # Create temporary directory for kubeconfig operations
     temp_dir=$(mktemp -d)
@@ -538,8 +559,8 @@ case "$COMMAND" in
       exit 1
     fi
 
-    # Update server endpoint in the kubeconfig
-    if ! sed -i "s|server: https://.*:6443|server: https://${control_plane_ip}:6443|g" "$temp_kubeconfig"; then
+    # Update server endpoint in the kubeconfig to use the preferred endpoint
+    if ! sed -i "s|server: https://.*:6443|server: https://${api_server_endpoint}:6443|g" "$temp_kubeconfig"; then
       echo -e "${RED}Failed to update server endpoint in kubeconfig${ENDCOLOR}" >&2
       exit 1
     fi
@@ -816,21 +837,21 @@ case "$COMMAND" in
 
     # Step 1: Install Kubernetes components
     echo -e "${BLUE}Step 1: Installing Kubernetes components (kubelet, kubeadm, kubectl, containerd)...${ENDCOLOR}"
-    if ! run_ansible_playbook "install_kubernetes_cluster.yml" "all" ""; then
+    if ! run_ansible_playbook "install_kubernetes_cluster.yml"; then
       echo -e "${RED}Failed to install Kubernetes components${ENDCOLOR}" >&2
       exit 1
     fi
 
-    # Step 2: Initialize cluster and setup CNI
-    echo -e "${BLUE}Step 2: Initializing Kubernetes cluster and installing Calico CNI...${ENDCOLOR}"
-    if ! run_ansible_playbook "initialize_kubernetes_cluster.yml" "all" ""; then
-      echo -e "${RED}Failed to initialize Kubernetes cluster${ENDCOLOR}" >&2
+    # Step 2: Initialize cluster and setup CNI with DNS hostname support
+    echo -e "${BLUE}Step 2: Initializing Kubernetes cluster with DNS hostname support and installing Calico CNI...${ENDCOLOR}"
+    if ! run_ansible_playbook "initialize_kubernetes_cluster_with_dns.yml"; then
+      echo -e "${RED}Failed to initialize Kubernetes cluster with DNS support${ENDCOLOR}" >&2
       exit 1
     fi
 
     # Step 3: Validate cluster
     echo -e "${BLUE}Step 3: Validating cluster installation...${ENDCOLOR}"
-    if ! run_ansible_playbook "validate_cluster.yml" "control_plane" ""; then
+    if ! run_ansible_playbook "validate_cluster.yml" -l control_plane; then
       echo -e "${YELLOW}Cluster validation failed, but continuing...${ENDCOLOR}"
     fi
 
@@ -1333,7 +1354,7 @@ case "$COMMAND" in
     done
 
     echo -e "${BLUE}Adding $node_type nodes to the cluster...${ENDCOLOR}"
-    run_ansible_playbook "pb_add_nodes.yml" "$target_hosts" "-e node_type=$node_type"
+    run_ansible_playbook "pb_add_nodes.yml" -l "$target_hosts" -e "node_type=$node_type"
     ;;
 
   drain-node)
@@ -1344,7 +1365,7 @@ case "$COMMAND" in
     node_name="$1"
     shift
     extra_cli_opts="$*" # Pass through any remaining options like --force
-    run_ansible_playbook "pb_drain_node.yml" "all" "-e node_to_drain=$node_name -e drain_options='''$extra_cli_opts'''"
+    run_ansible_playbook "pb_drain_node.yml" -e "node_to_drain=$node_name" -e "drain_options=$extra_cli_opts"
     ;;
 
   delete-node)
@@ -1354,7 +1375,7 @@ case "$COMMAND" in
     fi
     node_name="$1"
     reset_flag="${2:---no-reset-node}" # default to not resetting
-    run_ansible_playbook "pb_delete_node.yml" "all" "-e node_to_delete=$node_name -e reset_after_delete=$reset_flag"
+    run_ansible_playbook "pb_delete_node.yml" -e "node_to_delete=$node_name" -e "reset_after_delete=$reset_flag"
     ;;
 
   upgrade-node)
@@ -1405,7 +1426,7 @@ case "$COMMAND" in
     fi
 
     echo -e "${BLUE}Upgrading Kubernetes on node: $node_name${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_node.yml" "$node_name" "$extra_vars"
+    run_ansible_playbook "pb_upgrade_node.yml" -l "$node_name" -e "target_node=$node_name" -e "skip_drain=$skip_drain" $([ -n "$target_version" ] && echo "-e target_k8s_version=$target_version")
     ;;
 
   reset-node)
@@ -1414,13 +1435,13 @@ case "$COMMAND" in
       exit 1
     fi
     node_name="$1"
-    run_ansible_playbook "pb_reset_node.yml" "$node_name" "" # Target specific node
+    run_ansible_playbook "pb_reset_node.yml" -l "$node_name"
     ;;
 
   reset-all-nodes)
     read -r -p "Are you sure you want to reset Kubernetes on ALL nodes in context '$(get_current_cluster_context)'? [y/N] " response
     if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-      run_ansible_playbook "pb_reset_all_nodes.yml" "all" ""
+      run_ansible_playbook "pb_reset_all_nodes.yml"
     else
       echo "Operation cancelled."
     fi
@@ -1528,7 +1549,7 @@ case "$COMMAND" in
     fi
 
     echo -e "${BLUE}Installing/upgrading cluster addon(s): $addon_name${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_addons_extended.yml" "control_plane" "$extra_vars"
+    run_ansible_playbook "pb_upgrade_addons_extended.yml" -l control_plane -e "addon_name=$addon_name" $([ -n "$addon_version" ] && echo "-e addon_version=$addon_version")
     ;;
 
   upgrade-k8s)
@@ -1586,7 +1607,7 @@ case "$COMMAND" in
     fi
 
     echo -e "${BLUE}Upgrading Kubernetes control plane...${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_k8s_control_plane.yml" "control_plane" "$extra_vars"
+    run_ansible_playbook "pb_upgrade_k8s_control_plane.yml" -l control_plane -e "skip_etcd_backup=$skip_etcd_backup" $([ -n "$target_version" ] && echo "-e target_k8s_version=$target_version")
     ;;
 
   vmctl)
@@ -1606,7 +1627,7 @@ case "$COMMAND" in
     fi
     target="$1"
     shell_cmd="$2"
-    run_ansible_playbook "pb_run_command.yml" "$target" "-e command_to_run='''$shell_cmd'''"
+    run_ansible_playbook "pb_run_command.yml" -l "$target" -e "command_to_run=$shell_cmd"
     ;;
 
   update-pihole)
@@ -1733,6 +1754,52 @@ case "$COMMAND" in
     check_secrets_loaded
     echo -e "${GREEN}Generating node hostname snippets...${ENDCOLOR}"
     "$REPO_PATH/scripts/generate_node_hostnames.sh"
+    ;;
+
+  run-ansible)
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
+      echo "Usage: cpc run-ansible <playbook_name> [ansible_options]"
+      echo ""
+      echo "Runs the specified Ansible playbook from the ansible/playbooks/ directory"
+      echo "using the current cpc context for inventory and configuration."
+      echo ""
+      echo "Key features:"
+      echo "  - Automatically uses the Tofu inventory for the current context"
+      echo "  - Sets ansible_user from ansible.cfg configuration"
+      echo "  - Passes current cluster context and Kubernetes version as variables"
+      echo "  - Uses SSH settings optimized for VM connections"
+      echo ""
+      echo "Examples:"
+      echo "  cpc run-ansible initialize_kubernetes_cluster_with_dns.yml"
+      echo "  cpc run-ansible regenerate_certificates_with_dns.yml"
+      echo "  cpc run-ansible deploy_kubernetes_cluster.yml"
+      echo "  cpc run-ansible bootstrap_master_node.yml --check"
+      echo ""
+      echo "Available playbooks (run 'ls \$REPO_PATH/ansible/playbooks/' to see all):"
+      repo_path=$(get_repo_path)
+      if [ -d "$repo_path/ansible/playbooks" ]; then
+        ls "$repo_path/ansible/playbooks"/*.yml "$repo_path/ansible/playbooks"/*.yaml 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+      fi
+      exit 0
+    fi
+
+    playbook_name="$1"
+    shift # Remove playbook name, rest are ansible options
+
+    # Validate playbook exists
+    repo_path=$(get_repo_path)
+    playbook_path="$repo_path/ansible/playbooks/$playbook_name"
+    if [[ ! -f "$playbook_path" ]]; then
+      echo -e "${RED}Error: Playbook '$playbook_name' not found at $playbook_path${ENDCOLOR}" >&2
+      echo -e "${BLUE}Available playbooks:${ENDCOLOR}"
+      if [ -d "$repo_path/ansible/playbooks" ]; then
+        ls "$repo_path/ansible/playbooks"/*.yml "$repo_path/ansible/playbooks"/*.yaml 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+      fi
+      exit 1
+    fi
+
+    echo -e "${GREEN}Running Ansible playbook: $playbook_name${ENDCOLOR}"
+    run_ansible_playbook "$playbook_name" "$@"
     ;;
 
   gen_hostnames)
