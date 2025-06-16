@@ -90,3 +90,42 @@
     - name: Show final node status
       debug:
         var: node_status.stdout_lines
+
+    - name: Wait for kubelet serving CSRs to be created for new nodes
+      shell: kubectl get csr --no-headers | grep -c "kubelet-serving" || echo "0"
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: csr_count_check
+      until: csr_count_check.stdout|int > 0
+      retries: 10
+      delay: 10
+      changed_when: false
+      ignore_errors: true
+      run_once: true
+
+    - name: Check for pending kubelet serving CSRs after node addition
+      shell: kubectl get csr --no-headers | grep "kubelet-serving" | grep "Pending" | wc -l
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: pending_csr_count_after_join
+      changed_when: false
+      ignore_errors: true
+      run_once: true
+
+    - name: Approve pending kubelet serving CSRs for new nodes
+      shell: kubectl get csr -o name | grep "kubelet-serving" | xargs kubectl certificate approve
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      when: pending_csr_count_after_join.stdout|int > 0
+      register: csr_approval_result_add_nodes
+      changed_when: true
+      run_once: true
+
+    - name: Display CSR approval result after node addition
+      debug:
+        msg: |
+          CSR Approval Result for New Nodes:
+          Pending CSRs found: {{ pending_csr_count_after_join.stdout }}
+          {% if pending_csr_count_after_join.stdout|int > 0 %}
+          Approved CSRs: {{ csr_approval_result_add_nodes.stdout }}
+          {% else %}
+          No pending kubelet serving CSRs found after node addition.
+          {% endif %}
+      run_once: true

@@ -234,3 +234,46 @@
         msg: |
           API Server Certificate SANs:
           {{ cert_sans.stdout }}
+
+    - name: Wait for kubelet serving CSRs to be created
+      ansible.builtin.shell: kubectl get csr --no-headers | grep -c "kubelet-serving" || echo "0"
+      register: csr_count
+      until: csr_count.stdout|int > 0
+      retries: 12
+      delay: 10
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check for pending kubelet serving CSRs
+      ansible.builtin.shell: kubectl get csr --no-headers | grep "kubelet-serving" | grep "Pending" | wc -l
+      register: pending_csr_count
+      changed_when: false
+      ignore_errors: true
+
+    - name: Approve pending kubelet serving CSRs
+      ansible.builtin.shell: kubectl get csr -o name | grep "kubelet-serving" | xargs kubectl certificate approve
+      when: pending_csr_count.stdout|int > 0
+      register: csr_approval_result
+      changed_when: true
+
+    - name: Display CSR approval result
+      ansible.builtin.debug:
+        msg: |
+          CSR Approval Result:
+          Pending CSRs found: {{ pending_csr_count.stdout }}
+          {% if pending_csr_count.stdout|int > 0 %}
+          Approved CSRs: {{ csr_approval_result.stdout }}
+          {% else %}
+          No pending kubelet serving CSRs found.
+          {% endif %}
+
+    - name: Final cluster status verification
+      ansible.builtin.shell: kubectl get nodes -o wide
+      register: final_cluster_status
+      changed_when: false
+
+    - name: Display final cluster status
+      ansible.builtin.debug:
+        msg: |
+          Final Cluster Status (with DNS hostnames):
+          {{ final_cluster_status.stdout }}

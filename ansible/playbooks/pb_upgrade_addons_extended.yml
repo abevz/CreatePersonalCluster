@@ -403,7 +403,12 @@
 
         - name: Patch Metrics Server for self-hosted clusters
           shell: |
-            sed -i '/--metric-resolution=15s/a\        - --kubelet-insecure-tls' /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+            # Add kubelet-insecure-tls flag if not present
+            if ! grep -q "kubelet-insecure-tls" /tmp/metrics-server-{{ metrics_server_target_version }}.yaml; then
+              sed -i '/--metric-resolution=15s/a\        - --kubelet-insecure-tls' /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+            fi
+            # Replace kubelet-preferred-address-types to use only InternalIP
+            sed -i 's/--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname/--kubelet-preferred-address-types=InternalIP/' /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
 
         - name: Apply Metrics Server manifests
           shell: kubectl apply -f /tmp/metrics-server-{{ metrics_server_target_version }}.yaml

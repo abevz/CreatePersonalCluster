@@ -1,112 +1,134 @@
-# Быстрое решение проблемы с DNS-именами в сертификатах Kubernetes
+# Quick DNS Certificate Fix for Kubernetes
 
-## Симптомы проблемы
-- ❌ Кластер недоступен при изменении IP-адресов после перезагрузки VM
-- ❌ Сертификаты содержат только IP-адреса, а не DNS-имена (cu1.bevz.net)
-- ❌ `kubectl` выдает ошибки сертификатов при использовании hostname
+## Problem Symptoms
+- ❌ Cluster becomes unavailable when IP addresses change after VM reboot
+- ❌ Certificates contain only IP addresses, not DNS names (cu1.bevz.net)
+- ❌ `kubectl` shows certificate errors when using hostnames
 
-## Быстрое решение
+## Quick Solution
 
-### Для НОВОГО кластера
+### For NEW clusters
 
 ```bash
-# DNS поддержка УЖЕ ВСТРОЕНА в CPC!
+# DNS support is ALREADY BUILT INTO CPC!
 cd /home/abevz/Projects/kubernetes/my-kthw
 
-# 1. Развернуть VM
+# 1. Deploy VMs
 ./cpc deploy apply
 
-# 2. Инициализировать кластер с DNS поддержкой (автоматически)
+# 2. Initialize cluster with DNS support (automatically)
 ./cpc bootstrap
 
-# 3. Получить kubeconfig с DNS endpoint
+# 3. Get kubeconfig with DNS endpoint
 ./cpc get-kubeconfig --force
 
-# 4. Проверить результат
+# 4. Check result
 kubectl get nodes
 ```
 
-### Для СУЩЕСТВУЮЩЕГО кластера
+### For EXISTING clusters
 
 ```bash
-# 1. Создайте backup кластера
+# 1. Create cluster backup
 kubectl get all --all-namespaces > cluster-backup.yaml
 
-# 2. Примените патч сертификатов
+# 2. Apply certificate patch
 cd /home/abevz/Projects/kubernetes/my-kthw
 ./cpc run-ansible regenerate_certificates_with_dns.yml
 
-# 3. Получите обновленный kubeconfig
+# 3. Get updated kubeconfig
 ./cpc get-kubeconfig --force
 
-# 4. Проверьте работоспособность
+# 4. Verify functionality
 kubectl get nodes
 ```
 
-## Проверка результата
+## Result Verification
 
 ```bash
-# 1. Проверить SAN в сертификате
+# 1. Check SAN in certificate
 ssh abevz@cu1.bevz.net "sudo openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout | grep -A 10 'Subject Alternative Name'"
 
-# Должно показать:
+# Should show:
 # DNS:cu1.bevz.net, DNS:cu1, IP Address:10.10.10.116, ...
 
-# 2. Проверить доступ через DNS
+# 2. Check DNS access
 kubectl --server=https://cu1.bevz.net:6443 get nodes
 
-# 3. Проверить kubeconfig endpoint
+# 3. Check kubeconfig endpoint
 kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.server}'
-# Должно показать: https://cu1.bevz.net:6443
+# Should show: https://cu1.bevz.net:6443
 ```
 
-## Что изменится
+## What Changes
 
-### ✅ БЫЛО (проблема):
+### ✅ BEFORE (problem):
 ```yaml
-# Сертификат содержал только:
+# Certificate contained only:
 IP Address:10.10.10.116
 
-# kubeconfig использовал:
+# kubeconfig used:
 server: https://10.10.10.116:6443
 ```
 
-### ✅ СТАЛО (решение):
+### ✅ AFTER (solution):
 ```yaml
-# Сертификат содержит:
+# Certificate contains:
 DNS:cu1.bevz.net, DNS:cu1, IP Address:10.10.10.116
 
-# kubeconfig использует:
+# kubeconfig uses:
 server: https://cu1.bevz.net:6443
 ```
 
-## Восстановление при проблемах
+## Recovery if Problems Occur
 
-Если что-то пошло не так:
+If something goes wrong:
 
 ```bash
-# 1. Восстановить из backup (создается автоматически)
+# 1. Restore from backup (created automatically)
 sudo cp /root/k8s-cert-backup-*/pki/* /etc/kubernetes/pki/
 sudo cp /root/k8s-cert-backup-*/admin.conf /etc/kubernetes/
 
-# 2. Перезапустить kubelet
+# 2. Restart kubelet
 sudo systemctl restart kubelet
 
-# 3. Получить kubeconfig с IP
+# 3. Get kubeconfig with IP
 ./cpc get-kubeconfig --use-ip --force
 ```
 
-## Дополнительная настройка CPC
+## Common Issue: Pending Kubelet Serving CSRs
 
-Для автоматического использования DNS в новых кластерах, отредактируйте `cpc`:
+After DNS changes, nodes may create new Certificate Signing Requests (CSRs) that need approval:
 
 ```bash
-# Найдите строку 819 в файле cpc:
+# Check for pending CSRs
+kubectl get csr | grep kubelet-serving | grep Pending
+
+# Approve all pending kubelet serving CSRs
+kubectl get csr -o name | grep "kubelet-serving" | xargs kubectl certificate approve
+
+# Or use the dedicated CPC command
+./cpc run-ansible approve_kubelet_csr.yml
+```
+
+**Symptoms of CSR issues:**
+- Metrics Server fails to start with readiness probe errors
+- `kubectl top nodes` doesn't work
+- TLS errors when accessing kubelet API
+
+**Note:** The bootstrap process now automatically approves CSRs, but manual intervention may be needed if you regenerate certificates on existing clusters.
+
+## Additional CPC Configuration
+
+For automatic DNS use in new clusters, edit `cpc`:
+
+```bash
+# Find line 819 in cpc file:
 sed -i 's/initialize_kubernetes_cluster.yml/initialize_kubernetes_cluster_with_dns.yml/g' cpc
 ```
 
-Теперь все новые кластеры будут создаваться с поддержкой DNS-имен!
+Now all new clusters will be created with DNS hostname support!
 
-## Поддержка
+## Support
 
-Полная документация: `docs/kubernetes_dns_certificate_solution.md`
+Full documentation: `docs/kubernetes_dns_certificate_solution.md`
