@@ -1,0 +1,213 @@
+---
+# Playbook to regenerate Kubernetes API server certificates with DNS hostname support
+# WARNING: This will cause temporary downtime of the API server during certificate renewal
+- name: Regenerate API Server Certificates with DNS hostname support
+  hosts: control_plane
+  become: yes
+  gather_facts: yes
+  vars:
+    backup_dir: "/root/k8s-cert-backup-{{ ansible_date_time.epoch }}"
+    
+  tasks:
+    - name: Verify cluster is running
+      ansible.builtin.shell: kubectl get nodes
+      register: cluster_status
+      failed_when: cluster_status.rc != 0
+      changed_when: false
+
+    - name: Display current hostname information
+      ansible.builtin.debug:
+        msg: |
+          Hostname: {{ ansible_hostname }}
+          FQDN: {{ ansible_fqdn }}
+          IP: {{ ansible_default_ipv4.address }}
+
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Backup existing certificates
+      ansible.builtin.copy:
+        src: /etc/kubernetes/pki/
+        dest: "{{ backup_dir }}/pki/"
+        remote_src: yes
+        mode: preserve
+      
+    - name: Backup existing kubeconfig files
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ backup_dir }}/"
+        remote_src: yes
+        mode: preserve
+      loop:
+        - /etc/kubernetes/admin.conf
+        - /etc/kubernetes/controller-manager.conf
+        - /etc/kubernetes/scheduler.conf
+        - /etc/kubernetes/kubelet.conf
+
+    - name: Stop kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+
+    - name: Stop containerd temporarily to avoid conflicts
+      ansible.builtin.systemd:
+        name: containerd
+        state: stopped
+
+    - name: Create new kubeadm configuration for certificate renewal
+      ansible.builtin.copy:
+        dest: /tmp/kubeadm-cert-renewal-config.yaml
+        content: |
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta3
+          kind: ClusterConfiguration
+          kubernetesVersion: v1.31.9
+          controlPlaneEndpoint: "{{ ansible_fqdn }}:6443"
+          apiServer:
+            certSANs:
+            - {{ ansible_default_ipv4.address }}
+            - {{ ansible_hostname }}
+            - {{ ansible_fqdn }}
+            - localhost
+            - 127.0.0.1
+            - kubernetes
+            - kubernetes.default
+            - kubernetes.default.svc
+            - kubernetes.default.svc.cluster.local
+          networking:
+            dnsDomain: cluster.local
+            podSubnet: 192.168.0.0/16
+            serviceSubnet: 10.96.0.0/12
+        mode: '0644'
+
+    - name: Remove old API server certificates
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes/pki/apiserver.crt
+        - /etc/kubernetes/pki/apiserver.key
+        - /etc/kubernetes/pki/apiserver-kubelet-client.crt
+        - /etc/kubernetes/pki/apiserver-kubelet-client.key
+
+    - name: Regenerate API server certificates with new SANs
+      ansible.builtin.shell: |
+        kubeadm init phase certs apiserver --config=/tmp/kubeadm-cert-renewal-config.yaml
+        kubeadm init phase certs apiserver-kubelet-client --config=/tmp/kubeadm-cert-renewal-config.yaml
+      register: cert_regen_result
+
+    - name: Regenerate kubeconfig files
+      ansible.builtin.shell: |
+        kubeadm init phase kubeconfig admin --config=/tmp/kubeadm-cert-renewal-config.yaml
+        kubeadm init phase kubeconfig controller-manager --config=/tmp/kubeadm-cert-renewal-config.yaml
+        kubeadm init phase kubeconfig scheduler --config=/tmp/kubeadm-cert-renewal-config.yaml
+
+    - name: Start containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+
+    - name: Start kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: started
+
+    - name: Wait for kubelet to be ready
+      ansible.builtin.wait_for:
+        port: 10250
+        host: "{{ ansible_default_ipv4.address }}"
+        timeout: 60
+
+    - name: Update root kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Update user kubeconfig if exists
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/{{ ansible_user }}/.kube/config
+        remote_src: yes
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      when: ansible_user is defined
+
+    - name: Wait for API server to be ready
+      ansible.builtin.uri:
+        url: "https://{{ ansible_fqdn }}:6443/healthz"
+        method: GET
+        validate_certs: no
+        timeout: 5
+      register: api_health
+      until: api_health.status == 200
+      retries: 12
+      delay: 10
+
+    - name: Verify cluster is accessible via hostname
+      ansible.builtin.shell: kubectl --server=https://{{ ansible_fqdn }}:6443 get nodes
+      register: hostname_access_test
+
+    - name: Verify certificate includes hostname
+      ansible.builtin.shell: |
+        openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout | grep -A 10 "Subject Alternative Name"
+      register: new_cert_sans
+
+    - name: Display results
+      ansible.builtin.debug:
+        msg: |
+          Certificate regeneration completed successfully!
+          
+          Backup location: {{ backup_dir }}
+          
+          New certificate SANs:
+          {{ new_cert_sans.stdout }}
+          
+          Cluster access via hostname test: {{ hostname_access_test.rc == 0 }}
+          
+          You can now access the cluster using:
+          - https://{{ ansible_fqdn }}:6443
+          - https://{{ ansible_default_ipv4.address }}:6443
+
+    - name: Update kubeconfig server URL to use hostname
+      ansible.builtin.replace:
+        path: /etc/kubernetes/admin.conf
+        regexp: 'server: https://{{ ansible_default_ipv4.address }}:6443'
+        replace: 'server: https://{{ ansible_fqdn }}:6443'
+
+    - name: Update root kubeconfig server URL
+      ansible.builtin.replace:
+        path: /root/.kube/config
+        regexp: 'server: https://{{ ansible_default_ipv4.address }}:6443'
+        replace: 'server: https://{{ ansible_fqdn }}:6443'
+
+    - name: Update user kubeconfig server URL if exists
+      ansible.builtin.replace:
+        path: /home/{{ ansible_user }}/.kube/config
+        regexp: 'server: https://{{ ansible_default_ipv4.address }}:6443'
+        replace: 'server: https://{{ ansible_fqdn }}:6443'
+      when: ansible_user is defined
+
+    - name: Final verification with hostname-based kubeconfig
+      ansible.builtin.shell: kubectl get nodes
+      register: final_test
+
+    - name: Display final status
+      ansible.builtin.debug:
+        msg: |
+          Final verification successful: {{ final_test.rc == 0 }}
+          
+          Your cluster is now configured to use DNS hostnames!
+          API server is accessible via: {{ ansible_fqdn }}:6443
+          
+          Remember to:
+          1. Update your local kubeconfig to use the hostname
+          2. Ensure DNS resolution works for {{ ansible_fqdn }}
+          3. Consider restarting all pods to pick up new certificates
