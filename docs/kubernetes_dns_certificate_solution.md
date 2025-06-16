@@ -1,16 +1,16 @@
 # Kubernetes Certificate DNS Hostname Issue and Solution
 
-## Проблема
+## Problem
 
-При создании кластера Kubernetes с помощью kubeadm, API-сервер создает самоподписанные сертификаты, которые включают только IP-адреса узлов в качестве Subject Alternative Names (SAN). Это создает проблему, когда:
+When creating a Kubernetes cluster with kubeadm, the API server creates self-signed certificates that include only the node IP addresses as Subject Alternative Names (SAN). This creates a problem when:
 
-1. **DHCP выдает разные IP-адреса** при перезагрузке серверов
-2. **DNS-имена серверов остаются постоянными** (например, cu1.bevz.net, wu1.bevz.net)
-3. **Сертификаты становятся невалидными** при изменении IP-адресов
+1. **DHCP assigns different IP addresses** during server reboots
+2. **DNS names of servers remain constant** (e.g., cu1.bevz.net, wu1.bevz.net)
+3. **Certificates become invalid** when IP addresses change
 
-## Техническая причина
+## Technical Cause
 
-В текущем `initialize_kubernetes_cluster.yml` используется:
+The current `initialize_kubernetes_cluster.yml` uses:
 
 ```yaml
 kubeadm init \
@@ -18,127 +18,127 @@ kubeadm init \
   --control-plane-endpoint={{ ansible_default_ipv4.address }}
 ```
 
-Это приводит к созданию сертификатов, которые содержат только IP-адреса в SAN, но не DNS-имена.
+This leads to certificates that contain only IP addresses in SAN, but not DNS names.
 
-## Решение
+## Solution
 
-### 1. Новый Playbook для создания кластера с DNS-поддержкой
+### 1. New Playbook for creating cluster with DNS support
 
-Создан файл `initialize_kubernetes_cluster_with_dns.yml`, который:
+Created file `initialize_kubernetes_cluster_with_dns.yml`, which:
 
-- Использует **kubeadm configuration file** вместо командной строки
-- Добавляет **DNS-имена в certSANs** API-сервера
-- Устанавливает **control-plane-endpoint** как FQDN вместо IP
+- Uses **kubeadm configuration file** instead of command line
+- Adds **DNS names to certSANs** for API server
+- Sets **control-plane-endpoint** as FQDN instead of IP
 
-**Ключевые улучшения:**
+**Key improvements:**
 ```yaml
 apiServer:
   certSANs:
-  - {{ ansible_default_ipv4.address }}     # IP-адрес
-  - {{ ansible_hostname }}                 # Короткое имя
-  - {{ ansible_fqdn }}                     # Полное DNS-имя
-  - localhost                              # Локальный доступ
+  - {{ ansible_default_ipv4.address }}     # IP address
+  - {{ ansible_hostname }}                 # Short name
+  - {{ ansible_fqdn }}                     # Full DNS name
+  - localhost                              # Local access
   - 127.0.0.1                             
-  - kubernetes                             # Стандартные имена
+  - kubernetes                             # Standard names
   - kubernetes.default
   - kubernetes.default.svc
   - kubernetes.default.svc.cluster.local
-controlPlaneEndpoint: "{{ ansible_fqdn }}:6443"  # Использует FQDN
+controlPlaneEndpoint: "{{ ansible_fqdn }}:6443"  # Uses FQDN
 ```
 
-### 2. Playbook для обновления существующих кластеров
+### 2. Playbook for updating existing clusters
 
-Создан файл `regenerate_certificates_with_dns.yml` для кластеров, которые уже развернуты:
+Created file `regenerate_certificates_with_dns.yml` for clusters that are already deployed:
 
-**Процесс:**
-1. Создает резервную копию существующих сертификатов
-2. Останавливает kubelet и containerd
-3. Удаляет старые сертификаты API-сервера
-4. Генерирует новые сертификаты с DNS-именами
-5. Обновляет kubeconfig файлы
-6. Перезапускает сервисы
+**Process:**
+1. Creates backup of existing certificates
+2. Stops kubelet and containerd
+3. Removes old API server certificates
+4. Generates new certificates with DNS names
+5. Updates kubeconfig files
+6. Restarts services
 
-### 3. Улучшенная функция get-kubeconfig
+### 3. Enhanced get-kubeconfig function
 
-Создан скрипт `enhanced_get_kubeconfig.sh`, который:
+Created script `enhanced_get_kubeconfig.sh`, which:
 
-- **Приоритизирует DNS-имена** над IP-адресами
-- **Проверяет DNS-резолюцию** перед использованием hostname
-- **Тестирует подключение** к API-серверу
-- **Автоматически откатывается** на IP при проблемах с DNS
+- **Prioritizes DNS names** over IP addresses
+- **Checks DNS resolution** before using hostname
+- **Tests connection** to API server
+- **Automatically falls back** to IP on DNS issues
 
-## Преимущества решения
+## Solution Benefits
 
-### ✅ Устойчивость к изменениям IP
-- Кластер остается доступным при изменении IP-адресов DHCP
-- DNS-имена серверов остаются постоянными
+### ✅ Resilience to IP changes
+- Cluster remains accessible when DHCP IP addresses change
+- DNS names of servers remain constant
 
-### ✅ Лучшая интеграция с DNS
-- Возможность использования внутренней DNS инфраструктуры
-- Поддержка сложных сетевых топологий
+### ✅ Better DNS integration
+- Ability to use internal DNS infrastructure
+- Support for complex network topologies
 
-### ✅ Совместимость
-- Поддерживает как DNS-имена, так и IP-адреса
-- Автоматический fallback на IP при проблемах с DNS
+### ✅ Compatibility
+- Supports both DNS names and IP addresses
+- Automatic fallback to IP on DNS issues
 
-### ✅ Безопасность
-- Сертификаты содержат все необходимые SAN
-- Нет предупреждений о недоверенных сертификатах
+### ✅ Security
+- Certificates contain all necessary SANs
+- No warnings about untrusted certificates
 
-## Использование
+## Usage
 
-### Для новых кластеров
+### For new clusters
 
 ```bash
-# Используйте новый playbook вместо стандартного
+# Use the new playbook instead of the standard one
 ansible-playbook -i ansible/inventory/tofu_inventory.py \
   ansible/playbooks/initialize_kubernetes_cluster_with_dns.yml
 ```
 
-### Для существующих кластеров
+### For existing clusters
 
 ```bash
-# Обновите сертификаты с DNS-поддержкой
+# Update certificates with DNS support
 ansible-playbook -i ansible/inventory/tofu_inventory.py \
   ansible/playbooks/regenerate_certificates_with_dns.yml
 ```
 
-### Получение kubeconfig с DNS-поддержкой
+### Getting kubeconfig with DNS support
 
 ```bash
-# Используйте улучшенную функцию
+# Use the enhanced function
 source scripts/enhanced_get_kubeconfig.sh
 enhanced_get_kubeconfig --use-hostname
 ```
 
-## Проверка результата
+## Result Verification
 
-После применения решения:
+After applying the solution:
 
 ```bash
-# Проверить SAN в сертификате
+# Check SAN in certificate
 openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout | grep -A 10 "Subject Alternative Name"
 
-# Проверить доступ через DNS-имя
+# Check access via DNS name
 kubectl --server=https://cu1.bevz.net:6443 get nodes
 
-# Проверить kubeconfig
+# Check kubeconfig
 kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.server}'
 ```
 
-## Важные замечания
+## Important Notes
 
-1. **DNS должен быть настроен** корректно для всех узлов кластера
-2. **Backup сертификатов** создается автоматически при обновлении
-3. **Временное прерывание** API-сервера возможно при обновлении сертификатов
-4. **Worker nodes** будут переподключены автоматически после обновления
+1. **DNS must be configured** correctly for all cluster nodes
+2. **Certificate backup** is created automatically during updates
+3. **Temporary API server interruption** is possible during certificate updates
+4. **Worker nodes** will reconnect automatically after updates
 
-## Интеграция с CPC
+## CPC Integration
 
-Для интеграции с основным инструментом CPC:
+For integration with the main CPC tool:
 
-1. Замените вызов `initialize_kubernetes_cluster.yml` на `initialize_kubernetes_cluster_with_dns.yml` в bootstrap функции
-2. Добавьте команду для обновления сертификатов: `cpc regenerate-certificates`
-3. Обновите `get-kubeconfig` функцию для использования DNS-имен
+1. Replace the call to `initialize_kubernetes_cluster.yml` with `initialize_kubernetes_cluster_with_dns.yml` in the bootstrap function
+2. Add command for certificate updates: `cpc regenerate-certificates`
+3. Update the `get-kubeconfig` function to use DNS names
 
-Это обеспечит полную поддержку DNS-имен в вашей инфраструктуре Kubernetes!
+This ensures full DNS name support in your Kubernetes infrastructure!
