@@ -62,7 +62,6 @@ Welcome to the comprehensive documentation for the **Kubernetes Cluster Automati
 ### Implementation Reports
 - **[Addon Installation Completion Report](addon_installation_completion_report.md)** - Addon installation status
 - **[Final Upgrade Addons Report](final_upgrade_addons_report.md)** - Addon upgrade results
-- **[Translation Completion Report](translation_completion_report.md)** - Documentation translation status
 
 ### Technical Reports
 - **[Template Status Update](template_status_update.md)** - VM template development
