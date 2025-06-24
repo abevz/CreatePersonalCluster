@@ -1,3 +1,0 @@
-# Auto-generated cloud-init snippets
-# Generated on Wed Jun 18 10:24:31 PM CEST 2025
-# Node count: 3
