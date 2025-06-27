@@ -21,6 +21,8 @@ Welcome to the comprehensive documentation for the **Kubernetes Cluster Automati
 - **[Quick DNS Certificate Fix](quick_dns_certificate_fix.md)** ⚡ **URGENT FIXES** - Fast troubleshooting guide
 - **[DNS Certificate Solution Completion Report](dns_certificate_solution_completion_report.md)** - Implementation status
 - **[DNS Certificate CSR Enhancement Report](dns_certificate_csr_enhancement_report.md)** - CSR automation details
+- **[DNS Suffix Problem Solution](dns_lan_suffix_problem_solution.md)** - DHCP `.lan` suffix issues
+- **[CoreDNS Local Domain Configuration](coredns_local_domain_configuration.md)** - Configure local domain forwarding to Pi-hole
 
 ---
 

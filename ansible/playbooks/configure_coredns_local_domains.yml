@@ -1,0 +1,174 @@
+---
+- name: Configure CoreDNS for Local Domain Resolution
+  hosts: "{{ target_hosts | default('control_plane') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    # DNS server IP from command line or default
+    dns_server_ip: "{{ pihole_dns_server | default('10.10.10.187') }}"
+    
+    # Local domains to configure (can be overridden from command line)
+    domain_list: "{{ local_domains | default(['bevz.net', 'bevz.dev', 'bevz.pl']) }}"
+    
+    control_plane_node: "{{ groups['control_plane'][0] }}"
+
+  tasks:
+    - name: Set target host to control plane
+      set_fact:
+        ansible_host: "{{ hostvars[control_plane_node]['ansible_host'] }}"
+      when: inventory_hostname != control_plane_node
+
+    - name: Check if CoreDNS ConfigMap exists
+      shell: kubectl get configmap coredns -n kube-system
+      register: coredns_configmap_check
+      ignore_errors: true
+
+    - name: Fail if CoreDNS ConfigMap doesn't exist
+      fail:
+        msg: "CoreDNS ConfigMap not found. Please ensure CoreDNS is installed in the cluster."
+      when: coredns_configmap_check.rc != 0
+
+    - name: Get current CoreDNS ConfigMap
+      shell: kubectl get configmap coredns -n kube-system -o yaml
+      register: current_coredns_config
+
+    - name: Backup current CoreDNS ConfigMap
+      copy:
+        content: "{{ current_coredns_config.stdout }}"
+        dest: "/tmp/coredns-configmap-backup-{{ ansible_date_time.epoch }}.yaml"
+        mode: '0644'
+
+    - name: Extract current Corefile content
+      shell: kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}'
+      register: current_corefile
+
+    - name: Display current Corefile
+      debug:
+        msg: 
+          - "Current CoreDNS Corefile:"
+          - "{{ current_corefile.stdout }}"
+
+    - name: Check if local domains already configured
+      set_fact:
+        domains_already_configured: "{{ current_corefile.stdout | regex_search('bevz\\.net:53|bevz\\.dev:53|bevz\\.pl:53') is not none }}"
+
+    - name: Generate local domain configuration blocks
+      set_fact:
+        local_domain_blocks: |
+          {% for domain in domain_list %}
+          {{ domain }}:53 {
+              errors
+              cache 30
+              # Forward to Pi-hole DNS server
+              forward . {{ dns_server_ip }}
+          }
+          {% endfor %}
+
+    - name: Create new Corefile with local domains
+      set_fact:
+        new_corefile_content: |
+          # --- Local domain forwarding to Pi-hole ---
+          {{ local_domain_blocks }}
+          # ----------------------------------------
+          
+          {{ current_corefile.stdout }}
+
+    - name: Display new Corefile configuration
+      debug:
+        msg:
+          - "New CoreDNS configuration will include:"
+          - "Pi-hole DNS server: {{ dns_server_ip }}"
+          - "Local domains: {{ domain_list | join(', ') }}"
+          - "Configuration blocks:"
+          - "{{ local_domain_blocks }}"
+
+    - name: Apply new CoreDNS configuration
+      block:
+        - name: Create temporary Corefile
+          copy:
+            content: "{{ new_corefile_content }}"
+            dest: "/tmp/new-corefile"
+            mode: '0644'
+
+        - name: Update CoreDNS ConfigMap
+          shell: |
+            kubectl create configmap coredns \
+              --from-file=Corefile=/tmp/new-corefile \
+              --dry-run=client -o yaml | \
+            kubectl replace -f - -n kube-system
+          register: configmap_update_result
+
+        - name: Wait for CoreDNS pods to restart
+          shell: |
+            # Get current CoreDNS pod names
+            old_pods=$(kubectl get pods -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[*].metadata.name}')
+            
+            # Restart CoreDNS deployment
+            kubectl rollout restart deployment/coredns -n kube-system
+            
+            # Wait for rollout to complete
+            kubectl rollout status deployment/coredns -n kube-system --timeout=300s
+            
+            # Verify new pods are running
+            kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s
+
+        - name: Verify CoreDNS configuration
+          shell: kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}'
+          register: updated_corefile
+
+        - name: Display configuration update result
+          debug:
+            msg:
+              - "CoreDNS ConfigMap updated successfully"
+              - "DNS server configured: {{ dns_server_ip }}"
+              - "Local domains configured: {{ domain_list | join(', ') }}"
+
+        - name: Test DNS resolution for local domains
+          shell: |
+            # Test resolution from within the cluster (non-interactive)
+            kubectl run dns-test-{{ ansible_date_time.epoch }} --image=busybox --restart=Never --rm --timeout=60s -- nslookup {{ domain_list[0] }} || true
+          register: dns_test_result
+          ignore_errors: true
+
+        - name: Display DNS test result
+          debug:
+            msg:
+              - "DNS test result for {{ domain_list[0] }}:"
+              - "{{ dns_test_result.stdout_lines | default(['Test failed or timed out']) }}"
+
+      when: not domains_already_configured
+
+    - name: Skip configuration update
+      debug:
+        msg: "Local domains already configured in CoreDNS ConfigMap. Skipping update."
+      when: domains_already_configured
+
+    - name: Display final CoreDNS status
+      shell: kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide
+      register: coredns_pods_status
+
+    - name: Show CoreDNS pods status
+      debug:
+        msg:
+          - "CoreDNS pods status:"
+          - "{{ coredns_pods_status.stdout_lines }}"
+
+    # Cleanup
+    - name: Cleanup temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/new-corefile"
+      ignore_errors: true
+
+    - name: Display configuration summary
+      debug:
+        msg:
+          - "=== CoreDNS Local Domain Configuration Summary ==="
+          - "Pi-hole DNS server: {{ dns_server_ip }}"
+          - "Configured domains: {{ domain_list | join(', ') }}"
+          - "Backup saved to: /tmp/coredns-configmap-backup-{{ ansible_date_time.epoch }}.yaml"
+          - "Configuration status: {{ 'Already configured' if domains_already_configured else 'Successfully updated' }}"
+          - "======================================================"
