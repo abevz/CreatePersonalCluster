@@ -387,6 +387,7 @@ display_usage() {
   echo "  reset-node <node_name>         Reset Kubernetes on a specific node."
   echo "  reset-all-nodes                Reset Kubernetes on all nodes in the current context."
   echo "  upgrade-addons                 Install/upgrade cluster addons with interactive menu (CNI, MetalLB, cert-manager, ArgoCD, etc.)."
+  echo "  configure-coredns              Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
   echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
   echo "  vmctl                          (Placeholder) Suggests using Tofu for VM control." # Changed from Terraform
   echo "  run-command <target> \"<cmd>\"   Run a shell command on target host(s) or group."
@@ -1846,6 +1847,97 @@ case "$COMMAND" in
       exit 1
     fi
     echo -e "${GREEN}VMs in context '$current_ctx' should now be starting.${ENDCOLOR}"
+    ;;
+
+  configure-coredns)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc configure-coredns [--dns-server <ip>] [--domains <domain1,domain2,...>]"
+      echo ""
+      echo "Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
+      echo ""
+      echo "Options:"
+      echo "  --dns-server <ip>    Pi-hole DNS server IP (default: from dns_servers variable in Terraform)"
+      echo "  --domains <list>     Comma-separated list of domains (default: bevz.net,bevz.dev,bevz.pl)"
+      echo ""
+      echo "This command will:"
+      echo "  1. Backup current CoreDNS ConfigMap"
+      echo "  2. Add local domain forwarding blocks to CoreDNS configuration"
+      echo "  3. Restart CoreDNS deployment"
+      echo "  4. Verify DNS resolution"
+      echo ""
+      echo "Examples:"
+      echo "  cpc configure-coredns                                    # Use defaults"
+      echo "  cpc configure-coredns --dns-server 192.168.1.10         # Custom Pi-hole IP"
+      echo "  cpc configure-coredns --domains example.com,test.local  # Custom domains"
+      exit 0
+    fi
+
+    # Parse command line arguments
+    dns_server=""
+    domains=""
+    
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --dns-server)
+          dns_server="$2"
+          shift 2
+          ;;
+        --domains)
+          domains="$2"
+          shift 2
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    # Get DNS server from Terraform if not specified
+    if [ -z "$dns_server" ]; then
+      echo -e "${BLUE}Getting DNS server from Terraform variables...${ENDCOLOR}"
+      dns_server=$("$REPO_PATH/scripts/get_dns_server.sh")
+      
+      if [ -n "$dns_server" ] && [ "$dns_server" != "null" ]; then
+        echo -e "${GREEN}Found DNS server in Terraform: $dns_server${ENDCOLOR}"
+      else
+        dns_server="10.10.10.36"
+        echo -e "${YELLOW}Warning: Could not extract DNS server from Terraform. Using fallback: $dns_server${ENDCOLOR}"
+      fi
+    fi
+
+    # Set default domains if not specified
+    if [ -z "$domains" ]; then
+      domains="bevz.net,bevz.dev,bevz.pl"
+    fi
+
+    echo -e "${BLUE}Configuring CoreDNS for local domain resolution...${ENDCOLOR}"
+    echo -e "${BLUE}  DNS Server: $dns_server${ENDCOLOR}"
+    echo -e "${BLUE}  Domains: $domains${ENDCOLOR}"
+    
+    # Convert comma-separated domains to space-separated for Ansible
+    domains_list=$(echo "$domains" | tr ',' ' ')
+    
+    # Confirmation
+    read -r -p "Continue with CoreDNS configuration? [y/N] " response
+    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+      echo "Operation cancelled."
+      exit 0
+    fi
+
+    # Run the Ansible playbook
+    echo -e "${BLUE}Running CoreDNS configuration playbook...${ENDCOLOR}"
+    run_ansible_playbook configure_coredns_local_domains.yml -l control_plane \
+      -e "pihole_dns_server=$dns_server" \
+      -e "local_domains=[\"$(echo "$domains" | sed 's/,/","/g')\"]"
+    
+    if [ $? -eq 0 ]; then
+      echo -e "${GREEN}CoreDNS configured successfully!${ENDCOLOR}"
+      echo -e "${BLUE}Local domains ($domains) will now be forwarded to $dns_server${ENDCOLOR}"
+    else
+      echo -e "${RED}Error configuring CoreDNS${ENDCOLOR}" >&2
+      exit 1
+    fi
     ;;
 
   stop-vms)
