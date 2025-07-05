@@ -8,7 +8,7 @@ export BLUE='\033[1;34m'
 export ENDCOLOR='\033[0m'
 
 # Configuration
-CONFIG_DIR="$HOME/.config/my-kthw-cpc" # Changed from my-kthw-ccr
+CONFIG_DIR="$HOME/.config/cpc" # Updated for CreatePersonalCluster project
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
 CLUSTER_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE and ccr.env
@@ -109,6 +109,9 @@ load_secrets() {
   export VM_USERNAME
   export VM_PASSWORD
   export VM_SSH_KEY
+  export AWS_ACCESS_KEY_ID
+  export AWS_SECRET_ACCESS_KEY
+  export AWS_DEFAULT_REGION
   
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
@@ -127,10 +130,15 @@ load_secrets() {
   VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
   VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
   
+  # Parse MinIO/S3 credentials for Terraform backend
+  AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
+  AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
+  AWS_DEFAULT_REGION="us-east-1"  # Set default region for MinIO
+  
   # Verify that all required secrets were loaded
-  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ]; then
+  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
     echo -e "${RED}Error: Failed to load one or more required secrets from secrets.sops.yaml${ENDCOLOR}" >&2
-    echo -e "${BLUE}Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY${ENDCOLOR}" >&2
+    echo -e "${BLUE}Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY${ENDCOLOR}" >&2
     exit 1
   fi
   
@@ -407,7 +415,7 @@ COMMAND="$1"
 shift # Remove command from arguments, rest are options
 
 # Load REPO_PATH if not doing setup
-if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$COMMAND" != "--help" ]]; then # Changed from setup-ccr
+if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$COMMAND" != "--help" && "$COMMAND" != "help" ]]; then # Changed from setup-ccr
   REPO_PATH=$(get_repo_path)
   export REPO_PATH
   # Load environment variables from cpc.env

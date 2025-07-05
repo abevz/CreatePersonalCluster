@@ -33,6 +33,8 @@ This project draws inspiration from [ClusterCreator](https://github.com/christen
    # Edit cpc.env with your configuration
    ./cpc setup-cpc
    ```
+   
+   📖 **For detailed setup instructions, see [Project Setup Guide](docs/project_setup_guide.md)**
 
 2. **Set cluster context and create VM template**:
    ```bash
