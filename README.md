@@ -1,4 +1,4 @@
-# Kubernetes The Hard Way - CPC (Cluster Provisioning Control)
+# Create Personal Cluster - CPC (Cluster Provisioning Control)
 
 A comprehensive Kubernetes cluster deployment system using Proxmox VE, Terraform, and Ansible.
 
@@ -11,6 +11,10 @@ This project provides a complete solution for deploying production-ready Kuberne
 - **Infrastructure as Code**: Terraform-based infrastructure provisioning
 - **Configuration Management**: Ansible-based cluster configuration and addon management
 - **Multi-Distribution Support**: Currently supports Ubuntu and SUSE distributions
+
+## Inspiration
+
+This project draws inspiration from [ClusterCreator](https://github.com/christensenjairus/ClusterCreator) by Jairus Christensen, particularly for its automated cluster provisioning methodology.
 
 ## Quick Start
 
