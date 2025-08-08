@@ -183,110 +183,41 @@ set_workspace_template_vars() {
     return 1
   fi
   
-  # Convert workspace to uppercase for variable name construction
-  local workspace_upper
-  workspace_upper=$(echo "$workspace" | tr '[:lower:]' '[:upper:]')
+  # Path to the environment file
+  local env_file="$REPO_PATH/envs/$workspace.env"
   
-  # Set template variables based on workspace
-  case "$workspace" in
-    debian)
-      # Template VM configuration
-      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_DEBIAN:-902}"
-      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_DEBIAN:-tpl-debian-12-k8s}"
-      export IMAGE_NAME="${IMAGE_NAME_DEBIAN:-debian-12-genericcloud-amd64.qcow2}"
-      export IMAGE_LINK="${IMAGE_LINK_DEBIAN:-https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2}"
-      # Kubernetes component versions for debian
-      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_DEBIAN:-1.30}"
-      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_DEBIAN:-v1.30}"
-      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_DEBIAN:-v1.30}"
-      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_DEBIAN:-1.30.0}"
-      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_DEBIAN:-v1.5.0}"
-      export CALICO_VERSION="${CALICO_VERSION_DEBIAN:-v3.27.0}"
-      export METALLB_VERSION="${METALLB_VERSION_DEBIAN:-v0.14.5}"
-      export COREDNS_VERSION="${COREDNS_VERSION_DEBIAN:-v1.11.1}"
-      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_DEBIAN:-v0.7.1}"
-      export ETCD_VERSION="${ETCD_VERSION_DEBIAN:-v3.5.12}"
-      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_DEBIAN:-v0.1.9}"
-      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_DEBIAN:-v0.0.26}"
-      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_DEBIAN:-v1.16.2}"
-      export ARGOCD_VERSION="${ARGOCD_VERSION_DEBIAN:-v2.13.2}"
-      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_DEBIAN:-v1.12.0}"
-      ;;
-    ubuntu)
-      # Template VM configuration
-      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_UBUNTU:-912}"
-      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_UBUNTU:-tpl-ubuntu-2404-k8s}"
-      export IMAGE_NAME="${IMAGE_NAME_UBUNTU:-ubuntu-24.04-server-cloudimg-amd64.img}"
-      export IMAGE_LINK="${IMAGE_LINK_UBUNTU:-https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img}"
-      # Kubernetes component versions for ubuntu
-      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_UBUNTU:-1.31}"
-      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_UBUNTU:-v1.31}"
-      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_UBUNTU:-v1.31}"
-      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_UBUNTU:-1.31.0}"
-      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_UBUNTU:-v1.5.0}"
-      export CALICO_VERSION="${CALICO_VERSION_UBUNTU:-v3.28.0}"
-      export METALLB_VERSION="${METALLB_VERSION_UBUNTU:-v0.14.8}"
-      export COREDNS_VERSION="${COREDNS_VERSION_UBUNTU:-v1.11.3}"
-      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_UBUNTU:-v0.7.2}"
-      export ETCD_VERSION="${ETCD_VERSION_UBUNTU:-v3.5.15}"
-      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_UBUNTU:-v0.1.9}"
-      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_UBUNTU:-v0.0.28}"
-      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_UBUNTU:-v1.16.2}"
-      export ARGOCD_VERSION="${ARGOCD_VERSION_UBUNTU:-v2.13.2}"
-      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_UBUNTU:-v1.12.0}"
-      ;;
-    rocky)
-      # Template VM configuration
-      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_ROCKY:-931}"
-      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_ROCKY:-tpl-rocky-9-k8s}"
-      export IMAGE_NAME="${IMAGE_NAME_ROCKY:-Rocky-9-GenericCloud.latest.x86_64.qcow2}"
-      export IMAGE_LINK="${IMAGE_LINK_ROCKY:-https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2}"
-      # Kubernetes component versions for rocky
-      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_ROCKY:-1.29}"
-      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_ROCKY:-v1.29}"
-      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_ROCKY:-v1.29}"
-      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_ROCKY:-1.29.6}"
-      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_ROCKY:-v1.4.0}"
-      export CALICO_VERSION="${CALICO_VERSION_ROCKY:-v3.26.4}"
-      export METALLB_VERSION="${METALLB_VERSION_ROCKY:-v0.14.3}"
-      export COREDNS_VERSION="${COREDNS_VERSION_ROCKY:-v1.10.1}"
-      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_ROCKY:-v0.6.4}"
-      export ETCD_VERSION="${ETCD_VERSION_ROCKY:-v3.5.10}"
-      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_ROCKY:-v0.1.8}"
-      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_ROCKY:-v0.0.24}"
-      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_ROCKY:-v1.15.3}"
-      export ARGOCD_VERSION="${ARGOCD_VERSION_ROCKY:-v2.12.3}"
-      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_ROCKY:-v1.11.2}"
-      ;;
-    suse)
-      # Template VM configuration
-      export TEMPLATE_VM_ID="${TEMPLATE_VM_ID_SUSE:-941}"
-      export TEMPLATE_VM_NAME="${TEMPLATE_VM_NAME_SUSE:-tpl-suse-15-k8s}"
-      export IMAGE_NAME="${IMAGE_NAME_SUSE:-openSUSE-Leap-15.6-Minimal-VM.x86_64-15.6.0-Cloud-Build16.32.qcow2}"
-      export IMAGE_LINK="${IMAGE_LINK_SUSE:-https://download.opensuse.org/distribution/leap/15.6/appliances/openSUSE-Leap-15.6-Minimal-VM.x86_64-15.6.0-Cloud-Build16.32.qcow2}"
-      # Kubernetes component versions for suse
-      export KUBERNETES_SHORT_VERSION="${KUBERNETES_SHORT_VERSION_SUSE:-1.30}"
-      export KUBERNETES_MEDIUM_VERSION="${KUBERNETES_MEDIUM_VERSION_SUSE:-v1.30}"
-      export KUBERNETES_VERSION="${KUBERNETES_MEDIUM_VERSION_SUSE:-v1.30}"
-      export KUBERNETES_LONG_VERSION="${KUBERNETES_LONG_VERSION_SUSE:-1.30.8}"
-      export CNI_PLUGINS_VERSION="${CNI_PLUGINS_VERSION_SUSE:-v1.4.0}"
-      export CALICO_VERSION="${CALICO_VERSION_SUSE:-v3.27.0}"
-      export METALLB_VERSION="${METALLB_VERSION_SUSE:-v0.14.5}"
-      export COREDNS_VERSION="${COREDNS_VERSION_SUSE:-v1.11.1}"
-      export METRICS_SERVER_VERSION="${METRICS_SERVER_VERSION_SUSE:-v0.7.1}"
-      export ETCD_VERSION="${ETCD_VERSION_SUSE:-v3.5.12}"
-      export KUBELET_SERVING_CERT_APPROVER_VERSION="${KUBELET_SERVING_CERT_APPROVER_VERSION_SUSE:-v0.1.9}"
-      export LOCAL_PATH_PROVISIONER_VERSION="${LOCAL_PATH_PROVISIONER_VERSION_SUSE:-v0.0.26}"
-      export CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_SUSE:-v1.16.2}"
-      export ARGOCD_VERSION="${ARGOCD_VERSION_SUSE:-v2.13.2}"
-      export INGRESS_NGINX_VERSION="${INGRESS_NGINX_VERSION_SUSE:-v1.12.0}"
-      ;;
-    *)
-      echo -e "${YELLOW}Warning: Unknown workspace '$workspace'. Template variables not set.${ENDCOLOR}"
-      echo -e "${BLUE}Available workspaces: debian, ubuntu, rocky, suse${ENDCOLOR}"
-      return 1
-      ;;
-  esac
+  # Check if the environment file exists
+  if [[ ! -f "$env_file" ]]; then
+    echo -e "${YELLOW}Warning: Environment file for workspace '$workspace' not found.${ENDCOLOR}"
+    # Dynamically list available workspaces
+    echo -ne "${BLUE}Available workspaces: ${ENDCOLOR}"
+    ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//' | tr '\n' ', ' | sed 's/,$/\n/'
+    return 1
+  fi
+  
+  # Load variables from environment file
+  source "$env_file"
+  
+  # Set default values for any variables that might be missing
+  : "${TEMPLATE_VM_ID:=900}"
+  : "${TEMPLATE_VM_NAME:=tpl-default-k8s}"
+  : "${IMAGE_NAME:=default-image.img}"
+  : "${IMAGE_LINK:=https://example.com/default-image.img}"
+  : "${KUBERNETES_SHORT_VERSION:=1.29}"
+  : "${KUBERNETES_MEDIUM_VERSION:=v1.29}"
+  : "${KUBERNETES_VERSION:=$KUBERNETES_MEDIUM_VERSION}"
+  : "${KUBERNETES_LONG_VERSION:=1.29.0}"
+  : "${CNI_PLUGINS_VERSION:=v1.4.0}"
+  : "${CALICO_VERSION:=v3.26.0}"
+  : "${METALLB_VERSION:=v0.14.3}"
+  : "${COREDNS_VERSION:=v1.10.1}"
+  : "${METRICS_SERVER_VERSION:=v0.6.4}"
+  : "${ETCD_VERSION:=v3.5.10}"
+  : "${KUBELET_SERVING_CERT_APPROVER_VERSION:=v0.1.8}"
+  : "${LOCAL_PATH_PROVISIONER_VERSION:=v0.0.24}"
+  : "${CERT_MANAGER_VERSION:=v1.15.0}"
+  : "${ARGOCD_VERSION:=v2.12.0}"
+  : "${INGRESS_NGINX_VERSION:=v1.11.0}"
   
   echo -e "${BLUE}Set template variables for workspace '$workspace':${ENDCOLOR}"
   echo -e "${BLUE}  TEMPLATE_VM_ID: $TEMPLATE_VM_ID${ENDCOLOR}"
@@ -375,6 +306,8 @@ display_usage() {
   echo "Commands:"
   echo "  setup-cpc                      Initial setup for cpc command."
   echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)."
+  echo "  clone-workspace <src> <dst>    Clone a workspace environment to create a new one."
+  echo "  delete-workspace <n>           Delete a workspace environment."
   echo "  template                       Creates a VM template for Kubernetes"
   echo "  bootstrap                      Bootstrap a complete Kubernetes cluster on deployed VMs"
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
@@ -684,6 +617,364 @@ case "$COMMAND" in
     
     # Update template variables for the new workspace context
     set_workspace_template_vars "$cluster_name"
+    ;;
+  
+  clone-workspace)
+    if [[ "$1" == "-h" || "$1" == "--help" || $# -lt 2 ]]; then
+      echo "Usage: cpc clone-workspace <source_workspace> <destination_workspace> [release_letter]"
+      echo "Clones a workspace environment to create a new one."
+      echo ""
+      echo "Arguments:"
+      echo "  <source_workspace>      Source workspace to clone (e.g., ubuntu, debian)"
+      echo "  <destination_workspace> New workspace name (e.g., k8s129, test-workspace)"
+      echo "  [release_letter]        Optional: Single letter to use for hostnames (defaults to first letter of destination)"
+      echo ""
+      echo "Example:"
+      echo "  cpc clone-workspace ubuntu k8s129 k"
+      exit 0
+    fi
+
+    source_workspace="$1"
+    destination_workspace="$2"
+    
+    # Default release letter to first character of destination workspace
+    if [ -z "$3" ]; then
+      release_letter="${destination_workspace:0:1}"
+    else
+      release_letter="$3"
+    fi
+    
+    # Validate release letter is a single character
+    if [ ${#release_letter} -ne 1 ]; then
+      echo -e "${RED}Error: Release letter must be a single character.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Check if release letter is already used by another workspace
+    locals_tf="$REPO_PATH/terraform/locals.tf"
+    existing_release_letters=$(grep -A 50 "release_letters_map = {" "$locals_tf" | grep -E '= "[a-zA-Z]"' | grep -v "$destination_workspace" | sed -E 's/.*= "([a-zA-Z])".*/\1/g')
+    
+    if echo "$existing_release_letters" | grep -q "$release_letter"; then
+      echo -e "${RED}Error: Release letter '$release_letter' is already used by another workspace.${ENDCOLOR}"
+      echo -e "${BLUE}Please choose a different release letter. Currently used letters:${ENDCOLOR}"
+      echo "$existing_release_letters" | tr '\n' ' '
+      echo ""
+      exit 1
+    fi
+    
+    # Check if source workspace exists
+    source_env="$REPO_PATH/envs/$source_workspace.env"
+    if [ ! -f "$source_env" ]; then
+      echo -e "${RED}Error: Source workspace $source_workspace does not exist.${ENDCOLOR}"
+      echo -e "${BLUE}Available workspaces:${ENDCOLOR}"
+      ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
+      exit 1
+    fi
+    
+    # Check if destination workspace already exists
+    dest_env_file="$REPO_PATH/envs/$destination_workspace.env"
+    if [ -f "$dest_env_file" ]; then
+      echo -e "${RED}Error: Destination workspace $destination_workspace already exists.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Copy environment file
+    cp "$source_env" "$dest_env_file"
+    if [ $? -ne 0 ]; then
+      echo -e "${RED}Error: Failed to copy environment file.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Add/update RELEASE_LETTER in the new environment file
+    if grep -q "^RELEASE_LETTER=" "$dest_env_file"; then
+      sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$dest_env_file"
+    else
+      echo -e "\n# Release letter used for hostname generation" >> "$dest_env_file"
+      echo "RELEASE_LETTER=$release_letter" >> "$dest_env_file"
+    fi
+    
+    # Update locals.tf
+    locals_tf="$REPO_PATH/terraform/locals.tf"
+    
+    # Add template VM ID mapping
+    pushd "$REPO_PATH/terraform" > /dev/null || exit 1
+    source_template_var=""
+    
+    # Add the destination workspace to template_vm_ids
+    # First, get the correct variable for the source workspace
+    if grep -q "\"$source_workspace\".*var.pm_template_${source_workspace}_id" "$locals_tf"; then
+      # Source workspace uses its own template variable
+      template_var="var.pm_template_${source_workspace}_id"
+    else
+      # Source workspace likely uses another OS's template
+      template_var="var.pm_template_ubuntu_id"  # Default to Ubuntu template
+    fi
+    
+    # Now add the entry to template_vm_ids
+    sed -i "/^[[:space:]]*template_vm_ids = {/a \\    \"$destination_workspace\" = $template_var  # Auto-added by clone-workspace" "$locals_tf"
+    echo -e "${BLUE}Added template_vm_ids entry: \"$destination_workspace\" = $template_var${ENDCOLOR}"
+    
+    if [ -z "$source_template_var" ]; then
+      echo -e "${YELLOW}Warning: Could not find template_vm_ids entry for $source_workspace in locals.tf.${ENDCOLOR}"
+      echo -e "${YELLOW}You may need to manually update locals.tf to map the template VM ID for $destination_workspace.${ENDCOLOR}"
+    fi
+    
+    # Add release letter mapping
+    sed -i "/release_letters_map = {/a \    \"$destination_workspace\" = \"$release_letter\"  # Auto-added by clone-workspace" "$locals_tf"
+    
+    # Add VM ID range
+    # Find the highest current range
+    highest_range=0
+    while read -r line; do
+      if [[ "$line" =~ [0-9]+ ]]; then
+        range=${BASH_REMATCH[0]}
+        if (( range > highest_range )); then
+          highest_range=$range
+        fi
+      fi
+    done < <(grep "vm_id_ranges" -A 50 "$locals_tf" | grep -E '= [0-9]+')
+    
+    # Calculate new range
+    new_range=$((highest_range + 10))
+    sed -i "/vm_id_ranges = {/a \    \"$destination_workspace\" = $new_range  # Auto-added by clone-workspace" "$locals_tf"
+    
+    echo -e "${BLUE}Updated locals.tf with new workspace entries${ENDCOLOR}"
+    
+    # Update validations.tf if it exists
+    validations_tf="$REPO_PATH/terraform/validations.tf"
+    if [ -f "$validations_tf" ]; then
+      # Find the line with the condition that contains the list of valid workspaces
+      condition_line=$(grep -n "condition.*contains.*terraform.workspace" "$validations_tf" | head -1 | cut -d':' -f1)
+      if [ -n "$condition_line" ]; then
+        # Get the last workspace in the list
+        last_workspace=$(grep -o "\"[^\"]*\"" "$validations_tf" | tail -1 | tr -d '"')
+        if [ -n "$last_workspace" ]; then
+          # Add the new workspace to the condition
+          sed -i "${condition_line}s/\"$last_workspace\"/\"$last_workspace\", \"$destination_workspace\"/" "$validations_tf"
+          echo -e "${BLUE}Updated validations.tf with new workspace${ENDCOLOR}"
+        else
+          echo -e "${YELLOW}Warning: Could not find workspace list in validations.tf to update.${ENDCOLOR}"
+        fi
+      else
+        echo -e "${YELLOW}Warning: Could not find condition line in validations.tf to update.${ENDCOLOR}"
+      fi
+    fi
+    
+    # Create the workspace
+    if ! tofu workspace list | grep -qw "$destination_workspace"; then
+      echo -e "${BLUE}Creating new Tofu workspace: $destination_workspace${ENDCOLOR}"
+      tofu workspace new "$destination_workspace"
+    fi
+    popd > /dev/null || exit 1
+    
+    echo -e "${GREEN}Successfully created new workspace environment: $destination_workspace${ENDCOLOR}"
+    echo -e "${BLUE}You can now edit $dest_env_file to customize your new workspace.${ENDCOLOR}"
+    echo -e "${BLUE}To use this workspace, run: cpc ctx $destination_workspace${ENDCOLOR}"
+    ;;
+    
+  delete-workspace)
+    if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
+      echo "Usage: cpc delete-workspace <workspace_name> [--force]"
+      echo "Deletes a workspace environment and removes it from the Terraform configuration."
+      echo ""
+      echo "Arguments:"
+      echo "  <workspace_name>    Name of the workspace to delete (e.g., k8s129, test-workspace)"
+      echo "  --force             Skip confirmation prompt"
+      echo ""
+      echo "Example:"
+      echo "  cpc delete-workspace test-workspace"
+      exit 0
+    fi
+    
+    workspace_name="$1"
+    force=false
+    if [[ "$2" == "--force" ]]; then
+      force=true
+    fi
+    
+    # Check if workspace exists
+    env_file="$REPO_PATH/envs/$workspace_name.env"
+    if [ ! -f "$env_file" ]; then
+      echo -e "${RED}Error: Workspace '$workspace_name' not found.${ENDCOLOR}"
+      echo -e "${BLUE}Available workspaces:${ENDCOLOR}"
+      ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
+      exit 1
+    fi
+    
+    # Check if it's one of the predefined workspaces
+    if [[ "$workspace_name" == "debian" || "$workspace_name" == "ubuntu" || "$workspace_name" == "rocky" || "$workspace_name" == "suse" ]]; then
+      echo -e "${RED}Error: Cannot delete predefined workspace '$workspace_name'.${ENDCOLOR}"
+      echo -e "${BLUE}These are base workspaces used as templates for cloning.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Confirm deletion unless --force is used
+    if [ "$force" = false ]; then
+      echo -e "${YELLOW}Warning: You are about to delete workspace '$workspace_name'.${ENDCOLOR}"
+      echo -e "${YELLOW}This will:${ENDCOLOR}"
+      echo -e "${YELLOW} - Delete the environment file at $env_file${ENDCOLOR}"
+      echo -e "${YELLOW} - Remove entries from locals.tf${ENDCOLOR}"
+      echo -e "${YELLOW} - Remove it from validations.tf${ENDCOLOR}"
+      echo -e "${YELLOW} - Delete the Tofu workspace if it exists${ENDCOLOR}"
+      echo -e "${YELLOW} - Stop and destroy all VMs in this workspace${ENDCOLOR}"
+      echo -e "${YELLOW} - Remove all DNS records from Pi-hole for these VMs${ENDCOLOR}"
+      echo -e "${YELLOW} - Clean up cloud-init snippet files${ENDCOLOR}"
+      read -p "Are you sure you want to continue? (y/N) " confirm
+      if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "${BLUE}Operation cancelled.${ENDCOLOR}"
+        exit 0
+      fi
+    fi
+    
+    # 1. First, prepare to clean up resources
+    pushd "$REPO_PATH/terraform" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
+    
+    # Check if the workspace exists
+    if tofu workspace list | grep -qw "$workspace_name"; then
+      # Save current workspace to return to it later
+      original_ws=$(tofu workspace show)
+      
+      # Switch to the workspace we're about to delete
+      if [ "$original_ws" != "$workspace_name" ]; then
+        echo -e "${BLUE}Switching to workspace '$workspace_name' to check resources...${ENDCOLOR}"
+        tofu workspace select "$workspace_name"
+      fi
+      
+      # 2. Check if there are any resources in this workspace
+      echo -e "${BLUE}Checking for existing resources in workspace '$workspace_name'...${ENDCOLOR}"
+      tofu show -json > /dev/null 2>&1
+      if [ $? -eq 0 ]; then
+        # Get state info without creating anything
+        resource_count=$(tofu state list 2>/dev/null | wc -l)
+        if [ "$resource_count" -gt 0 ]; then
+          echo -e "${BLUE}Found $resource_count resources in workspace '$workspace_name'. Proceeding with cleanup...${ENDCOLOR}"
+          
+          # 3. Remove DNS records from Pi-hole before destroying VMs
+          echo -e "${BLUE}Removing DNS records from Pi-hole...${ENDCOLOR}"
+          # Change directory to run the Python script with correct paths
+          pushd "$REPO_PATH" > /dev/null || exit 1
+          if [ -x "$REPO_PATH/scripts/add_pihole_dns.py" ]; then
+            "$REPO_PATH/scripts/add_pihole_dns.py" --action "unregister-dns" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform"
+            if [ $? -ne 0 ]; then
+              echo -e "${YELLOW}Warning: Failed to remove some DNS records from Pi-hole. Continuing with cleanup...${ENDCOLOR}"
+            else
+              echo -e "${BLUE}Successfully removed DNS records from Pi-hole.${ENDCOLOR}"
+            fi
+          else
+            echo -e "${YELLOW}Warning: Pi-hole DNS update script not found or not executable. DNS records may remain.${ENDCOLOR}"
+          fi
+          popd > /dev/null || exit 1
+          
+          # 4. Destroy all resources directly
+          echo -e "${BLUE}Destroying all resources in workspace '$workspace_name'...${ENDCOLOR}"
+          tofu destroy -auto-approve
+          if [ $? -ne 0 ]; then
+            echo -e "${YELLOW}Warning: Failed to destroy some resources. Manual cleanup may be required.${ENDCOLOR}"
+          else
+            echo -e "${BLUE}Successfully destroyed all resources in workspace '$workspace_name'.${ENDCOLOR}"
+          fi
+        else
+          echo -e "${BLUE}No resources found in workspace '$workspace_name', skipping resource cleanup.${ENDCOLOR}"
+        fi
+      else
+        echo -e "${BLUE}Workspace '$workspace_name' appears to be empty or has no state, skipping resource cleanup.${ENDCOLOR}"
+      fi
+      
+      # Return to original workspace if it was different
+      if [ "$original_ws" != "$workspace_name" ] && [ "$original_ws" != "default" ]; then
+        echo -e "${BLUE}Switching back to workspace '$original_ws'...${ENDCOLOR}"
+        tofu workspace select "$original_ws"
+      else
+        echo -e "${BLUE}Switching to default workspace...${ENDCOLOR}"
+        tofu workspace select default
+      fi
+      
+      # 5. Now delete the workspace
+      echo -e "${BLUE}Deleting Tofu workspace '$workspace_name'...${ENDCOLOR}"
+      tofu workspace delete "$workspace_name"
+      echo -e "${BLUE}- Deleted Tofu workspace '$workspace_name'${ENDCOLOR}"
+    else
+      echo -e "${YELLOW}- Tofu workspace '$workspace_name' does not exist, skipping resource cleanup${ENDCOLOR}"
+    fi
+    
+    # 6. Update locals.tf
+    locals_tf="$REPO_PATH/terraform/locals.tf"
+    
+    # Remove from template_vm_ids
+    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*var\.[^,]*[[:space:]]*#.*clone-workspace/d" "$locals_tf"
+    
+    # Remove from release_letters_map
+    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*#.*clone-workspace/d" "$locals_tf"
+    
+    # Remove from vm_id_ranges
+    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*[0-9][0-9]*[[:space:]]*#.*clone-workspace/d" "$locals_tf"
+    
+    echo -e "${BLUE}- Removed entries from locals.tf${ENDCOLOR}"
+    
+    # 7. Update validations.tf
+    validations_tf="$REPO_PATH/terraform/validations.tf"
+    if [ -f "$validations_tf" ]; then
+      # Find the line with the condition that contains the list of valid workspaces
+      condition_line=$(grep -n "condition.*contains.*terraform.workspace" "$validations_tf" | head -1 | cut -d':' -f1)
+      if [ -n "$condition_line" ]; then
+        # Remove the workspace from the list of valid workspaces
+        # This is a bit more complex as we need to handle different formats
+        sed -i "${condition_line}s/\"$workspace_name\"[[:space:]]*,//g" "$validations_tf" # Remove with trailing comma
+        sed -i "${condition_line}s/,[[:space:]]*\"$workspace_name\"//g" "$validations_tf" # Remove with leading comma
+        echo -e "${BLUE}- Updated validations.tf to remove '$workspace_name' workspace${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}Warning: Could not find condition line in validations.tf to update.${ENDCOLOR}"
+      fi
+    fi
+    
+    # 8. Clean up cloud-init snippet files
+    # First, we need to get the release letter for this workspace to know which files to delete
+    if [ -f "$env_file" ]; then
+      # Read RELEASE_LETTER from the environment file before we delete it
+      workspace_release_letter=$(grep "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' | tr -d "'" | head -1)
+      
+      # If not found in file, use fallback mapping
+      if [ -z "$workspace_release_letter" ]; then
+        case "$workspace_name" in
+          debian) workspace_release_letter="d" ;;
+          ubuntu) workspace_release_letter="u" ;;
+          rocky) workspace_release_letter="r" ;;
+          suse) workspace_release_letter="s" ;;
+          *) workspace_release_letter=$(echo "$workspace_name" | head -c 1) ;;
+        esac
+      fi
+      
+      # Clean up cloud-init snippet files with this release letter
+      snippets_dir="$REPO_PATH/terraform/snippets"
+      if [ -d "$snippets_dir" ] && [ -n "$workspace_release_letter" ]; then
+        echo -e "${BLUE}Cleaning up cloud-init snippet files for release letter '$workspace_release_letter'...${ENDCOLOR}"
+        
+        # Remove controlplane snippet files: node-c<letter><number>-userdata.yaml
+        find "$snippets_dir" -name "node-c${workspace_release_letter}[0-9]*-userdata.yaml" -delete 2>/dev/null
+        
+        # Remove worker snippet files: node-w<letter><number>-userdata.yaml  
+        find "$snippets_dir" -name "node-w${workspace_release_letter}[0-9]*-userdata.yaml" -delete 2>/dev/null
+        
+        # Count remaining snippet files to report
+        remaining_snippets=$(find "$snippets_dir" -name "node-*${workspace_release_letter}[0-9]*-userdata.yaml" 2>/dev/null | wc -l)
+        if [ "$remaining_snippets" -eq 0 ]; then
+          echo -e "${BLUE}- Cleaned up all snippet files for release letter '$workspace_release_letter'${ENDCOLOR}"
+        else
+          echo -e "${YELLOW}- Warning: $remaining_snippets snippet files with release letter '$workspace_release_letter' still remain${ENDCOLOR}"
+        fi
+      else
+        echo -e "${YELLOW}- Warning: Could not determine release letter for workspace '$workspace_name', skipping snippet cleanup${ENDCOLOR}"
+      fi
+    fi
+    
+    # 9. Delete the environment file last (after we're done using any values from it)
+    popd > /dev/null || true  # Use true instead of exit 1 to avoid exiting on error
+    rm -f "$env_file"
+    echo -e "${BLUE}- Deleted environment file: $env_file${ENDCOLOR}"
+    
+    # Note: No need for another popd here as we've already returned to the original directory
+    
+    echo -e "${GREEN}Successfully deleted workspace '$workspace_name'.${ENDCOLOR}"
     ;;
   
   template)
@@ -1698,6 +1989,16 @@ case "$COMMAND" in
     tfvars_file="$tf_dir/environments/${current_ctx}.tfvars"
 
     echo -e "${BLUE}Preparing to run 'tofu $*' for context '$current_ctx' in $tf_dir...${ENDCOLOR}"
+
+    # Load RELEASE_LETTER from workspace environment file if it exists
+    env_file="$REPO_PATH/envs/$current_ctx.env"
+    if [ -f "$env_file" ]; then
+      RELEASE_LETTER=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$RELEASE_LETTER" ]; then
+        export TF_VAR_release_letter="$RELEASE_LETTER"
+        echo -e "${BLUE}Using RELEASE_LETTER='$RELEASE_LETTER' from workspace environment file${ENDCOLOR}"
+      fi
+    fi
 
     pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to directory $tf_dir${ENDCOLOR}"; exit 1; }
     selected_workspace=$(tofu workspace show)

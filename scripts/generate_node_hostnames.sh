@@ -27,14 +27,33 @@ cd "$REPO_PATH/terraform"
 CURRENT_WORKSPACE=$(tofu workspace show)
 cd "$REPO_PATH/scripts"
 
-# Map workspace to release letter (same logic as in locals.tf)
-case "$CURRENT_WORKSPACE" in
-  "debian") RELEASE_LETTER="d" ;;
-  "ubuntu") RELEASE_LETTER="u" ;;
-  "rocky")  RELEASE_LETTER="r" ;;
-  "suse")   RELEASE_LETTER="s" ;;
-  *)        RELEASE_LETTER="x" ;;  # fallback
-esac
+# Check if RELEASE_LETTER is already set in environment
+if [ -z "$RELEASE_LETTER" ]; then
+  # Try to load from workspace's .env file if it exists
+  ENV_FILE="$REPO_PATH/envs/$CURRENT_WORKSPACE.env"
+  if [ -f "$ENV_FILE" ]; then
+    # Try to extract RELEASE_LETTER from the workspace's .env file
+    ENV_RELEASE_LETTER=$(grep -E "^RELEASE_LETTER=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '"' || echo "")
+    if [ -n "$ENV_RELEASE_LETTER" ]; then
+      RELEASE_LETTER="$ENV_RELEASE_LETTER"
+      echo "Using RELEASE_LETTER='$RELEASE_LETTER' from workspace .env file"
+    fi
+  fi
+  
+  # If still not found, fall back to the old mapping
+  if [ -z "$RELEASE_LETTER" ]; then
+    echo "RELEASE_LETTER not found in environment or workspace .env, falling back to mapping"
+    # Map workspace to release letter (same logic as in locals.tf)
+    case "$CURRENT_WORKSPACE" in
+      "debian") RELEASE_LETTER="d" ;;
+      "ubuntu") RELEASE_LETTER="u" ;;
+      "rocky")  RELEASE_LETTER="r" ;;
+      "suse")   RELEASE_LETTER="s" ;;
+      *)        RELEASE_LETTER="x" ;;  # fallback
+    esac
+    echo "Mapped workspace '$CURRENT_WORKSPACE' to RELEASE_LETTER='$RELEASE_LETTER'"
+  fi
+fi
 
 # Get cluster domain from Terraform variables
 VM_DOMAIN=$(grep -A 3 'variable "vm_domain"' "$REPO_PATH/terraform/variables.tf" | grep 'default' | cut -d'"' -f2)

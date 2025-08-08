@@ -1,1 +1,5 @@
 terraform/snippets/summary.txt
+terraform/secrets.sops.yaml
+
+# Auto-generated cloud-init snippet files
+terraform/snippets/node-*-userdata.yaml

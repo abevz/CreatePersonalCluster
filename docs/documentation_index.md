@@ -48,6 +48,7 @@ my-kthw/
 ### 🏗️ Architecture & Design
 - **[Architecture Overview](../docs/architecture.md)** - System design and workspace support
 - **[Technical Documentation](../docs/README.md)** - Detailed technical documentation
+- **[Modular Workspace System](../docs/modular_workspace_system.md)** - Details on the new modular workspace environment system
 
 ### ⚙️ Configuration & Setup
 - **[CPC Template Variables Guide](../docs/cpc_template_variables_guide.md)** - Configuration reference
@@ -55,9 +56,10 @@ my-kthw/
 - **[Ansible Playbooks](../ansible/playbooks/README.md)** - Detailed playbook documentation
 - **[Terraform Infrastructure](../terraform/README.md)** - Infrastructure provisioning guide
 
-### 🛠️ Tools & Utilities
-- **[Scripts and Utilities](../scripts/README.md)** - Helper scripts and tools
-- **[Terraform Modules](../terraform/modules/)** - Reusable infrastructure modules
+### 🛠️ Command Reference
+- **[CPC Commands Reference](../docs/cpc_commands_reference.md)** - Complete reference for all CPC commands
+- **[CPC Commands Comparison](../docs/cpc_commands_comparison.md)** - When to use run-ansible vs run-command
+- **[Bootstrap Command Guide](../docs/bootstrap_command_guide.md)** - Comprehensive bootstrap command documentation
 
 ### 🖥️ VM Template System
 - **[VM Template Reorganization](../docs/vm_template_reorganization_final.md)** - Modular template system architecture

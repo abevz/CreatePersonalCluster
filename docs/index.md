@@ -31,6 +31,8 @@ Welcome to the comprehensive documentation for the **Kubernetes Cluster Automati
 ### Command Reference & Usage
 - **[CPC Commands Comparison](cpc_commands_comparison.md)** 📊 - `run-ansible` vs `run-command` comparison
 - **[CPC Template Variables Guide](cpc_template_variables_guide.md)** - Configuration variables reference
+- **[Hostname Generation System](hostname_generation_system.md)** - VM hostname generation and RELEASE_LETTER
+- **[Modular Workspace System](modular_workspace_system.md)** - Workspace environment management
 - **[SSH Workspace Context Fix](ssh_workspace_context_fix.md)** - Workspace preservation fixes
 
 ### Core Deployment Guides
