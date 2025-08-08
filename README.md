@@ -30,16 +30,18 @@ This project draws inspiration from [ClusterCreator](https://github.com/christen
 1. **Initialize environment**:
    ```bash
    cp cpc.env.example cpc.env
-   # Edit cpc.env with your configuration
+   # Edit cpc.env with your global configuration
    ./cpc setup-cpc
    ```
    
    📖 **For detailed setup instructions, see [Project Setup Guide](docs/project_setup_guide.md)**
 
-2. **Set cluster context and create VM template**:
+2. **Choose and configure workspace**:
    ```bash
-   ./cpc ctx ubuntu
-   ./cpc template
+   ./cpc list-workspaces                    # See available workspaces
+   ./cpc clone-workspace ubuntu myproject  # Create custom workspace
+   ./cpc ctx myproject                      # Switch to your workspace
+   ./cpc template                           # Create VM template
    ```
 
 3. **Deploy infrastructure and bootstrap cluster**:
@@ -66,14 +68,20 @@ CPC uses a modular workspace system to manage different environments. Workspaces
 
 ### Managing Workspaces
 ```bash
-# Switch to a workspace
+# List available workspaces
+./cpc list-workspaces
+
+# Switch to a workspace  
 ./cpc ctx ubuntu
 
 # Create a new workspace based on an existing one
 ./cpc clone-workspace ubuntu my-custom-workspace
 
-# List available workspaces
-ls -1 ./envs/ | grep -E '\.env$' | sed 's/\.env$//'
+# Delete a custom workspace (keeps built-in workspaces safe)
+./cpc delete-workspace my-custom-workspace
+
+# View current workspace status
+./cpc ctx
 ```
 
 Each workspace has its own environment file in the `envs/` directory. See [Workspace Environments](envs/README.md) for details.
@@ -122,7 +130,10 @@ Each workspace has its own environment file in the `envs/` directory. See [Works
 
 ### Core Documentation
 - [Architecture Overview](docs/architecture.md) - System architecture and design principles
+- [Modular Workspace System](docs/modular_workspace_system.md) - New workspace management system
+- [Hostname Generation System](docs/hostname_generation_system.md) - RELEASE_LETTER and hostname patterns
 - [Cluster Deployment Guide](docs/cluster_deployment_guide.md) - Complete deployment walkthrough
+- [CPC Commands Reference](docs/cpc_commands_reference.md) - Complete command documentation
 - [CPC Template Variables Guide](docs/cpc_template_variables_guide.md) - Configuration reference
 
 ### Troubleshooting Guides
@@ -144,39 +155,50 @@ Each workspace has its own environment file in the `envs/` directory. See [Works
 
 ## Configuration
 
-### Environment Setup
-The `cpc.env` file contains all configuration variables:
+### Modular Workspace System
+CPC uses a modular workspace system with environment files in the `envs/` directory:
 
 ```bash
-# Proxmox Configuration
-PROXMOX_HOST="your-proxmox-host"
-VM_USERNAME="your-username"
-
-# Template Configuration
-TEMPLATE_VM_ID_UBUNTU="9420"
-TEMPLATE_VM_NAME_UBUNTU="tpl-ubuntu-2404-k8s"
-
-# Kubernetes Versions (per workspace)
-KUBERNETES_VERSION_UBUNTU="v1.31"
-CALICO_VERSION_UBUNTU="v3.28.0"
-METALLB_VERSION_UBUNTU="v0.14.8"
+envs/
+├── debian.env      # Debian workspace configuration
+├── ubuntu.env      # Ubuntu workspace configuration  
+├── rocky.env       # Rocky Linux workspace configuration
+├── suse.env        # SUSE workspace configuration
+└── k8s129.env      # Custom Kubernetes 1.29 workspace
 ```
 
-### Workspace Selection
-Use the `--workspace` flag to specify which distribution to use:
+Each workspace file contains distribution-specific configuration:
 
 ```bash
-./cpc template --workspace ubuntu    # Ubuntu 24.04
-./cpc template --workspace suse      # SUSE
-./cpc bootstrap --workspace ubuntu   # Deploy Ubuntu-based cluster
+# From envs/ubuntu.env
+TEMPLATE_VM_ID="9420"
+TEMPLATE_VM_NAME="tpl-ubuntu-2404-k8s"
+KUBERNETES_VERSION="v1.31"
+CALICO_VERSION="v3.28.0"
+RELEASE_LETTER="u"
+```
+
+### Workspace Management
+Create and manage custom workspaces:
+
+```bash
+./cpc list-workspaces                    # List available workspaces
+./cpc clone-workspace ubuntu myproject  # Clone ubuntu config to myproject
+./cpc ctx myproject                      # Switch to myproject workspace
+./cpc delete-workspace myproject        # Delete custom workspace
 ```
 
 ## Project Structure
 
 ```
-my-kthw/
+CreatePersonalCluster/
 ├── cpc                    # Main CPC script
-├── cpc.env               # Configuration file
+├── cpc.env               # Global configuration file  
+├── envs/                 # Workspace environment files
+│   ├── debian.env        # Debian workspace
+│   ├── ubuntu.env        # Ubuntu workspace
+│   ├── rocky.env         # Rocky Linux workspace
+│   └── suse.env          # SUSE workspace
 ├── ansible/              # Ansible playbooks and roles
 ├── terraform/            # Infrastructure as code
 ├── scripts/              # Utility scripts
