@@ -56,13 +56,36 @@ This project draws inspiration from [ClusterCreator](https://github.com/christen
    ./cpc upgrade-addons --addon all
    ```
 
-## Supported Workspaces
+## Workspace System
 
-### ✅ Fully Functional
+CPC uses a modular workspace system to manage different environments. Workspaces allow you to:
+- Use different OS distributions (Ubuntu, Debian, Rocky, SUSE)
+- Configure different Kubernetes versions for each workspace
+- Customize component versions per workspace
+- Easily create new workspaces from existing ones
+
+### Managing Workspaces
+```bash
+# Switch to a workspace
+./cpc ctx ubuntu
+
+# Create a new workspace based on an existing one
+./cpc clone-workspace ubuntu my-custom-workspace
+
+# List available workspaces
+ls -1 ./envs/ | grep -E '\.env$' | sed 's/\.env$//'
+```
+
+Each workspace has its own environment file in the `envs/` directory. See [Workspace Environments](envs/README.md) for details.
+
+### Supported Workspaces
+
+#### ✅ Fully Functional
 - **Ubuntu 24.04**: Complete support with all features working
 - **SUSE**: Complete support with all features working
+- **Kubernetes 1.29**: Specialized workspace for Kubernetes 1.29
 
-### 🚧 In Development
+#### 🚧 In Development
 - **Debian**: Basic functionality (some features pending)
 - **Rocky Linux**: Basic functionality (some features pending)
 

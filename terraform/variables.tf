@@ -24,6 +24,12 @@ variable "storage" {
   default     = "MyStorage"
 }
 
+variable "release_letter" {
+  description = "Release letter to use for VM naming (from environment or workspace config)"
+  type        = string
+  default     = ""
+}
+
 # Add other common variables here that might be overridden by .tfvars files
 variable "vm_cpu_cores" {
   type        = number

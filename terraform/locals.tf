@@ -5,34 +5,46 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
-    "debian" = var.pm_template_debian_id
-    "ubuntu" = var.pm_template_ubuntu_id
-    "rocky"  = var.pm_template_rocky_id
-    "suse"   = var.pm_template_suse_id
+    "k8s129" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
+    "debian"        = var.pm_template_debian_id
+    "ubuntu"        = var.pm_template_ubuntu_id
+    "rocky"         = var.pm_template_rocky_id
+    "suse"          = var.pm_template_suse_id
+    "test-workspace" = var.pm_template_ubuntu_id  # Use Ubuntu template for test-workspace
+    "k8s129"        = var.pm_template_ubuntu_id   # Use Ubuntu template for k8s129
     # Add other OS types and their corresponding template IDs as needed
   }
 
   # Define a map for release letters based on the OS type (derived from workspace name)
   # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
   release_letters_map = {
-    "debian" = "d"
-    "ubuntu" = "u"
-    "rocky"  = "r"
-    "suse"   = "s"
+    "k8s129" = "k"  # Auto-added by clone-workspace
+    "debian"        = "d"
+    "ubuntu"        = "u"
+    "rocky"         = "r"
+    "suse"          = "s"
+    "test-workspace" = "t"   # Use 't' for test-workspace
+    "k8s129"        = "k"    # Use 'k' for k8s129
     # Ensure there are entries here for all your expected workspace names
   }
 
-  # Get the release letter for the current workspace, defaulting to "x" if not found.
-  release_letter = lookup(local.release_letters_map, local.effective_os_type, "x") # "x" as a fallback
+  # Get the release letter for the current workspace
+  # 1. Use var.release_letter if it's set (from environment RELEASE_LETTER)
+  # 2. Otherwise, fall back to the map with the workspace name
+  # 3. If that fails too, use "x" as a fallback
+  release_letter = var.release_letter != "" ? var.release_letter : lookup(local.release_letters_map, local.effective_os_type, "x")
 
   environment = terraform.workspace # Changed from var.environment
 
   # VM ID ranges per OS type
   vm_id_ranges = {
-    "debian" = 200
-    "ubuntu" = 300
-    "rocky"  = 400
-    "suse"   = 500
+    "k8s129" = 610  # Auto-added by clone-workspace
+    "debian"        = 200
+    "ubuntu"        = 300
+    "rocky"         = 400
+    "suse"          = 500
+    "test-workspace" = 600  # Fixed: Use 600 range instead of full VM ID
+    "k8s129"        = 700   # Use 700 range for k8s129
   }
 
   # Base configuration for node types, replacing old local.k8s_nodes
