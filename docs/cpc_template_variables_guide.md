@@ -33,6 +33,14 @@ VM_PASSWORD="your_secure_password"
 NON_PASSWORD_PROTECTED_SSH_KEY="id_rsa"
 ```
 
+### Hostname Generation
+```bash
+# Release letter used for VM hostname generation
+# This letter is used as part of the hostname pattern: <role><release_letter><index>
+# For example: ck1 (controlplane k 1), wk1 (worker k 1), wk2 (worker k 2)
+RELEASE_LETTER="k"
+```
+
 ### Template VM Specifications
 ```bash
 TEMPLATE_VM_CPU="2"
