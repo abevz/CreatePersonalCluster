@@ -310,6 +310,7 @@ display_usage() {
   echo "  delete-workspace <n>           Delete a workspace environment."
   echo "  template                       Creates a VM template for Kubernetes"
   echo "  bootstrap                      Bootstrap a complete Kubernetes cluster on deployed VMs"
+  echo "  run-playbook <playbook>        Run any Ansible playbook from ansible/playbooks/"
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
   echo "  clear-ssh-maps                 Clear SSH control sockets and connections for VMs"
   echo "  load_secrets                   Load and display secrets from SOPS configuration"
@@ -1160,6 +1161,61 @@ case "$COMMAND" in
     echo -e "${BLUE}  1. Get cluster access: cpc get-kubeconfig${ENDCOLOR}"
     echo -e "${BLUE}  2. Install addons: cpc upgrade-addons${ENDCOLOR}"
     echo -e "${BLUE}  3. Verify cluster: kubectl get nodes -o wide${ENDCOLOR}"
+    ;;
+
+  run-playbook)
+    if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
+      echo "Usage: cpc run-playbook <playbook_name> [ansible_options...]"
+      echo ""
+      echo "Run any Ansible playbook from the ansible/playbooks/ directory."
+      echo ""
+      echo "Arguments:"
+      echo "  <playbook_name>     Name of the playbook (with or without .yml extension)"
+      echo "  [ansible_options]   Additional ansible-playbook options (optional)"
+      echo ""
+      echo "Examples:"
+      echo "  cpc run-playbook install_kubernetes_cluster"
+      echo "  cpc run-playbook pb_run_command -e 'shell_command=\"uptime\"'"
+      echo "  cpc run-playbook validate_cluster -l control_plane"
+      echo "  cpc run-playbook configure_coredns_local_domains --check"
+      echo ""
+      echo "Available playbooks:"
+      if [[ -d "$REPO_PATH/ansible/playbooks" ]]; then
+        ls -1 "$REPO_PATH/ansible/playbooks"/*.yml 2>/dev/null | xargs -I {} basename {} .yml | sed 's/^/  /'
+      else
+        echo "  (Unable to list - ansible/playbooks directory not found)"
+      fi
+      echo ""
+      echo "The command automatically:"
+      echo "  - Uses the correct inventory (tofu_inventory.py)"
+      echo "  - Sets current cluster context and kubernetes version"
+      echo "  - Configures SSH options for seamless connection"
+      exit 0
+    fi
+
+    # Get playbook name and add .yml extension if not present
+    playbook_name="$1"
+    shift
+    if [[ "$playbook_name" != *.yml ]]; then
+      playbook_name="${playbook_name}.yml"
+    fi
+
+    # Check if playbook exists
+    if [[ ! -f "$REPO_PATH/ansible/playbooks/$playbook_name" ]]; then
+      echo -e "${RED}Error: Playbook '$playbook_name' not found in ansible/playbooks/${ENDCOLOR}" >&2
+      echo -e "${YELLOW}Available playbooks:${ENDCOLOR}" >&2
+      if [[ -d "$REPO_PATH/ansible/playbooks" ]]; then
+        ls -1 "$REPO_PATH/ansible/playbooks"/*.yml 2>/dev/null | xargs -I {} basename {} | sed 's/^/  /' >&2
+      fi
+      exit 1
+    fi
+
+    echo -e "${BLUE}Running playbook: $playbook_name${ENDCOLOR}"
+    if ! run_ansible_playbook "$playbook_name" "$@"; then
+      echo -e "${RED}Playbook execution failed!${ENDCOLOR}" >&2
+      exit 1
+    fi
+    echo -e "${GREEN}Playbook '$playbook_name' completed successfully!${ENDCOLOR}"
     ;;
 
   clear-ssh-hosts)

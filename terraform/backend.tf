@@ -5,7 +5,7 @@
 terraform {
   backend "s3" { # Example: Using S3 backend
     bucket         = "mykthw-tfstate" # Replace with your S3 bucket name
-    key            = "proxmox/minio-vm.tfstate" # Dynamically set path based on environment
+    key            = "proxmox/minio-vm.tfstate" # Terraform automatically adds env:/<workspace>/ prefix
     region         = "us-east-1"                        # Replace with your S3 bucket region
     endpoint       = "https://s3.minio.bevz.net"
     skip_credentials_validation = true

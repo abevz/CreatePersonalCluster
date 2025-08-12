@@ -5,6 +5,7 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
+    "k8s133" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "k8s129" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "debian"        = var.pm_template_debian_id
     "ubuntu"        = var.pm_template_ubuntu_id
@@ -18,6 +19,7 @@ locals {
   # Define a map for release letters based on the OS type (derived from workspace name)
   # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
   release_letters_map = {
+    "k8s133" = "j"  # Auto-added by clone-workspace
     "k8s129" = "k"  # Auto-added by clone-workspace
     "debian"        = "d"
     "ubuntu"        = "u"
@@ -38,6 +40,7 @@ locals {
 
   # VM ID ranges per OS type
   vm_id_ranges = {
+    "k8s133" = 610  # Auto-added by clone-workspace
     "k8s129" = 610  # Auto-added by clone-workspace
     "debian"        = 200
     "ubuntu"        = 300
