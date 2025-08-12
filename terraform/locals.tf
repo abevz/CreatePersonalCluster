@@ -12,7 +12,6 @@ locals {
     "rocky"         = var.pm_template_rocky_id
     "suse"          = var.pm_template_suse_id
     "test-workspace" = var.pm_template_ubuntu_id  # Use Ubuntu template for test-workspace
-    "k8s129"        = var.pm_template_ubuntu_id   # Use Ubuntu template for k8s129
     # Add other OS types and their corresponding template IDs as needed
   }
 
@@ -26,7 +25,6 @@ locals {
     "rocky"         = "r"
     "suse"          = "s"
     "test-workspace" = "t"   # Use 't' for test-workspace
-    "k8s129"        = "k"    # Use 'k' for k8s129
     # Ensure there are entries here for all your expected workspace names
   }
 
@@ -41,13 +39,12 @@ locals {
   # VM ID ranges per OS type
   vm_id_ranges = {
     "k8s133" = 610  # Auto-added by clone-workspace
-    "k8s129" = 610  # Auto-added by clone-workspace
+    "k8s129" = 700  # Auto-added by clone-workspace
     "debian"        = 200
     "ubuntu"        = 300
     "rocky"         = 400
     "suse"          = 500
     "test-workspace" = 600  # Fixed: Use 600 range instead of full VM ID
-    "k8s129"        = 700   # Use 700 range for k8s129
   }
 
   # Base configuration for node types, replacing old local.k8s_nodes
