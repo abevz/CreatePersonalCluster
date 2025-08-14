@@ -29,6 +29,7 @@ Welcome to the comprehensive documentation for the **Kubernetes Cluster Automati
 ## 📚 CPC Tool Documentation
 
 ### Command Reference & Usage
+- **[CPC Commands Reference](cpc_commands_reference.md)** 📋 **UPDATED** - Complete command reference with current structure
 - **[CPC Commands Comparison](cpc_commands_comparison.md)** 📊 - `run-ansible` vs `run-command` comparison
 - **[CPC Template Variables Guide](cpc_template_variables_guide.md)** - Configuration variables reference
 - **[Hostname Generation System](hostname_generation_system.md)** - VM hostname generation and RELEASE_LETTER
@@ -68,6 +69,8 @@ Welcome to the comprehensive documentation for the **Kubernetes Cluster Automati
 - **[Final Upgrade Addons Report](final_upgrade_addons_report.md)** - Addon upgrade results
 
 ### Technical Reports
+- **[Documentation Status Report](documentation_status_report.md)** 📊 **NEW** - Complete documentation status overview
+- **[Documentation Update Report](documentation_update_report.md)** 📝 **NEW** - Command reference documentation updates
 - **[Template Status Update](template_status_update.md)** - VM template development
 - **[Hostname Configuration Update](hostname_configuration_update.md)** - Hostname setup changes
 

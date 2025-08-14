@@ -300,6 +300,59 @@ run_ansible_playbook() {
   fi
 
   echo -e "${BLUE}Running: ${ansible_cmd_array[*]}${ENDCOLOR}"
+  
+  # Update inventory cache before running ansible
+  echo -e "${YELLOW}Updating inventory cache...${ENDCOLOR}"
+  local repo_root
+  repo_root=$(get_repo_path)
+  local cache_file="$repo_root/.ansible_inventory_cache.json"
+  local terraform_dir="$repo_root/terraform"
+  
+  if [ -d "$terraform_dir" ]; then
+    pushd "$terraform_dir" > /dev/null || true
+    
+    local cluster_summary
+    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null | jq -r '.value // empty')
+    
+    if [ -n "$cluster_summary" ]; then
+      # Generate inventory from cluster_summary
+      local inventory_json
+      inventory_json=$(echo "$cluster_summary" | jq '{
+        "_meta": {
+          "hostvars": (
+            to_entries | map({
+              key: .value.IP,
+              value: {
+                "ansible_host": .value.IP,
+                "node_name": .key,
+                "hostname": .value.hostname,
+                "vm_id": .value.VM_ID,
+                "k8s_role": (if (.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            }) | from_entries
+          )
+        },
+        "all": {
+          "children": ["control_plane", "workers"]
+        },
+        "control_plane": {
+          "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]]
+        },
+        "workers": {
+          "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]]
+        }
+      }')
+      
+      # Write to cache file
+      echo "$inventory_json" > "$cache_file"
+      echo -e "${GREEN}Inventory cache updated${ENDCOLOR}"
+    else
+      echo -e "${YELLOW}Warning: Could not get cluster_summary from terraform, using existing cache${ENDCOLOR}"
+    fi
+    
+    popd > /dev/null || true
+  fi
+  
   "${ansible_cmd_array[@]}"
   local exit_code=$?
 
@@ -322,32 +375,40 @@ display_usage() {
   echo "  clone-workspace <src> <dst>    Clone a workspace environment to create a new one."
   echo "  delete-workspace <n>           Delete a workspace environment."
   echo "  template                       Creates a VM template for Kubernetes"
-  echo "  bootstrap                      Bootstrap a complete Kubernetes cluster on deployed VMs"
   echo "  run-playbook <playbook>        Run any Ansible playbook from ansible/playbooks/"
+  echo "  run-command <target> \"<cmd>\"   Run a shell command on target host(s) or group."
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
   echo "  clear-ssh-maps                 Clear SSH control sockets and connections for VMs"
   echo "  load_secrets                   Load and display secrets from SOPS configuration"
-  echo "  update-pihole <action>         Manage Pi-hole DNS records. Action can be 'add' or 'unregister-dns'." # Changed
+  echo "  dns-pihole <action>            Manage Pi-hole DNS records. Action can be 'add' or 'unregister-dns'."
   echo "  generate-hostnames             Generate hostname configurations for VMs in Proxmox"
   echo "  scripts/<script_name>          Run any script from the scripts directory"
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
+  echo "  cluster-info                   Show simplified cluster information (VM_ID, hostname, IP)."
+  echo ""
+  echo "VM Management:"
+  echo "  add-vm                         Interactively add a new VM (worker or control plane)."
+  echo "  remove-vm                      Interactively remove a VM and update configuration."
   echo "  start-vms                      Start all VMs in the current context."
   echo "  stop-vms                       Stop all VMs in the current context."
+  echo "  vmctl                          (Placeholder) Suggests using Tofu for VM control."
   echo ""
+  echo "Kubernetes Management:"
+  echo "  bootstrap                      Bootstrap a complete Kubernetes cluster on deployed VMs"
   echo "  get-kubeconfig                 Retrieve and merge Kubernetes cluster config into local kubeconfig."
+  echo "  prepare-node <node>            Install Kubernetes components on a new VM before joining cluster."
+  echo "  update-inventory               Update Ansible inventory cache from current cluster state."
   echo "  add-nodes                      Add new worker nodes to the cluster."
+  echo "  remove-nodes                   Remove nodes from the Kubernetes cluster."
   echo "  drain-node <node_name>         Drain workloads from a node."
-  echo "  delete-node <node_name>        Delete a node from the Kubernetes cluster."
   echo "  upgrade-node <node_name>       Upgrade Kubernetes on a specific node."
   echo "  reset-node <node_name>         Reset Kubernetes on a specific node."
   echo "  reset-all-nodes                Reset Kubernetes on all nodes in the current context."
   echo "  upgrade-addons                 Install/upgrade cluster addons with interactive menu (CNI, MetalLB, cert-manager, ArgoCD, etc.)."
   echo "  configure-coredns              Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
   echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
-  echo "  vmctl                          (Placeholder) Suggests using Tofu for VM control." # Changed from Terraform
-  echo "  run-command <target> \"<cmd>\"   Run a shell command on target host(s) or group."
   echo ""
-  echo "Use 'cpc <command> --help' for more details on a specific command." # Changed from ccr
+  echo "Use 'cpc <command> --help' for more details on a specific command."
 }
 
 # --- Main Script Logic ---
@@ -605,6 +666,397 @@ case "$COMMAND" in
     echo -e "${GREEN}Kubeconfig setup completed for context: $context_name${ENDCOLOR}"
     ;;
 
+  add-vm)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc add-vm"
+      echo ""
+      echo "Interactively add a new VM and update configuration."
+      echo "This command will:"
+      echo "1. Ask for node type (worker or control plane)"
+      echo "2. Generate a unique node name"
+      echo "3. Update Terraform configuration"
+      echo "4. Create the VM"
+      echo ""
+      echo "Note: To join to Kubernetes after VM creation, use:"
+      echo "  ./cpc add-nodes --target-hosts \"<node-name>\" --node-type \"<type>\""
+      exit 0
+    fi
+
+    echo -e "${BLUE}=== Interactive VM Addition ===${ENDCOLOR}"
+    echo ""
+    
+    # Get current context
+    current_ctx=$(get_current_cluster_context)
+    echo -e "${BLUE}Current cluster context: $current_ctx${ENDCOLOR}"
+    
+    # Ask for node type
+    echo ""
+    echo "Select node type:"
+    echo "1) Worker node"
+    echo "2) Control plane node"
+    echo ""
+    read -p "Enter your choice (1-2): " node_type_choice
+    
+    case $node_type_choice in
+      1)
+        node_type="worker"
+        node_prefix="worker"
+        ;;
+      2)
+        node_type="controlplane"
+        node_prefix="controlplane"
+        ;;
+      *)
+        echo -e "${RED}Invalid choice. Exiting.${ENDCOLOR}"
+        exit 1
+        ;;
+    esac
+    
+    # Find next available worker/controlplane number
+    env_file="$REPO_PATH/envs/$current_ctx.env"
+    current_additional=""
+    if [ -f "$env_file" ]; then
+      # Get all ADDITIONAL_WORKERS values and combine them
+      current_additional=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' | paste -sd ',' | tr -d '\n' || echo "")
+      # Remove empty values and clean up
+      current_additional=$(echo "$current_additional" | sed 's/,\+/,/g' | sed 's/^,\|,$//g' | sed 's/,,\+/,/g')
+      if [ "$current_additional" = "" ]; then
+        current_additional=""
+      fi
+    fi
+    
+    # Determine next node number
+    if [ "$node_type" = "worker" ]; then
+      # Count existing workers (worker1, worker2 are base, so start from worker3)
+      next_num=3
+      while true; do
+        # Check all formats: worker3, worker-3
+        if [[ "$current_additional" == *"worker-$next_num"* || "$current_additional" == *"worker$next_num"* ]]; then
+          ((next_num++))
+        else
+          break
+        fi
+      done
+      new_node_name="worker-$next_num"
+    else
+      # Control plane logic
+      current_additional_cp=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      # Count existing control planes (controlplane is base, so start from controlplane2)
+      next_num=2
+      while true; do
+        if [[ "$current_additional_cp" == *"controlplane-$next_num"* || "$current_additional_cp" == *"controlplane$next_num"* ]]; then
+          ((next_num++))
+        else
+          break
+        fi
+      done
+      new_node_name="controlplane-$next_num"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}New node will be: $new_node_name (type: $node_type)${ENDCOLOR}"
+    echo ""
+    read -p "Continue? (y/N): " confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+      echo "Cancelled."
+      exit 0
+    fi
+    
+    # Update environment file
+    if [ -f "$env_file" ]; then
+      if [ "$node_type" = "worker" ]; then
+        # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
+        sed -i '/^#\?ADDITIONAL_WORKERS=/d' "$env_file"
+        
+        if [ -z "$current_additional" ]; then
+          echo "ADDITIONAL_WORKERS=\"$new_node_name\"" >> "$env_file"
+        else
+          # Add to existing list
+          new_additional="$current_additional,$new_node_name"
+          echo "ADDITIONAL_WORKERS=\"$new_additional\"" >> "$env_file"
+        fi
+      else
+        # Control plane
+        current_additional_cp=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+        if [ -z "$current_additional_cp" ]; then
+          # Check if line exists
+          if grep -q "^ADDITIONAL_CONTROLPLANES=" "$env_file"; then
+            sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_node_name\"/" "$env_file"
+          else
+            echo "ADDITIONAL_CONTROLPLANES=\"$new_node_name\"" >> "$env_file"
+          fi
+        else
+          # Add to existing list
+          new_additional_cp="$current_additional_cp,$new_node_name"
+          sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_additional_cp\"/" "$env_file"
+        fi
+      fi
+      echo -e "${GREEN}Updated $env_file with $new_node_name${ENDCOLOR}"
+    else
+      echo -e "${RED}Environment file not found: $env_file${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Apply Terraform changes
+    echo -e "${BLUE}Creating VM with Terraform...${ENDCOLOR}"
+    if ! ./cpc generate-hostnames; then
+      echo -e "${RED}Failed to generate hostnames${ENDCOLOR}"
+      exit 1
+    fi
+    
+    if ! ./cpc deploy apply -auto-approve; then
+      echo -e "${RED}Failed to apply Terraform changes${ENDCOLOR}"
+      exit 1
+    fi
+    
+    echo -e "${GREEN}Successfully created VM $new_node_name!${ENDCOLOR}"
+    echo -e "${BLUE}To join the node to Kubernetes cluster, use:${ENDCOLOR}"
+    echo -e "${YELLOW}  ./cpc add-nodes --target-hosts \"$new_node_name\" --node-type \"$node_type\"${ENDCOLOR}"
+    ;;
+
+  remove-vm)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc remove-vm"
+      echo ""
+      echo "Interactively remove a VM and update configuration."
+      echo "This command will:"
+      echo "1. Show available additional nodes"
+      echo "2. Destroy the VM with Terraform"
+      echo "3. Update the configuration file"
+      echo ""
+      echo "Note: To remove from Kubernetes first, use:"
+      echo "  ./cpc remove-nodes --target-hosts \"<node-name>\""
+      exit 0
+    fi
+
+    echo -e "${BLUE}=== Interactive VM Removal ===${ENDCOLOR}"
+    echo ""
+    
+    # Get current context
+    current_ctx=$(get_current_cluster_context)
+    echo -e "${BLUE}Current cluster context: $current_ctx${ENDCOLOR}"
+    
+    # Get additional workers and control planes
+    env_file="$REPO_PATH/envs/$current_ctx.env"
+    current_additional_workers=""
+    current_additional_controlplanes=""
+    if [ -f "$env_file" ]; then
+      # Get all ADDITIONAL_WORKERS values and combine them
+      current_additional_workers=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' | paste -sd ',' | tr -d '\n' || echo "")
+      # Remove empty values and clean up
+      current_additional_workers=$(echo "$current_additional_workers" | sed 's/,\+/,/g' | sed 's/^,\|,$//g' | sed 's/,,\+/,/g')
+      if [ "$current_additional_workers" = "" ]; then
+        current_additional_workers=""
+      fi
+      
+      # Get all ADDITIONAL_CONTROLPLANES values and combine them
+      current_additional_controlplanes=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' | paste -sd ',' | tr -d '\n' || echo "")
+      # Remove empty values and clean up
+      current_additional_controlplanes=$(echo "$current_additional_controlplanes" | sed 's/,\+/,/g' | sed 's/^,\|,$//g' | sed 's/,,\+/,/g')
+      if [ "$current_additional_controlplanes" = "" ]; then
+        current_additional_controlplanes=""
+      fi
+    fi
+    
+    # Combine all additional nodes
+    all_nodes=()
+    if [ -n "$current_additional_workers" ]; then
+      IFS=',' read -ra worker_nodes <<< "$current_additional_workers"
+      for node in "${worker_nodes[@]}"; do
+        all_nodes+=("$node (worker)")
+      done
+    fi
+    if [ -n "$current_additional_controlplanes" ]; then
+      IFS=',' read -ra cp_nodes <<< "$current_additional_controlplanes"
+      for node in "${cp_nodes[@]}"; do
+        all_nodes+=("$node (control plane)")
+      done
+    fi
+    
+    if [ ${#all_nodes[@]} -eq 0 ]; then
+      echo -e "${YELLOW}No additional nodes found to remove.${ENDCOLOR}"
+      echo -e "${YELLOW}Base nodes (controlplane, worker1, worker2) cannot be removed with this command.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Show available nodes
+    echo ""
+    echo -e "${BLUE}Available nodes to remove:${ENDCOLOR}"
+    for i in "${!all_nodes[@]}"; do
+      echo "$((i+1)). ${all_nodes[i]}"
+    done
+    
+    echo
+    read -p "Enter the number of the node to remove: " choice
+    
+    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#all_nodes[@]} ]; then
+      echo -e "${RED}Invalid choice.${ENDCOLOR}"
+      exit 1
+    fi
+    
+    selected_node="${all_nodes[$((choice-1))]}"
+    # Extract just the node name (before the parentheses)
+    node_name="${selected_node%% (*}"
+    # Extract node type (between parentheses)
+    node_type="${selected_node##*\(}"
+    node_type="${node_type%\)*}"
+    
+    echo ""
+    echo -e "${RED}This will remove node: $node_name (type: $node_type)${ENDCOLOR}"
+    echo -e "${RED}The VM will be destroyed and cannot be recovered!${ENDCOLOR}"
+    echo ""
+    read -p "Are you sure? (y/N): " confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+      echo "Cancelled."
+      exit 0
+    fi
+    
+    # Remove from appropriate variable
+    if [ "$node_type" = "worker" ]; then
+      # Remove from ADDITIONAL_WORKERS
+      echo -e "${BLUE}DEBUG: current_additional_workers='$current_additional_workers'${ENDCOLOR}"
+      echo -e "${BLUE}DEBUG: node_name='$node_name'${ENDCOLOR}"
+      
+      # Extract numeric part of node name (e.g., worker3 -> 3)
+      node_number=""
+      if [[ "$node_name" =~ ^worker-([0-9]+)$ ]]; then
+        node_number="${BASH_REMATCH[1]}"
+        echo -e "${BLUE}DEBUG: detected new format node name with number $node_number${ENDCOLOR}"
+      elif [[ "$node_name" =~ ^worker([0-9]+)$ ]]; then
+        node_number="${BASH_REMATCH[1]}"
+        echo -e "${BLUE}DEBUG: detected legacy format node name with number $node_number${ENDCOLOR}"
+      fi
+      
+      if [ -n "$current_additional_workers" ]; then
+        IFS=',' read -ra worker_array <<< "$current_additional_workers"
+        echo -e "${BLUE}DEBUG: worker_array=(${worker_array[@]})${ENDCOLOR}"
+        
+        new_workers=()
+        for worker in "${worker_array[@]}"; do
+          echo -e "${BLUE}DEBUG: checking worker='$worker' vs node_name='$node_name'${ENDCOLOR}"
+          
+          # Check for both old and new format matches
+          if [ "$worker" != "$node_name" ]; then
+            # If we have a node number, also check the alternate format
+            if [ -n "$node_number" ]; then
+              # Check if worker is either worker3 or worker-3 when node_name is the other format
+              if [ "$worker" != "worker$node_number" ] && [ "$worker" != "worker-$node_number" ]; then
+                new_workers+=("$worker")
+                echo -e "${BLUE}DEBUG: keeping worker='$worker'${ENDCOLOR}"
+              else
+                echo -e "${BLUE}DEBUG: removing worker='$worker' (matched by number)${ENDCOLOR}"
+              fi
+            else
+              # Standard exact name check
+              new_workers+=("$worker")
+              echo -e "${BLUE}DEBUG: keeping worker='$worker'${ENDCOLOR}"
+            fi
+          else
+            echo -e "${BLUE}DEBUG: removing worker='$worker'${ENDCOLOR}"
+          fi
+        done
+        
+        echo -e "${BLUE}DEBUG: new_workers=(${new_workers[@]})${ENDCOLOR}"
+        echo -e "${BLUE}DEBUG: new_workers length=${#new_workers[@]}${ENDCOLOR}"
+        
+        # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
+        sed -i '/^#\?ADDITIONAL_WORKERS=/d' "$env_file"
+        
+        if [ ${#new_workers[@]} -eq 0 ]; then
+          echo 'ADDITIONAL_WORKERS=""' >> "$env_file"
+        else
+          new_additional_workers=$(IFS=','; echo "${new_workers[*]}")
+          echo "ADDITIONAL_WORKERS=\"$new_additional_workers\"" >> "$env_file"
+        fi
+      fi
+    else
+      # Remove from ADDITIONAL_CONTROLPLANES
+      
+      # Extract numeric part of node name (e.g., controlplane2 -> 2)
+      node_number=""
+      if [[ "$node_name" =~ ^controlplane-([0-9]+)$ ]]; then
+        node_number="${BASH_REMATCH[1]}"
+        echo -e "${BLUE}DEBUG: detected new format controlplane name with number $node_number${ENDCOLOR}"
+      elif [[ "$node_name" =~ ^controlplane([0-9]+)$ ]]; then
+        node_number="${BASH_REMATCH[1]}"
+        echo -e "${BLUE}DEBUG: detected legacy format controlplane name with number $node_number${ENDCOLOR}"
+      fi
+      
+      if [ -n "$current_additional_controlplanes" ]; then
+        IFS=',' read -ra cp_array <<< "$current_additional_controlplanes"
+        echo -e "${BLUE}DEBUG: cp_array=(${cp_array[@]})${ENDCOLOR}"
+        
+        new_cps=()
+        for cp in "${cp_array[@]}"; do
+          echo -e "${BLUE}DEBUG: checking cp='$cp' vs node_name='$node_name'${ENDCOLOR}"
+          
+          # Check for both old and new format matches
+          if [ "$cp" != "$node_name" ]; then
+            # If we have a node number, also check the alternate format
+            if [ -n "$node_number" ]; then
+              # Check if cp is either controlplane2 or controlplane-2 when node_name is the other format
+              if [ "$cp" != "controlplane$node_number" ] && [ "$cp" != "controlplane-$node_number" ]; then
+                new_cps+=("$cp")
+                echo -e "${BLUE}DEBUG: keeping cp='$cp'${ENDCOLOR}"
+              else
+                echo -e "${BLUE}DEBUG: removing cp='$cp' (matched by number)${ENDCOLOR}"
+              fi
+            else
+              # Standard exact name check
+              new_cps+=("$cp")
+              echo -e "${BLUE}DEBUG: keeping cp='$cp'${ENDCOLOR}"
+            fi
+          else
+            echo -e "${BLUE}DEBUG: removing cp='$cp'${ENDCOLOR}"
+          fi
+        done
+        
+        # Remove all existing ADDITIONAL_CONTROLPLANES lines (including commented ones)
+        sed -i '/^#\?ADDITIONAL_CONTROLPLANES=/d' "$env_file"
+        
+        if [ ${#new_cps[@]} -eq 0 ]; then
+          echo 'ADDITIONAL_CONTROLPLANES=""' >> "$env_file"
+        else
+          new_additional_controlplanes=$(IFS=','; echo "${new_cps[*]}")
+          echo "ADDITIONAL_CONTROLPLANES=\"$new_additional_controlplanes\"" >> "$env_file"
+        fi
+      fi
+    fi
+    
+    echo -e "${GREEN}Updated configuration file${ENDCOLOR}"
+    
+    # Get VM info before destruction to verify removal
+    echo -e "${BLUE}Getting current VM information...${ENDCOLOR}"
+    vm_count_before=$(./cpc deploy output -json cluster_summary 2>/dev/null | jq '. | length' 2>/dev/null || echo "unknown")
+    
+    # Destroy VM with Terraform
+    echo -e "${BLUE}Destroying VM with Terraform...${ENDCOLOR}"
+    if ! ./cpc deploy apply -auto-approve; then
+      echo -e "${RED}Failed to apply Terraform changes${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Verify VM was actually removed
+    echo -e "${BLUE}Verifying VM removal...${ENDCOLOR}"
+    vm_count_after=$(./cpc deploy output -json cluster_summary 2>/dev/null | jq '. | length' 2>/dev/null || echo "unknown")
+    
+    if [[ "$vm_count_before" != "unknown" && "$vm_count_after" != "unknown" && "$vm_count_after" -lt "$vm_count_before" ]]; then
+      echo -e "${GREEN}Successfully removed VM $node_name from infrastructure!${ENDCOLOR}"
+      echo -e "${GREEN}VM count reduced from $vm_count_before to $vm_count_after${ENDCOLOR}"
+    elif [[ "$vm_count_before" != "unknown" && "$vm_count_after" != "unknown" && "$vm_count_after" -eq "$vm_count_before" ]]; then
+      echo -e "${YELLOW}Warning: VM count unchanged ($vm_count_before). VM may not have been removed.${ENDCOLOR}"
+      echo -e "${YELLOW}This could be due to configuration caching. Try running:${ENDCOLOR}"
+      echo -e "${YELLOW}  ./cpc deploy apply -auto-approve${ENDCOLOR}"
+      echo -e "${YELLOW}to manually complete the removal.${ENDCOLOR}"
+    else
+      echo -e "${GREEN}VM removal completed (verification unavailable)${ENDCOLOR}"
+    fi
+    
+    echo -e "${BLUE}Note: If the node was part of Kubernetes cluster, you may need to manually clean up the cluster state.${ENDCOLOR}"
+    ;;
+
   ctx)
     if [ -z "$1" ]; then
       current_ctx=$(get_current_cluster_context)
@@ -737,19 +1189,20 @@ case "$COMMAND" in
     sed -i "/release_letters_map = {/a \    \"$destination_workspace\" = \"$release_letter\"  # Auto-added by clone-workspace" "$locals_tf"
     
     # Add VM ID range
-    # Find the highest current range
-    highest_range=0
+    # Find all existing ranges and generate a safe new one
+    used_ranges=()
     while read -r line; do
-      if [[ "$line" =~ [0-9]+ ]]; then
-        range=${BASH_REMATCH[0]}
-        if (( range > highest_range )); then
-          highest_range=$range
-        fi
+      if [[ "$line" =~ \"[^\"]+\"[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+        range=${BASH_REMATCH[1]}
+        used_ranges+=("$range")
       fi
-    done < <(grep "vm_id_ranges" -A 50 "$locals_tf" | grep -E '= [0-9]+')
+    done < <(grep -A 20 "vm_id_ranges = {" "$locals_tf" | grep -E '= [0-9]+')
     
-    # Calculate new range
-    new_range=$((highest_range + 10))
+    # Find a safe new range that doesn't conflict
+    new_range=700
+    while [[ " ${used_ranges[*]} " =~ " ${new_range} " ]]; do
+      new_range=$((new_range + 100))
+    done
     sed -i "/vm_id_ranges = {/a \    \"$destination_workspace\" = $new_range  # Auto-added by clone-workspace" "$locals_tf"
     
     echo -e "${BLUE}Updated locals.tf with new workspace entries${ENDCOLOR}"
@@ -1726,6 +2179,203 @@ case "$COMMAND" in
     run_ansible_playbook "pb_add_nodes.yml" -l "$target_hosts" -e "node_type=$node_type"
     ;;
 
+  prepare-node)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc prepare-node <hostname|IP>"
+      echo ""
+      echo "Install Kubernetes components (kubelet, kubeadm, kubectl, containerd) on a new VM"
+      echo "before joining it to the cluster. This prepares VMs created with 'add-vm' for cluster membership."
+      echo ""
+      echo "Arguments:"
+      echo "  <hostname|IP>  Target VM hostname or IP address"
+      echo ""
+      echo "Examples:"
+      echo "  cpc prepare-node wk3.bevz.net"
+      echo "  cpc prepare-node 10.10.10.112"
+      echo ""
+      echo "After preparation, use 'cpc add-nodes --target-hosts <hostname|IP>' to join the cluster."
+      exit 0
+    fi
+
+    if [[ $# -eq 0 ]]; then
+      echo -e "${RED}Error: hostname or IP address required${ENDCOLOR}" >&2
+      echo "Usage: cpc prepare-node <hostname|IP>"
+      echo "Use 'cpc prepare-node --help' for more information."
+      exit 1
+    fi
+
+    target_node="$1"
+    echo -e "${BLUE}Preparing node '$target_node' with Kubernetes components...${ENDCOLOR}"
+    echo -e "${BLUE}Installing kubelet, kubeadm, kubectl, and containerd...${ENDCOLOR}"
+    
+    run_ansible_playbook "install_kubernetes_cluster.yml" -l "$target_node"
+    
+    if [[ $? -eq 0 ]]; then
+      echo -e "${GREEN}Node '$target_node' successfully prepared!${ENDCOLOR}"
+      echo -e "${BLUE}Next step: Join to cluster with 'cpc add-nodes --target-hosts $target_node'${ENDCOLOR}"
+    else
+      echo -e "${RED}Failed to prepare node '$target_node'${ENDCOLOR}" >&2
+      exit 1
+    fi
+    ;;
+
+  update-inventory)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc update-inventory"
+      echo ""
+      echo "Update the Ansible inventory cache from current cluster state."
+      echo "This command fetches the latest cluster information and updates"
+      echo "the inventory cache file used by Ansible playbooks."
+      echo ""
+      echo "This is automatically called before Ansible operations, but can be"
+      echo "run manually to troubleshoot inventory issues."
+      exit 0
+    fi
+
+    echo -e "${BLUE}Updating Ansible inventory cache...${ENDCOLOR}"
+    
+    repo_root=$(get_repo_path)
+    cache_file="$repo_root/.ansible_inventory_cache.json"
+    terraform_dir="$repo_root/terraform"
+    
+    if [ ! -d "$terraform_dir" ]; then
+      echo -e "${RED}Error: terraform directory not found at $terraform_dir${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    # Export AWS credentials for terraform backend (needed for tofu output)
+    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+    # Load current cluster info using cluster-info (which handles credentials)
+    echo -e "${YELLOW}Getting cluster information...${ENDCOLOR}"
+    
+    # Get cluster info and extract only the JSON part (last line that starts with {)
+    cluster_info_output=$(./cpc cluster-info --format json 2>/dev/null)
+    cluster_summary=$(echo "$cluster_info_output" | grep '^{.*}$' | tail -1)
+    
+    if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
+      echo -e "${RED}Error: Could not get cluster information from terraform${ENDCOLOR}" >&2
+      echo -e "${BLUE}Make sure terraform is applied and cluster is running${ENDCOLOR}"
+      exit 1
+    fi
+    
+    if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
+      echo -e "${RED}Error: Could not get cluster information from terraform${ENDCOLOR}" >&2
+      echo -e "${BLUE}Make sure terraform is applied and cluster is running${ENDCOLOR}"
+      exit 1
+    fi
+    
+    # Generate inventory from cluster_summary
+    inventory_json=$(echo "$cluster_summary" | jq '{
+      "_meta": {
+        "hostvars": (
+          to_entries | reduce .[] as $item ({}; 
+            . + {
+              ($item.value.IP): {
+                "ansible_host": $item.value.IP,
+                "node_name": $item.key,
+                "hostname": $item.value.hostname,
+                "vm_id": $item.value.VM_ID,
+                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            } + {
+              ($item.value.hostname): {
+                "ansible_host": $item.value.IP,
+                "node_name": $item.key,
+                "hostname": $item.value.hostname,
+                "vm_id": $item.value.VM_ID,
+                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            }
+          )
+        )
+      },
+      "all": {
+        "children": ["control_plane", "workers"]
+      },
+      "control_plane": {
+        "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("controlplane")) | .value.hostname) | .[]]
+      },
+      "workers": {
+        "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("worker")) | .value.hostname) | .[]]
+      }
+    }')
+    
+    # Write to cache file
+    echo "$inventory_json" > "$cache_file"
+    
+    echo -e "${GREEN}Ansible inventory cache updated at $cache_file${ENDCOLOR}"
+    echo -e "${BLUE}Inventory contents:${ENDCOLOR}"
+    jq '.' "$cache_file"
+    ;;
+
+  remove-nodes)
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+      echo "Usage: cpc remove-nodes [--target-hosts <hosts>]"
+      echo "   or: cpc remove-nodes <single-host>"
+      echo ""
+      echo "Remove nodes from the Kubernetes cluster."
+      echo "This will drain the nodes and remove them from the cluster."
+      echo ""
+      echo "Options:"
+      echo "  --target-hosts <hosts>  Specify target hosts (comma-separated for multiple)"
+      echo "  <single-host>          Single hostname to remove (without --target-hosts)"
+      echo ""
+      echo "Examples:"
+      echo "  cpc remove-nodes worker3"
+      echo "  cpc remove-nodes --target-hosts \"worker3,worker4\""
+      echo ""
+      echo "Note: This only removes from Kubernetes cluster."
+      echo "Use 'cpc remove-vm' to destroy VMs."
+      exit 0
+    fi
+
+    # Handle single host argument (no flag)
+    if [[ $# -eq 1 && "$1" != --* ]]; then
+      target_hosts="$1"
+    else
+      # Parse command line arguments
+      target_hosts=""
+      
+      while [[ $# -gt 0 ]]; do
+        case $1 in
+          --target-hosts)
+            target_hosts="$2"
+            shift 2
+            ;;
+          *)
+            echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+            exit 1
+            ;;
+        esac
+      done
+    fi
+
+    if [ -z "$target_hosts" ]; then
+      echo -e "${RED}Error: --target-hosts is required${ENDCOLOR}" >&2
+      echo "Use: cpc remove-nodes --target-hosts \"<node-name>\""
+      exit 1
+    fi
+
+    echo -e "${BLUE}Removing nodes from the cluster: $target_hosts${ENDCOLOR}"
+    
+    # First drain the nodes
+    echo -e "${BLUE}Draining nodes...${ENDCOLOR}"
+    for host in $(echo "$target_hosts" | tr ',' ' '); do
+      echo -e "${BLUE}Draining node: $host${ENDCOLOR}"
+      run_ansible_playbook "pb_drain_node.yml" -e "node_to_drain=$host"
+    done
+    
+    # Then delete from cluster
+    echo -e "${BLUE}Deleting nodes from cluster...${ENDCOLOR}"
+    for host in $(echo "$target_hosts" | tr ',' ' '); do
+      echo -e "${BLUE}Deleting node: $host${ENDCOLOR}"
+      run_ansible_playbook "pb_delete_node.yml" -e "node_to_delete=$host"
+    done
+    ;;
+
   drain-node)
     if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
       echo "Usage: cpc drain-node <node_name> [--force] [--delete-emptydir-data]" # Changed from ccr
@@ -1735,16 +2385,6 @@ case "$COMMAND" in
     shift
     extra_cli_opts="$*" # Pass through any remaining options like --force
     run_ansible_playbook "pb_drain_node.yml" -e "node_to_drain=$node_name" -e "drain_options=$extra_cli_opts"
-    ;;
-
-  delete-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc delete-node <node_name> [--reset-node]" # Changed from ccr
-      exit 1
-    fi
-    node_name="$1"
-    reset_flag="${2:---no-reset-node}" # default to not resetting
-    run_ansible_playbook "pb_delete_node.yml" -e "node_to_delete=$node_name" -e "reset_after_delete=$reset_flag"
     ;;
 
   upgrade-node)
@@ -1791,11 +2431,20 @@ case "$COMMAND" in
 
     extra_vars="-e target_node=$node_name -e skip_drain=$skip_drain"
     if [ -n "$target_version" ]; then
-      extra_vars="$extra_vars -e target_k8s_version=$target_version"
+      # Split version into major.minor and patch parts if needed
+      if [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # Full version like 1.33.0
+        k8s_major_minor=$(echo "$target_version" | cut -d'.' -f1-2)
+        k8s_patch=$(echo "$target_version" | cut -d'.' -f3)
+        extra_vars="$extra_vars -e target_k8s_version=$k8s_major_minor -e kubernetes_patch_version=$k8s_patch"
+      else
+        # Just major.minor like 1.33
+        extra_vars="$extra_vars -e target_k8s_version=$target_version"
+      fi
     fi
 
     echo -e "${BLUE}Upgrading Kubernetes on node: $node_name${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_node.yml" -l "$node_name" -e "target_node=$node_name" -e "skip_drain=$skip_drain" $([ -n "$target_version" ] && echo "-e target_k8s_version=$target_version")
+    run_ansible_playbook "pb_upgrade_node.yml" -l "$node_name" $extra_vars
     ;;
 
   reset-node)
@@ -2006,9 +2655,9 @@ case "$COMMAND" in
     run_ansible_playbook "pb_run_command.yml" -l "$target" -e "command_to_run=$shell_cmd"
     ;;
 
-  update-pihole)
+  dns-pihole)
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ -z "$1" ]]; then # Added check for missing argument
-      echo "Usage: cpc update-pihole <action>" # Changed from ccr
+      echo "Usage: cpc dns-pihole <action>" # Changed from ccr
       echo "Manages Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs." # Changed
       echo "Actions: 'add', 'unregister-dns'." # Added
       echo "Requires 'sops' and 'curl' to be installed, and secrets.sops.yaml to be configured."
@@ -2028,6 +2677,124 @@ case "$COMMAND" in
       exit 1
     fi
     echo -e "${GREEN}Pi-hole DNS update script finished.${ENDCOLOR}"
+    ;;
+
+  cluster-info)
+    format="table"  # default format
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        -h|--help)
+          echo "Usage: cpc cluster-info [--format <format>]"
+          echo ""
+          echo "Display simplified cluster information showing only essential details:"
+          echo "  - VM_ID: Proxmox VM identifier"
+          echo "  - hostname: VM hostname (node name)"
+          echo "  - IP: VM IP address"
+          echo ""
+          echo "Options:"
+          echo "  --format <format>  Output format: 'table' (default) or 'json'"
+          echo ""
+          echo "This command provides a clean, concise view of your cluster infrastructure"
+          echo "without the detailed debug information from 'cpc deploy output'."
+          exit 0
+          ;;
+        --format)
+          format="$2"
+          shift 2
+          ;;
+        *)
+          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
+          exit 1
+          ;;
+      esac
+    done
+    
+    if [[ "$format" != "table" && "$format" != "json" ]]; then
+      echo -e "${RED}Error: Invalid format '$format'. Supported formats: table, json${ENDCOLOR}" >&2
+      exit 1
+    fi
+
+    current_ctx=$(get_current_cluster_context)
+    tf_dir="$REPO_PATH/terraform"
+
+    if [ "$format" != "json" ]; then
+      echo -e "${BLUE}Getting cluster information for context '$current_ctx'...${ENDCOLOR}"
+    fi
+
+    # Export AWS credentials for terraform backend
+    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+    # Load workspace environment variables
+    env_file="$REPO_PATH/envs/$current_ctx.env"
+    if [ -f "$env_file" ]; then
+      RELEASE_LETTER=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$RELEASE_LETTER" ]; then
+        export TF_VAR_release_letter="$RELEASE_LETTER"
+      fi
+      
+      ADDITIONAL_WORKERS=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$ADDITIONAL_WORKERS" ]; then
+        export TF_VAR_additional_workers="$ADDITIONAL_WORKERS"
+      fi
+      
+      ADDITIONAL_CONTROLPLANES=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
+        export TF_VAR_additional_controlplanes="$ADDITIONAL_CONTROLPLANES"
+      fi
+    fi
+
+    pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
+    
+    # Ensure we're in the correct workspace
+    if ! tofu workspace select "$current_ctx" &>/dev/null; then
+      echo -e "${RED}Failed to select Tofu workspace '$current_ctx'${ENDCOLOR}" >&2
+      popd > /dev/null
+      exit 1
+    fi
+
+    # Get the simplified cluster summary
+    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null)
+    if [ $? -eq 0 ] && [ "$cluster_summary" != "null" ]; then
+      if [ "$format" = "json" ]; then
+        # Output raw JSON - check if it has .value or is direct
+        if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
+          echo "$cluster_summary" | jq '.value'
+        else
+          echo "$cluster_summary"
+        fi
+      else
+        # Table format - handle both .value and direct JSON
+        local json_data
+        if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
+          json_data=$(echo "$cluster_summary" | jq '.value')
+        else
+          json_data="$cluster_summary"
+        fi
+        
+        echo ""
+        echo -e "${GREEN}=== Cluster Information ===${ENDCOLOR}"
+        echo ""
+        printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
+        printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
+        
+        # Parse JSON and display in a table format
+        echo "$json_data" | jq -r 'to_entries[] | "\(.key) \(.value.VM_ID) \(.value.hostname) \(.value.IP)"' | \
+        while read -r node vm_id hostname ip; do
+          printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
+        done
+        echo ""
+      fi
+    else
+      echo -e "${RED}Failed to get cluster summary. Make sure VMs are deployed.${ENDCOLOR}" >&2
+      popd > /dev/null
+      exit 1
+    fi
+
+    popd > /dev/null
     ;;
 
   deploy)
@@ -2066,6 +2833,18 @@ case "$COMMAND" in
       if [ -n "$RELEASE_LETTER" ]; then
         export TF_VAR_release_letter="$RELEASE_LETTER"
         echo -e "${BLUE}Using RELEASE_LETTER='$RELEASE_LETTER' from workspace environment file${ENDCOLOR}"
+      fi
+      
+      ADDITIONAL_WORKERS=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$ADDITIONAL_WORKERS" ]; then
+        export TF_VAR_additional_workers="$ADDITIONAL_WORKERS"
+        echo -e "${BLUE}Using ADDITIONAL_WORKERS='$ADDITIONAL_WORKERS' from workspace environment file${ENDCOLOR}"
+      fi
+      
+      ADDITIONAL_CONTROLPLANES=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
+        export TF_VAR_additional_controlplanes="$ADDITIONAL_CONTROLPLANES"
+        echo -e "${BLUE}Using ADDITIONAL_CONTROLPLANES='$ADDITIONAL_CONTROLPLANES' from workspace environment file${ENDCOLOR}"
       fi
     fi
 
@@ -2358,6 +3137,35 @@ case "$COMMAND" in
       echo -e "${RED}Error: Script not found at $script_path${ENDCOLOR}" >&2
       exit 1
     fi
+    ;;
+
+  # Legacy aliases for backward compatibility
+  add-node)
+    echo -e "${YELLOW}Warning: 'add-node' is deprecated. Use 'add-vm' instead.${ENDCOLOR}"
+    shift
+    set -- "add-vm" "$@"
+    exec "$0" "$@"
+    ;;
+
+  remove-node)
+    echo -e "${YELLOW}Warning: 'remove-node' is deprecated. Use 'remove-vm' instead.${ENDCOLOR}"
+    shift
+    set -- "remove-vm" "$@"
+    exec "$0" "$@"
+    ;;
+
+  update-pihole)
+    echo -e "${YELLOW}Warning: 'update-pihole' is deprecated. Use 'dns-pihole' instead.${ENDCOLOR}"
+    shift
+    set -- "dns-pihole" "$@"
+    exec "$0" "$@"
+    ;;
+
+  delete-node)
+    echo -e "${YELLOW}Warning: 'delete-node' is deprecated. Use 'remove-nodes' instead.${ENDCOLOR}"
+    # Pass all arguments as is to remove-nodes
+    set -- "remove-nodes" "$@"
+    exec "$0" "$@"
     ;;
 
   *)

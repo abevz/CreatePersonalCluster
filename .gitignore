@@ -4,3 +4,19 @@ terraform/secrets.sops.yaml
 # Auto-generated cloud-init snippet files
 terraform/snippets/node-*-userdata.yaml
 .venv
+
+# Backup files
+*.bak
+*.tmp
+*.temp
+*.swp
+*~
+
+# Cache files
+.ansible_inventory_cache.json
+.terraform
+.terraform.lock.hcl
+
+# Local configuration
+cpc.env
+secrets.sops.yaml

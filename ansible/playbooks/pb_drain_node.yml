@@ -1,7 +1,7 @@
 ---
 - name: Drain Node from Kubernetes Cluster
   hosts: localhost # Runs kubectl from the control machine (where ccr is run)
-  gather_facts: no
+  gather_facts: true
 
   vars:
     node_to_drain: "" # Expected to be passed via -e node_to_drain=nodename

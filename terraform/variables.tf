@@ -115,4 +115,16 @@ variable "vm_count" {
   default     = 1
 }
 
+variable "additional_workers" {
+  description = "Comma-separated list of additional worker node names to create (workspace-specific)"
+  type        = string
+  default     = ""
+}
+
+variable "additional_controlplanes" {
+  description = "Comma-separated list of additional control plane node names to create (workspace-specific)"
+  type        = string
+  default     = ""
+}
+
 

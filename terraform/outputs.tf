@@ -3,14 +3,14 @@ output "controlplane_vm_id" {
   value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-controlplane-1"].vm_id
 }
 
-output "worker0_vm_id" {
-  description = "ID of the worker0 VM"
-  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-worker0-1"].vm_id
-}
-
 output "worker1_vm_id" {
   description = "ID of the worker1 VM"
-  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-worker1-2"].vm_id
+  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-worker1-1"].vm_id
+}
+
+output "worker2_vm_id" {
+  description = "ID of the worker2 VM"
+  value       = proxmox_virtual_environment_vm.node["${terraform.workspace}-worker2-2"].vm_id
 }
 
 output "k8s_node_ips" {
@@ -87,4 +87,16 @@ output "debug_template_info" {
 output "debug_node_map_keys" {
   description = "All keys in the final_nodes_map"
   value = keys(local.final_nodes_map)
+}
+
+# Simple output with only VM_ID, node_name, and IP
+output "cluster_summary" {
+  description = "Simple cluster summary with VM_ID, hostname, and IP"
+  value = {
+    for k, v in proxmox_virtual_environment_vm.node : k => {
+      VM_ID = v.vm_id
+      hostname = v.name
+      IP = length(tolist(setsubtract(flatten(v.ipv4_addresses), ["127.0.0.1"]))) > 0 ? tolist(setsubtract(flatten(v.ipv4_addresses), ["127.0.0.1"]))[0] : "N/A"
+    }
+  }
 }

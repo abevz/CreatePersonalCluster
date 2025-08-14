@@ -2,9 +2,16 @@
 
 Complete documentation index for the **Kubernetes The Hard Way - CPC** project.
 
-## 🆕 **Recent Updates** (June 10, 2025)
+## 🆕 **Recent Updates** (August 14, 2025)
 
-### ✨ **CPC upgrade-addons Enhancement**
+### ✨ **Node Naming Convention Enhancement**
+- **NEW:** Explicit index node naming format (`worker-3` instead of `worker3`)
+- **BENEFIT:** Prevents unintended VM recreation when removing nodes
+- **BACKWARD COMPATIBLE:** Both formats are supported simultaneously
+- **RECOMMENDATION:** Use new format (`worker-N`) for all new nodes
+- **Documentation Added:** See [Node Naming Convention](node_naming_convention.md)
+
+### ✨ **CPC upgrade-addons Enhancement** (June 10, 2025)
 - **NEW:** Interactive menu interface for addon selection
 - **BEHAVIOR CHANGE:** `./cpc upgrade-addons` now shows a menu instead of installing all addons
 - **USAGE:** Use `./cpc upgrade-addons --addon all` for direct installation of all addons
@@ -66,6 +73,7 @@ my-kthw/
 - **[SUSE Template Completion](../docs/suse_template_completion.md)** - SUSE template system implementation
 - **[Hostname Configuration Update](../docs/hostname_configuration_update.md)** - VM hostname management
 - **[Template Status Update](../docs/template_status_update.md)** - Template system status
+- **[Node Naming Convention](../docs/node_naming_convention.md)** - VM node naming format and best practices
 
 ### 🔧 Troubleshooting
 - **[SSH Key Troubleshooting](../docs/ssh_key_troubleshooting.md)** - SSH authentication issues

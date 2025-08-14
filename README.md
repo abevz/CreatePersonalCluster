@@ -47,7 +47,23 @@ This project draws inspiration from [ClusterCreator](https://github.com/christen
 3. **Deploy infrastructure and bootstrap cluster**:
    ```bash
    ./cpc deploy apply                # Deploy VMs
-   ./cpc bootstrap                   # Bootstrap Kubernetes cluster
+      ./cpc bootstrap                   # Bootstrap Kubernetes cluster
+   ```
+
+3. **Install cluster addons**:
+   ```bash
+   ./cpc upgrade-addons              # Install/upgrade cluster components
+   ```
+
+4. **Scale your cluster**:
+   ```bash
+   ./cpc add-vm                      # Add new worker or control plane node
+   ./cpc remove-vm                   # Remove node from infrastructure
+   ```
+   
+   📝 **Note**: Worker nodes use the format `worker-N` (e.g., `worker-3`) for stable VM IDs. See [Node Naming Convention](docs/node_naming_convention.md).
+
+## Features
    ./cpc get-kubeconfig             # Get cluster access
    ```
 

@@ -13,6 +13,22 @@ CPC (Cluster Provisioning Control) now uses a modular approach to manage workspa
 - `rocky.env`: Rocky Linux-based workspace
 - `suse.env`: SUSE Linux-based workspace
 - `k8s129.env`: Specialized workspace for Kubernetes 1.29
+- `k8s133.env`: Specialized workspace for Kubernetes 1.33
+
+## Node Naming Convention
+
+When specifying additional worker or control plane nodes, you can use either:
+
+1. **Recommended Format** (explicit index): `worker-3`, `worker-4`, `controlplane-2`
+2. **Legacy Format**: `worker3`, `worker4`, `controlplane2`
+
+Example configuration in environment file:
+```
+ADDITIONAL_WORKERS="worker-3,worker-4,worker-5"
+ADDITIONAL_CONTROLPLANES="controlplane-2"
+```
+
+The explicit index format is recommended as it provides stable VM IDs and prevents unintended VM recreation when removing nodes. See [Node Naming Convention](../docs/node_naming_convention.md) for details.
 
 ## Creating New Workspaces
 

@@ -7,47 +7,63 @@ This document provides a detailed reference for all commands available in the CP
 | Command | Description | Example |
 |---------|-------------|---------|
 | `setup-cpc` | Initialize CPC and set repository path | `./cpc setup-cpc` |
-| `ctx` | Get or set cluster context (Tofu workspace) | `./cpc ctx ubuntu` |
-| `clone-workspace` | Clone a workspace environment to create a new one | `./cpc clone-workspace ubuntu k8s129` |
-| `delete-workspace` | Delete a workspace environment and its resources | `./cpc delete-workspace k8s129` |
-| `load_secrets` | Load secrets from SOPS configuration | `./cpc load_secrets` |
+| `ctx [<cluster_name>]` | Get or set the current cluster context (Tofu workspace) | `./cpc ctx ubuntu` |
+| `clone-workspace <src> <dst>` | Clone a workspace environment to create a new one | `./cpc clone-workspace ubuntu k8s129` |
+| `delete-workspace <n>` | Delete a workspace environment | `./cpc delete-workspace k8s129` |
+| `template` | Creates a VM template for Kubernetes | `./cpc template` |
+| `run-playbook <playbook>` | Run any Ansible playbook from ansible/playbooks/ | `./cpc run-playbook bootstrap.yml` |
+| `run-command <target> "<cmd>"` | Run a shell command on target host(s) or group | `./cpc run-command control_plane "kubectl get nodes"` |
+| `clear-ssh-hosts` | Clear VM IP addresses from ~/.ssh/known_hosts | `./cpc clear-ssh-hosts` |
+| `clear-ssh-maps` | Clear SSH control sockets and connections for VMs | `./cpc clear-ssh-maps` |
+| `load_secrets` | Load and display secrets from SOPS configuration | `./cpc load_secrets` |
+| `dns-pihole <action>` | Manage Pi-hole DNS records (add/unregister-dns) | `./cpc dns-pihole add` |
+| `generate-hostnames` | Generate hostname configurations for VMs in Proxmox | `./cpc generate-hostnames` |
+| `scripts/<script_name>` | Run any script from the scripts directory | `./cpc scripts/test.sh` |
+| `deploy <tofu_cmd> [opts]` | Run any 'tofu' command in context | `./cpc deploy apply` |
 
-## Infrastructure Management
+## VM Management
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `template` | Creates a VM template for Kubernetes | `./cpc template` |
-| `deploy` | Run any Tofu command in context | `./cpc deploy apply` |
+| `add-vm` | Interactively add a new VM (worker or control plane) | `./cpc add-vm` |
+| `remove-vm` | Interactively remove a VM and update configuration | `./cpc remove-vm` |
 | `start-vms` | Start all VMs in the current context | `./cpc start-vms` |
 | `stop-vms` | Stop all VMs in the current context | `./cpc stop-vms` |
+| `vmctl` | (Placeholder) Suggests using Tofu for VM control | `./cpc vmctl` |
 
-## Cluster Management
+## Kubernetes Management
 
 | Command | Description | Example |
 |---------|-------------|---------|
 | `bootstrap` | Bootstrap a complete Kubernetes cluster on deployed VMs | `./cpc bootstrap` |
-| `get-kubeconfig` | Retrieve and merge Kubernetes cluster config | `./cpc get-kubeconfig` |
+| `get-kubeconfig` | Retrieve and merge Kubernetes cluster config into local kubeconfig | `./cpc get-kubeconfig` |
 | `add-nodes` | Add new worker nodes to the cluster | `./cpc add-nodes` |
-| `upgrade-addons` | Install/upgrade cluster addons | `./cpc upgrade-addons` |
+| `remove-nodes` | Remove nodes from the Kubernetes cluster | `./cpc remove-nodes` |
+| `upgrade-addons` | Install/upgrade cluster addons with interactive menu | `./cpc upgrade-addons` |
+| `configure-coredns` | Configure CoreDNS to forward local domain queries to Pi-hole | `./cpc configure-coredns` |
 | `upgrade-k8s` | Upgrade Kubernetes control plane | `./cpc upgrade-k8s` |
-| `configure-coredns` | Configure CoreDNS for local domain queries | `./cpc configure-coredns` |
 
 ## Node Management
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `drain-node` | Drain workloads from a node | `./cpc drain-node worker-1` |
-| `delete-node` | Delete a node from the Kubernetes cluster | `./cpc delete-node worker-1` |
-| `upgrade-node` | Upgrade Kubernetes on a specific node | `./cpc upgrade-node worker-1` |
-| `reset-node` | Reset Kubernetes on a specific node | `./cpc reset-node worker-1` |
-| `reset-all-nodes` | Reset Kubernetes on all nodes | `./cpc reset-all-nodes` |
+| `drain-node <node_name>` | Drain workloads from a node | `./cpc drain-node worker-1` |
+| `upgrade-node <node_name>` | Upgrade Kubernetes on a specific node | `./cpc upgrade-node worker-1` |
+| `reset-node <node_name>` | Reset Kubernetes on a specific node | `./cpc reset-node worker-1` |
+| `reset-all-nodes` | Reset Kubernetes on all nodes in the current context | `./cpc reset-all-nodes` |
 
-## Remote Execution
+## Legacy Commands (Deprecated)
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `run-ansible` | Run Ansible playbook with proper inventory | `./cpc run-ansible playbooks/bootstrap.yml` |
-| `run-command` | Run shell command on target host(s) | `./cpc run-command control_plane "kubectl get nodes"` |
+These commands are deprecated but still work with warnings and automatic redirection:
+
+| Deprecated Command | Use Instead | Description |
+|-------------------|-------------|-------------|
+| `add-node` | `add-vm` | Legacy alias for adding VMs |
+| `remove-node` | `remove-vm` | Legacy alias for removing VMs |
+| `update-pihole` | `dns-pihole` | Legacy alias for Pi-hole DNS management |
+| `delete-node` | `remove-nodes` | Legacy alias for removing nodes from cluster |
+
+## Command Help
 
 ## Utility Commands
 
@@ -57,6 +73,15 @@ This document provides a detailed reference for all commands available in the CP
 | `clear-ssh-hosts` | Clear VM IPs from SSH known hosts | `./cpc clear-ssh-hosts` |
 | `clear-ssh-maps` | Clear SSH control sockets for VMs | `./cpc clear-ssh-maps` |
 | `generate-hostnames` | Generate hostname configs for VMs | `./cpc generate-hostnames` |
+
+## Node Naming Convention
+
+CPC supports two formats for node naming in the `ADDITIONAL_WORKERS` and `ADDITIONAL_CONTROLPLANES` variables:
+
+1. **Legacy Format**: Simple incremental names (`worker3`, `worker4`, `controlplane2`)
+2. **Recommended Format**: Explicit index names (`worker-3`, `worker-4`, `controlplane-2`)
+
+The explicit index format is recommended as it provides stable VM IDs and prevents unintended VM recreation when removing nodes. For more details, see [Node Naming Convention](node_naming_convention.md).
 
 ## Hostname Generation System
 
@@ -183,3 +208,42 @@ This command is **destructive** and will:
 Always ensure you have backups of any important data before running this command.
 
 This command complements the `clone-workspace` functionality and is part of the modular workspace system. For more details, see [Modular Workspace System](modular_workspace_system.md).
+
+## Command Help
+
+All commands support `--help` or `-h` for detailed usage information:
+
+```bash
+./cpc <command> --help
+```
+
+### Examples
+```bash
+./cpc bootstrap --help
+./cpc get-kubeconfig --help
+./cpc add-vm --help
+```
+
+## Command Categories Explanation
+
+### Core Commands
+Basic workspace and configuration management commands that are essential for initial setup and context management.
+
+### VM Management  
+Commands for managing virtual machine infrastructure, including creation, removal, and power management. These commands handle the underlying VM infrastructure without Kubernetes-specific operations.
+
+### Kubernetes Management
+Commands specifically for managing Kubernetes cluster operations, including bootstrapping, configuration, and cluster-level operations.
+
+### Node Management
+Commands for managing individual Kubernetes nodes, including lifecycle operations like draining, upgrading, and resetting specific nodes.
+
+## Getting Started
+
+1. **Initial Setup**: `./cpc setup-cpc`
+2. **Set Context**: `./cpc ctx <workspace_name>`
+3. **Create VMs**: `./cpc deploy apply`
+4. **Bootstrap Cluster**: `./cpc bootstrap`
+5. **Get Kubeconfig**: `./cpc get-kubeconfig`
+
+For detailed workflow information, see [Complete Workflow Guide](complete_workflow_guide.md).

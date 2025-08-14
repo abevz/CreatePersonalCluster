@@ -5,8 +5,8 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
+    "k8s129-test" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "k8s133" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
-    "k8s129" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "debian"        = var.pm_template_debian_id
     "ubuntu"        = var.pm_template_ubuntu_id
     "rocky"         = var.pm_template_rocky_id
@@ -18,8 +18,8 @@ locals {
   # Define a map for release letters based on the OS type (derived from workspace name)
   # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
   release_letters_map = {
+    "k8s129-test" = "k"  # Auto-added by clone-workspace
     "k8s133" = "j"  # Auto-added by clone-workspace
-    "k8s129" = "k"  # Auto-added by clone-workspace
     "debian"        = "d"
     "ubuntu"        = "u"
     "rocky"         = "r"
@@ -38,8 +38,8 @@ locals {
 
   # VM ID ranges per OS type
   vm_id_ranges = {
+    "k8s129-test" = 700  # Fixed: Use unique range for k8s129-test
     "k8s133" = 610  # Auto-added by clone-workspace
-    "k8s129" = 700  # Auto-added by clone-workspace
     "debian"        = 200
     "ubuntu"        = 300
     "rocky"         = 400
@@ -48,11 +48,64 @@ locals {
   }
 
   # Base configuration for node types, replacing old local.k8s_nodes
-  node_definitions = {
+  base_node_definitions = {
     controlplane = { role = "c", id_offset = 0, original_index = 1 }
-    worker0      = { role = "w", id_offset = 1, original_index = 1 }
-    worker1      = { role = "w", id_offset = 2, original_index = 2 }
+    worker1      = { role = "w", id_offset = 1, original_index = 1 }
+    worker2      = { role = "w", id_offset = 2, original_index = 2 }
   }
+
+  # Parse additional workers from environment variable
+  additional_workers_list = var.additional_workers != "" ? split(",", var.additional_workers) : []
+  
+  # Create additional worker definitions dynamically
+  # Extract node index from name (e.g., worker3 -> 3)
+  # If the name contains explicit index (e.g., worker:3), use that index
+  # Otherwise fallback to position-based index (3 + i)
+  additional_worker_definitions = {
+    for i, worker_name in local.additional_workers_list :
+    worker_name => {
+      role = "w"
+      # Extract index from name if it matches worker{NUMBER} pattern
+      node_index = can(regex("^worker(\\d+)$", worker_name)) ? tonumber(regex("^worker(\\d+)$", worker_name)[0]) : (
+        # If name has format worker-N, extract N
+        can(regex("^worker-(\\d+)$", worker_name)) ? tonumber(regex("^worker-(\\d+)$", worker_name)[0]) : (3 + i)
+      )
+      id_offset = 3 + (can(regex("^worker(\\d+)$", worker_name)) ? tonumber(regex("^worker(\\d+)$", worker_name)[0]) - 3 : (
+        can(regex("^worker-(\\d+)$", worker_name)) ? tonumber(regex("^worker-(\\d+)$", worker_name)[0]) - 3 : i
+      ))
+      original_index = 3 + (can(regex("^worker(\\d+)$", worker_name)) ? tonumber(regex("^worker(\\d+)$", worker_name)[0]) - 3 : (
+        can(regex("^worker-(\\d+)$", worker_name)) ? tonumber(regex("^worker-(\\d+)$", worker_name)[0]) - 3 : i
+      ))
+    }
+  }
+
+  # Parse additional control planes from environment variable
+  additional_controlplanes_list = var.additional_controlplanes != "" ? split(",", var.additional_controlplanes) : []
+  
+  # Create additional control plane definitions dynamically
+  # Extract node index from name (e.g., controlplane2 -> 2)
+  # If the name contains explicit index (e.g., controlplane:2), use that index
+  # Otherwise fallback to position-based index (2 + i)
+  additional_controlplane_definitions = {
+    for i, controlplane_name in local.additional_controlplanes_list :
+    controlplane_name => {
+      role = "c"
+      # Extract index from name if it matches controlplane{NUMBER} pattern
+      node_index = can(regex("^controlplane(\\d+)$", controlplane_name)) ? tonumber(regex("^controlplane(\\d+)$", controlplane_name)[0]) : (
+        # If name has format controlplane-N, extract N
+        can(regex("^controlplane-(\\d+)$", controlplane_name)) ? tonumber(regex("^controlplane-(\\d+)$", controlplane_name)[0]) : (2 + i)
+      )
+      id_offset = 10 + (can(regex("^controlplane(\\d+)$", controlplane_name)) ? tonumber(regex("^controlplane(\\d+)$", controlplane_name)[0]) - 2 : (
+        can(regex("^controlplane-(\\d+)$", controlplane_name)) ? tonumber(regex("^controlplane-(\\d+)$", controlplane_name)[0]) - 2 : i
+      ))
+      original_index = 2 + (can(regex("^controlplane(\\d+)$", controlplane_name)) ? tonumber(regex("^controlplane(\\d+)$", controlplane_name)[0]) - 2 : (
+        can(regex("^controlplane-(\\d+)$", controlplane_name)) ? tonumber(regex("^controlplane-(\\d+)$", controlplane_name)[0]) - 2 : i
+      ))
+    }
+  }
+
+  # Merge base, additional worker, and additional control plane definitions
+  node_definitions = merge(local.base_node_definitions, local.additional_worker_definitions, local.additional_controlplane_definitions)
 
   # Map of nodes for the current OS type, to be used by nodes.tf for_each
   final_nodes_map = {
