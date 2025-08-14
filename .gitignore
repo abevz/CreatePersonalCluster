@@ -20,3 +20,5 @@ terraform/snippets/node-*-userdata.yaml
 # Local configuration
 cpc.env
 secrets.sops.yaml
+terraform_state.json
+terraform/snippets/summary.txt

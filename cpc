@@ -1779,6 +1779,7 @@ case "$COMMAND" in
     
     # Collect all VM IPs to remove
     vm_ips_to_clear=()
+    vm_hostnames_to_clear=()
     
     if [ "$clear_all" = true ]; then
       echo -e "${BLUE}Collecting VM IPs from all contexts...${ENDCOLOR}"
@@ -1819,17 +1820,67 @@ case "$COMMAND" in
       fi
     fi
     
-    # Remove duplicates
+    # Now get hostnames from cluster-info
+    vm_hostnames_to_clear=()
+    
+    # Get cluster information to extract hostnames
+    echo -e "${BLUE}Fetching hostname information from cluster...${ENDCOLOR}"
+    cluster_info=$(get_cluster_info "json" 2>/dev/null)
+    
+    if [ -n "$cluster_info" ] && [ "$cluster_info" != "null" ]; then
+      # Extract hostnames from cluster info
+      while IFS= read -r hostname; do
+        if [ -n "$hostname" ]; then
+          vm_hostnames_to_clear+=("$hostname")
+        fi
+      done < <(echo "$cluster_info" | jq -r 'to_entries[] | .value.hostname')
+      
+      echo -e "${BLUE}  Found hostnames: ${vm_hostnames_to_clear[*]} ${ENDCOLOR}"
+    else
+      echo -e "${YELLOW}  Could not get hostnames from cluster info, using default naming pattern${ENDCOLOR}"
+      
+      # Add common hostname patterns based on current context
+      # Hardcoded hostnames for the common pattern used in the cluster
+      vm_hostnames_to_clear+=(
+        "ck1.bevz.net" "wk1.bevz.net" "wk2.bevz.net" "wk3.bevz.net"
+        "ck1" "wk1" "wk2" "wk3"
+      )
+      
+      echo -e "${BLUE}  Added default hostnames: ${vm_hostnames_to_clear[*]} ${ENDCOLOR}"
+    fi
+    
+    # Add short hostnames (without domain suffix)
+    short_hostnames=()
+    for hostname in "${vm_hostnames_to_clear[@]}"; do
+      short_name=$(echo "$hostname" | cut -d. -f1)
+      if [[ "$short_name" != "$hostname" ]]; then
+        short_hostnames+=("$short_name")
+      fi
+    done
+    
+    # Add short hostnames to the list
+    if [ ${#short_hostnames[@]} -gt 0 ]; then
+      vm_hostnames_to_clear+=("${short_hostnames[@]}")
+    fi
+    
+    # Remove duplicates from IPs and hostnames
     vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u))
+    vm_hostnames_to_clear=($(printf '%s\n' "${vm_hostnames_to_clear[@]}" | sort -u))
     
     if [ ${#vm_ips_to_clear[@]} -eq 0 ]; then
       echo -e "${YELLOW}No VM IP addresses found to clear.${ENDCOLOR}"
       exit 0
     fi
     
-    echo -e "${BLUE}VM IP addresses to clear from ~/.ssh/known_hosts:${ENDCOLOR}"
+    echo -e "${BLUE}VM entries to clear from ~/.ssh/known_hosts:${ENDCOLOR}"
+    echo -e "${BLUE}  IP addresses:${ENDCOLOR}"
     for ip in "${vm_ips_to_clear[@]}"; do
-      echo -e "${BLUE}  - $ip${ENDCOLOR}"
+      echo -e "${BLUE}    - $ip${ENDCOLOR}"
+    done
+    
+    echo -e "${BLUE}  Hostnames:${ENDCOLOR}"
+    for hostname in "${vm_hostnames_to_clear[@]}"; do
+      echo -e "${BLUE}    - $hostname${ENDCOLOR}"
     done
     
     if [ "$dry_run" = true ]; then
@@ -1852,11 +1903,25 @@ case "$COMMAND" in
     cp ~/.ssh/known_hosts "$backup_file"
     echo -e "${BLUE}Created backup: $backup_file${ENDCOLOR}"
     
-    # Remove entries for each IP
+    # Get hostnames for each IP using DNS lookup
+    declare -A ip_to_hostname
+    for ip in "${vm_ips_to_clear[@]}"; do
+      # Try to get hostname using reverse DNS lookup
+      hostname=$(getent hosts "$ip" | awk '{print $2}' 2>/dev/null || echo "")
+      if [ -n "$hostname" ]; then
+        ip_to_hostname["$ip"]=$hostname
+      fi
+    done
+    
+    # Remove entries for each IP and hostname
     removed_count=0
+    
+    # First process IPs
     for ip in "${vm_ips_to_clear[@]}"; do
       # Count entries before removal
       before_count=$(grep -c "^$ip " ~/.ssh/known_hosts 2>/dev/null || echo "0")
+      # Make sure before_count is a clean integer
+      before_count=$(echo "$before_count" | tr -d '\n\r')
       
       if [ "$before_count" -gt 0 ]; then
         # Remove entries for this IP
@@ -1864,14 +1929,92 @@ case "$COMMAND" in
         
         # Count entries after removal
         after_count=$(grep -c "^$ip " ~/.ssh/known_hosts 2>/dev/null || echo "0")
+        # Make sure after_count is a clean integer
+        after_count=$(echo "$after_count" | tr -d '\n\r')
         entries_removed=$((before_count - after_count))
         
         if [ $entries_removed -gt 0 ]; then
-          echo -e "${GREEN}  Removed $entries_removed entries for $ip${ENDCOLOR}"
+          echo -e "${GREEN}  Removed $entries_removed entries for IP $ip${ENDCOLOR}"
           removed_count=$((removed_count + entries_removed))
         fi
       else
-        echo -e "${BLUE}  No entries found for $ip${ENDCOLOR}"
+        echo -e "${BLUE}  No entries found for IP $ip${ENDCOLOR}"
+      fi
+    done
+    
+    # Then process hostnames - both from the cluster and from DNS lookups
+    all_hostnames=()
+    
+    # Add hostnames from cluster info if available
+    if [ ${#vm_hostnames_to_clear[@]} -gt 0 ]; then
+      for hostname in "${vm_hostnames_to_clear[@]}"; do
+        all_hostnames+=("$hostname")
+      done
+    fi
+    
+    # Add hostnames from DNS lookups
+    for ip in "${!ip_to_hostname[@]}"; do
+      hostname="${ip_to_hostname[$ip]}"
+      # Check if hostname is already in the list
+      if [[ ! " ${all_hostnames[*]} " =~ " ${hostname} " ]]; then
+        all_hostnames+=("$hostname")
+      fi
+    done
+    
+    # Process each hostname
+    for hostname in "${all_hostnames[@]}"; do
+      # Skip empty hostnames
+      [ -z "$hostname" ] && continue
+      
+      # Count entries before removal
+      before_count=$(grep -c "^$hostname " ~/.ssh/known_hosts 2>/dev/null || echo "0")
+      # Make sure before_count is a clean integer
+      before_count=$(echo "$before_count" | tr -d '\n\r')
+      
+      if [ "$before_count" -gt 0 ]; then
+        # Remove entries for this hostname
+        sed -i "/^$hostname /d" ~/.ssh/known_hosts
+        
+        # Count entries after removal
+        after_count=$(grep -c "^$hostname " ~/.ssh/known_hosts 2>/dev/null || echo "0")
+        # Make sure after_count is a clean integer
+        after_count=$(echo "$after_count" | tr -d '\n\r')
+        entries_removed=$((before_count - after_count))
+        
+        if [ $entries_removed -gt 0 ]; then
+          echo -e "${GREEN}  Removed $entries_removed entries for hostname $hostname${ENDCOLOR}"
+          removed_count=$((removed_count + entries_removed))
+        fi
+      else
+        echo -e "${BLUE}  No entries found for hostname $hostname${ENDCOLOR}"
+      fi
+    done
+    
+    # Use ssh-keygen -R for more reliable removal of host entries
+    echo -e "${BLUE}Using ssh-keygen to remove hostname entries...${ENDCOLOR}"
+    
+    # For IPs
+    for ip in "${vm_ips_to_clear[@]}"; do
+      # Try with ssh-keygen -R which handles entries better
+      ssh-keygen -R "$ip" &>/dev/null
+      if [ $? -eq 0 ]; then
+        echo -e "${GREEN}  Removed entries for IP $ip using ssh-keygen${ENDCOLOR}"
+        removed_count=$((removed_count + 1))
+      fi
+    done
+    
+    # Now use hostnames from the list we built earlier
+    for hostname in "${vm_hostnames_to_clear[@]}"; do
+      # Skip empty hostnames
+      [ -z "$hostname" ] && continue
+      
+      # Try with ssh-keygen -R which handles entries better
+      output=$(ssh-keygen -R "$hostname" 2>&1)
+      if [ $? -eq 0 ] || [[ "$output" == *"Host $hostname found:"* ]]; then
+        echo -e "${GREEN}  Removed entries for hostname $hostname using ssh-keygen${ENDCOLOR}"
+        removed_count=$((removed_count + 1))
+      else
+        echo -e "${BLUE}  No entries found for hostname $hostname${ENDCOLOR}"
       fi
     done
     
@@ -2768,7 +2911,6 @@ case "$COMMAND" in
         fi
       else
         # Table format - handle both .value and direct JSON
-        local json_data
         if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
           json_data=$(echo "$cluster_summary" | jq '.value')
         else
