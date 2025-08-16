@@ -1616,82 +1616,11 @@ case "$COMMAND" in
     ;;
 
   add-nodes)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc add-nodes [--target-hosts <hosts>] [--node-type <worker|control>]"
-      echo ""
-      echo "Add new nodes to the Kubernetes cluster."
-      echo ""
-      echo "Options:"
-      echo "  --target-hosts <hosts>  Specify target hosts (default: new_workers)"
-      echo "  --node-type <type>      Node type: worker or control (default: worker)"
-      echo ""
-      echo "Note: Ensure new nodes are added to your Terraform configuration first."
-      exit 0
-    fi
-
-    # Parse command line arguments
-    target_hosts="new_workers"
-    node_type="worker"
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --target-hosts)
-          target_hosts="$2"
-          shift 2
-          ;;
-        --node-type)
-          node_type="$2"
-          shift 2
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    echo -e "${BLUE}Adding $node_type nodes to the cluster...${ENDCOLOR}"
-    ansible_run_playbook "pb_add_nodes.yml" -l "$target_hosts" -e "node_type=$node_type"
+    cpc_k8s_nodes add-nodes "$@"
     ;;
 
   prepare-node)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc prepare-node <hostname|IP>"
-      echo ""
-      echo "Install Kubernetes components (kubelet, kubeadm, kubectl, containerd) on a new VM"
-      echo "before joining it to the cluster. This prepares VMs created with 'add-vm' for cluster membership."
-      echo ""
-      echo "Arguments:"
-      echo "  <hostname|IP>  Target VM hostname or IP address"
-      echo ""
-      echo "Examples:"
-      echo "  cpc prepare-node wk3.bevz.net"
-      echo "  cpc prepare-node 10.10.10.112"
-      echo ""
-      echo "After preparation, use 'cpc add-nodes --target-hosts <hostname|IP>' to join the cluster."
-      exit 0
-    fi
-
-    if [[ $# -eq 0 ]]; then
-      echo -e "${RED}Error: hostname or IP address required${ENDCOLOR}" >&2
-      echo "Usage: cpc prepare-node <hostname|IP>"
-      echo "Use 'cpc prepare-node --help' for more information."
-      exit 1
-    fi
-
-    target_node="$1"
-    echo -e "${BLUE}Preparing node '$target_node' with Kubernetes components...${ENDCOLOR}"
-    echo -e "${BLUE}Installing kubelet, kubeadm, kubectl, and containerd...${ENDCOLOR}"
-    
-    ansible_run_playbook "install_kubernetes_cluster.yml" -l "$target_node"
-    
-    if [[ $? -eq 0 ]]; then
-      echo -e "${GREEN}Node '$target_node' successfully prepared!${ENDCOLOR}"
-      echo -e "${BLUE}Next step: Join to cluster with 'cpc add-nodes --target-hosts $target_node'${ENDCOLOR}"
-    else
-      echo -e "${RED}Failed to prepare node '$target_node'${ENDCOLOR}" >&2
-      exit 1
-    fi
+    cpc_k8s_nodes prepare-node "$@"
     ;;
 
   update-inventory)
@@ -1787,148 +1716,19 @@ case "$COMMAND" in
     ;;
 
   remove-nodes)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc remove-nodes [--target-hosts <hosts>]"
-      echo "   or: cpc remove-nodes <single-host>"
-      echo ""
-      echo "Remove nodes from the Kubernetes cluster."
-      echo "This will drain the nodes and remove them from the cluster."
-      echo ""
-      echo "Options:"
-      echo "  --target-hosts <hosts>  Specify target hosts (comma-separated for multiple)"
-      echo "  <single-host>          Single hostname to remove (without --target-hosts)"
-      echo ""
-      echo "Examples:"
-      echo "  cpc remove-nodes worker3"
-      echo "  cpc remove-nodes --target-hosts \"worker3,worker4\""
-      echo ""
-      echo "Note: This only removes from Kubernetes cluster."
-      echo "Use 'cpc remove-vm' to destroy VMs."
-      exit 0
-    fi
-
-    # Handle single host argument (no flag)
-    if [[ $# -eq 1 && "$1" != --* ]]; then
-      target_hosts="$1"
-    else
-      # Parse command line arguments
-      target_hosts=""
-      
-      while [[ $# -gt 0 ]]; do
-        case $1 in
-          --target-hosts)
-            target_hosts="$2"
-            shift 2
-            ;;
-          *)
-            echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-            exit 1
-            ;;
-        esac
-      done
-    fi
-
-    if [ -z "$target_hosts" ]; then
-      echo -e "${RED}Error: --target-hosts is required${ENDCOLOR}" >&2
-      echo "Use: cpc remove-nodes --target-hosts \"<node-name>\""
-      exit 1
-    fi
-
-    echo -e "${BLUE}Removing nodes from the cluster: $target_hosts${ENDCOLOR}"
-    
-    # First drain the nodes
-    echo -e "${BLUE}Draining nodes...${ENDCOLOR}"
-    for host in $(echo "$target_hosts" | tr ',' ' '); do
-      echo -e "${BLUE}Draining node: $host${ENDCOLOR}"
-      ansible_run_playbook "pb_drain_node.yml" -e "node_to_drain=$host"
-    done
-    
-    # Then delete from cluster
-    echo -e "${BLUE}Deleting nodes from cluster...${ENDCOLOR}"
-    for host in $(echo "$target_hosts" | tr ',' ' '); do
-      echo -e "${BLUE}Deleting node: $host${ENDCOLOR}"
-      ansible_run_playbook "pb_delete_node.yml" -e "node_to_delete=$host"
-    done
+    cpc_k8s_nodes remove-nodes "$@"
     ;;
 
   drain-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc drain-node <node_name> [--force] [--delete-emptydir-data]" # Changed from ccr
-      exit 1
-    fi
-    node_name="$1"
-    shift
-    extra_cli_opts="$*" # Pass through any remaining options like --force
-    ansible_run_playbook "pb_drain_node.yml" -e "node_to_drain=$node_name" -e "drain_options=$extra_cli_opts"
+    cpc_k8s_nodes drain-node "$@"
     ;;
 
   upgrade-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc upgrade-node <node_name> [--target-version <version>] [--skip-drain]"
-      echo ""
-      echo "Upgrade Kubernetes on a specific node."
-      echo ""
-      echo "Options:"
-      echo "  --target-version <version>  Target Kubernetes version (default: from environment)"
-      echo "  --skip-drain               Skip draining the node before upgrade"
-      echo ""
-      echo "The upgrade process will:"
-      echo "  1. Drain the node (unless --skip-drain is specified)"
-      echo "  2. Upgrade Kubernetes packages"
-      echo "  3. Restart kubelet service"
-      echo "  4. Uncordon the node"
-      exit 1
-    fi
-    
-    node_name="$1"
-    shift
-    
-    # Parse remaining arguments
-    target_version=""
-    skip_drain="false"
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --target-version)
-          target_version="$2"
-          shift 2
-          ;;
-        --skip-drain)
-          skip_drain="true"
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    extra_vars="-e target_node=$node_name -e skip_drain=$skip_drain"
-    if [ -n "$target_version" ]; then
-      # Split version into major.minor and patch parts if needed
-      if [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # Full version like 1.33.0
-        k8s_major_minor=$(echo "$target_version" | cut -d'.' -f1-2)
-        k8s_patch=$(echo "$target_version" | cut -d'.' -f3)
-        extra_vars="$extra_vars -e target_k8s_version=$k8s_major_minor -e kubernetes_patch_version=$k8s_patch"
-      else
-        # Just major.minor like 1.33
-        extra_vars="$extra_vars -e target_k8s_version=$target_version"
-      fi
-    fi
-
-    echo -e "${BLUE}Upgrading Kubernetes on node: $node_name${ENDCOLOR}"
-    ansible_run_playbook "pb_upgrade_node.yml" -l "$node_name" $extra_vars
+    cpc_k8s_nodes upgrade-node "$@"
     ;;
 
   reset-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc reset-node <node_name_or_ip>" # Changed from ccr
-      exit 1
-    fi
-    node_name="$1"
-    ansible_run_playbook "pb_reset_node.yml" -l "$node_name"
+    cpc_k8s_nodes reset-node "$@"
     ;;
 
   reset-all-nodes)

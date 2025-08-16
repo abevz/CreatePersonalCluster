@@ -36,6 +36,9 @@ source ./modules/20_ansible.sh
 echo "Loading k8s cluster module..."
 source ./modules/30_k8s_cluster.sh
 
+echo "Loading k8s nodes module..."
+source ./modules/40_k8s_nodes.sh
+
 # Set REPO_PATH for modules
 export REPO_PATH="$SCRIPT_DIR"
 
@@ -87,6 +90,18 @@ cpc_k8s_cluster get-kubeconfig --help | head -5
 echo ""
 echo "Cluster-info help:"
 cpc_k8s_cluster cluster-info --help | head -5
+
+echo ""
+echo "Testing K8s Nodes module functions..."
+log_info "Testing k8s nodes help functions:"
+echo "Add-nodes help:"
+cpc_k8s_nodes add-nodes --help | head -5
+echo ""
+echo "Remove-nodes help:"
+cpc_k8s_nodes remove-nodes --help | head -5
+echo ""
+echo "Drain-node help:"
+cpc_k8s_nodes drain-node --help | head -5
 
 echo ""
 echo "Testing Ansible module functions..."
