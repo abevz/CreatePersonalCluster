@@ -24,6 +24,9 @@ source ./lib/pihole_api.sh
 echo "Loading core module..."
 source ./modules/00_core.sh
 
+echo "Loading proxmox module..."
+source ./modules/10_proxmox.sh
+
 echo "Loading tofu module..."
 source ./modules/60_tofu.sh
 
@@ -69,6 +72,15 @@ cpc_tofu start-vms --help | head -3
 echo ""
 echo "Generate hostnames help:"
 cpc_tofu generate-hostnames --help | head -3
+
+echo ""
+echo "Testing Proxmox module functions..."
+log_info "Testing proxmox help functions:"
+echo "Add VM help:"
+cpc_proxmox add-vm --help | head -5
+echo ""
+echo "Remove VM help:"
+cpc_proxmox remove-vm --help | head -5
 
 echo ""
 log_success "Modular architecture test completed!"
