@@ -39,6 +39,9 @@ source ./modules/30_k8s_cluster.sh
 echo "Loading k8s nodes module..."
 source ./modules/40_k8s_nodes.sh
 
+echo "Loading cluster operations module..."
+source ./modules/50_cluster_ops.sh
+
 # Set REPO_PATH for modules
 export REPO_PATH="$SCRIPT_DIR"
 
@@ -102,6 +105,15 @@ cpc_k8s_nodes remove-nodes --help | head -5
 echo ""
 echo "Drain-node help:"
 cpc_k8s_nodes drain-node --help | head -5
+
+echo ""
+echo "Testing Cluster Operations module functions..."
+log_info "Testing cluster operations help functions:"
+echo "Upgrade-addons help:"
+cpc_cluster_ops upgrade-addons --help | head -5
+echo ""
+echo "Configure-coredns help:"
+cpc_cluster_ops configure-coredns --help | head -5
 
 echo ""
 echo "Testing Ansible module functions..."

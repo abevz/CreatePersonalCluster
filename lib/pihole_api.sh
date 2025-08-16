@@ -99,45 +99,61 @@ pihole_validate_connection() {
 
 # Main Pi-hole DNS dispatcher function
 cpc_dns_pihole() {
-    local action="$1"
-    shift
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ -z "$1" ]]; then
+        echo "Usage: cpc dns-pihole <action>"
+        echo "Manages Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs."
+        echo "Actions:"
+        echo "  list             - Display current DNS records in Pi-hole"
+        echo "  add              - Add all missing DNS records to Pi-hole"
+        echo "  unregister-dns   - Remove all cluster DNS records from Pi-hole"
+        echo "  interactive-add  - Interactively select which DNS records to add"
+        echo "  interactive-unregister - Interactively select which DNS records to remove"
+        echo "Requires 'sops' and 'curl' to be installed, and secrets.sops.yaml to be configured."
+        return 0
+    fi
     
-    case "$action" in
-        "list")
-            pihole_dns_list "$@"
-            ;;
-        "add")
-            pihole_dns_add "$@"
-            ;;
-        "remove"|"unregister-dns")
-            pihole_dns_remove "$@"
-            ;;
-        "interactive-add")
-            pihole_dns_interactive_add "$@"
-            ;;
-        "interactive-remove"|"interactive-unregister")
-            pihole_dns_interactive_remove "$@"
-            ;;
-        "validate"|"test")
-            pihole_validate_connection "$@"
-            ;;
-        "")
-            log_error "Usage: cpc dns-pihole <action>"
-            log_info "Available actions:"
-            log_info "  list                     - List all DNS records"
-            log_info "  add <hostname> <ip>      - Add a DNS record"
-            log_info "  remove <hostname>        - Remove a DNS record"
-            log_info "  interactive-add          - Interactive add with menu"
-            log_info "  interactive-remove       - Interactive remove with menu"
-            log_info "  validate <server>        - Test Pi-hole connectivity"
-            return 1
-            ;;
-        *)
-            log_error "Invalid action '$action' for dns-pihole."
-            log_info "Run 'cpc dns-pihole' without arguments to see available actions."
-            return 1
-            ;;
-    esac
+    local action="$1"
+    
+    # Validate actions
+    local valid_actions=("list" "add" "unregister-dns" "interactive-add" "interactive-unregister")
+    local action_valid=false
+    for valid_action in "${valid_actions[@]}"; do
+        if [[ "$action" == "$valid_action" ]]; then
+            action_valid=true
+            break
+        fi
+    done
+    
+    if [[ "$action_valid" != "true" ]]; then
+        log_error "Invalid action '$action' for dns-pihole."
+        log_info "Valid actions: list, add, unregister-dns, interactive-add, interactive-unregister"
+        return 1
+    fi
+
+    log_step "Managing Pi-hole DNS records (action: $action)..."
+    
+    # Get the domain suffix from environment or use default
+    local domain_suffix="${CLUSTER_DOMAIN:-bevz.net}"
+    
+    # Check if debug flag is provided
+    local debug_flag=""
+    if [[ "$2" == "--debug" ]]; then
+        debug_flag="--debug"
+        log_debug "Running in debug mode"
+    fi
+    
+    # Run the Python script with the appropriate action
+    local repo_path
+    repo_path=$(get_repo_path) || return 1
+    
+    "$repo_path/scripts/add_pihole_dns.py" --action "$action" --secrets-file "$repo_path/terraform/secrets.sops.yaml" --tf-dir "$repo_path/terraform" --domain-suffix "$domain_suffix" $debug_flag
+    
+    if [ $? -ne 0 ]; then
+        log_error "Failed to execute dns-pihole action: $action"
+        return 1
+    fi
+    
+    log_success "Pi-hole DNS action '$action' completed successfully"
 }
 
 # Export Pi-hole functions

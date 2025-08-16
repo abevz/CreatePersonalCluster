@@ -27,18 +27,26 @@ cpc_ansible() {
     case "${1:-}" in
         run-ansible)
             shift
-            ansible_run_command "$@"
+            ansible_run_playbook_command "$@"
+            ;;
+        run-command)
+            shift
+            if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -lt 2 ]]; then
+                ansible_show_run_command_help
+                return 0
+            fi
+            ansible_run_shell_command "$@"
             ;;
         *)
             log_error "Unknown ansible command: ${1:-}"
-            log_info "Available commands: run-ansible"
+            log_info "Available commands: run-ansible, run-command"
             return 1
             ;;
     esac
 }
 
 # Handle the run-ansible command with help and validation
-ansible_run_command() {
+ansible_run_playbook_command() {
     if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
         ansible_show_help
         return 0
@@ -96,6 +104,38 @@ ansible_list_playbooks() {
     else
         log_warning "Ansible playbooks directory not found at $repo_path/ansible/playbooks"
     fi
+}
+
+# Execute a shell command on target hosts using Ansible
+ansible_run_shell_command() {
+    if [[ $# -lt 2 ]]; then
+        ansible_show_run_command_help
+        return 1
+    fi
+    
+    local target="$1"
+    local shell_cmd="$2"
+    
+    log_info "Running command on $target: $shell_cmd"
+    ansible_run_playbook "pb_run_command.yml" -l "$target" -e "command_to_run=$shell_cmd"
+}
+
+# Display help information for the run-command function
+ansible_show_run_command_help() {
+    echo "Usage: cpc run-command <target_hosts_or_group> \"<shell_command_to_run>\""
+    echo ""
+    echo "Runs a shell command on specified hosts or groups using Ansible."
+    echo ""
+    echo "Parameters:"
+    echo "  target_hosts_or_group   - Target hosts or inventory groups"
+    echo "  shell_command_to_run    - Shell command to execute"
+    echo ""
+    echo "Examples:"
+    echo "  cpc run-command control_plane \"hostname -f\""
+    echo "  cpc run-command all \"sudo apt update\""
+    echo "  cpc run-command workers \"systemctl status kubelet\""
+    echo ""
+    echo "Available target groups: all, control_plane, workers"
 }
 
 # Execute Ansible playbooks with proper context and inventory
@@ -251,9 +291,11 @@ ansible_update_inventory_cache() {
 # Export functions for use by other modules
 #----------------------------------------------------------------------
 export -f cpc_ansible
-export -f ansible_run_command
+export -f ansible_run_playbook_command
+export -f ansible_run_shell_command
 export -f ansible_run_playbook
 export -f ansible_show_help
+export -f ansible_show_run_command_help
 export -f ansible_list_playbooks
 export -f ansible_update_inventory_cache
 
