@@ -2,7 +2,42 @@
 # =============================================================================
 # CPC Core Module (00_core.sh)
 # =============================================================================
-# Core functionality: context management, secrets, workspaces
+# Core functionality: context management, secrets, workspaces, setup
+
+#----------------------------------------------------------------------
+# Core CPC Functions
+#----------------------------------------------------------------------
+
+# Main entry point for CPC core functionality
+cpc_core() {
+    case "${1:-}" in
+        setup-cpc)
+            shift
+            core_setup_cpc "$@"
+            ;;
+        ctx)
+            shift
+            core_ctx "$@"
+            ;;
+        clone-workspace)
+            shift
+            core_clone_workspace "$@"
+            ;;
+        delete-workspace)
+            shift
+            core_delete_workspace "$@"
+            ;;
+        load_secrets)
+            shift
+            core_load_secrets_command "$@"
+            ;;
+        *)
+            log_error "Unknown core command: ${1:-}"
+            log_info "Available commands: setup-cpc, ctx, clone-workspace, delete-workspace, load_secrets"
+            return 1
+            ;;
+    esac
+}
 
 # --- Core Functions ---
 
@@ -16,36 +51,70 @@ get_repo_path() {
 
 # Load secrets from SOPS
 load_secrets() {
-    local secrets_file="$REPO_PATH/secrets.sops.yaml"
+    local repo_root
+    repo_root=$(get_repo_path)
+    local secrets_file="$repo_root/terraform/secrets.sops.yaml"
     
     if [ ! -f "$secrets_file" ]; then
-        log_warning "Secrets file not found: $secrets_file"
+        log_error "secrets.sops.yaml not found at $secrets_file"
         return 1
     fi
     
-    log_debug "Loading secrets from: $secrets_file"
-    
-    if ! command -v sops >/dev/null 2>&1; then
-        log_fatal "SOPS not found. Please install SOPS to decrypt secrets."
-    fi
-    
-    # Extract specific secrets we need
-    export PROXMOX_HOST=$(sops -d --extract '["proxmox_host"]' "$secrets_file" 2>/dev/null || echo "")
-    export VM_USERNAME=$(sops -d --extract '["vm_username"]' "$secrets_file" 2>/dev/null || echo "")
-    export VM_SSH_KEYS=$(sops -d --extract '["vm_ssh_keys"]' "$secrets_file" 2>/dev/null || echo "")
-    export VM_PASSWORD=$(sops -d --extract '["vm_password"]' "$secrets_file" 2>/dev/null || echo "")
-    
-    # AWS/MinIO credentials for Terraform backend
-    export AWS_ACCESS_KEY_ID=$(sops -d --extract '["aws_access_key_id"]' "$secrets_file" 2>/dev/null || echo "")
-    export AWS_SECRET_ACCESS_KEY=$(sops -d --extract '["aws_secret_access_key"]' "$secrets_file" 2>/dev/null || echo "")
-    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
-    
-    if [ -n "$PROXMOX_HOST" ] && [ -n "$VM_USERNAME" ]; then
-        log_success "Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_USERNAME: $VM_USERNAME)"
-    else
-        log_error "Failed to load required secrets from $secrets_file"
+    # Check if sops is installed
+    if ! command -v sops &> /dev/null; then
+        log_error "'sops' is required but not installed. Please install it before proceeding."
         return 1
     fi
+    
+    # Check if jq is installed
+    if ! command -v jq &> /dev/null; then
+        log_error "'jq' is required but not installed. Please install it before proceeding."
+        return 1
+    fi
+    
+    log_debug "Loading secrets from secrets.sops.yaml..."
+    
+    # Export sensitive variables from SOPS
+    export PROXMOX_HOST
+    export PROXMOX_USERNAME  
+    export PROXMOX_PASSWORD
+    export VM_USERNAME
+    export VM_PASSWORD
+    export VM_SSH_KEY
+    export AWS_ACCESS_KEY_ID
+    export AWS_SECRET_ACCESS_KEY
+    export AWS_DEFAULT_REGION
+    
+    # Load secrets using sops, convert to JSON, then parse with jq
+    local secrets_json
+    secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)")
+    
+    if [ $? -ne 0 ]; then
+        log_error "Failed to decrypt secrets.sops.yaml. Check your SOPS configuration."
+        return 1
+    fi
+    
+    # Parse secrets from JSON
+    PROXMOX_HOST=$(echo "$secrets_json" | jq -r '.virtual_environment_endpoint' | sed 's|https://||' | sed 's|:8006/api2/json||')
+    PROXMOX_USERNAME=$(echo "$secrets_json" | jq -r '.proxmox_username')
+    PROXMOX_PASSWORD=$(echo "$secrets_json" | jq -r '.virtual_environment_password')
+    VM_USERNAME=$(echo "$secrets_json" | jq -r '.vm_username')
+    VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
+    VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
+    
+    # Parse MinIO/S3 credentials for Terraform backend
+    AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
+    AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
+    AWS_DEFAULT_REGION="us-east-1"  # Set default region for MinIO
+    
+    # Verify that all required secrets were loaded
+    if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+        log_error "Failed to load one or more required secrets from secrets.sops.yaml"
+        log_info "Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        return 1
+    fi
+    
+    log_debug "Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_USERNAME: $VM_USERNAME)"
 }
 
 # Load environment variables
@@ -217,6 +286,267 @@ cpc_ctx() {
     set_workspace_template_vars "$context"
 }
 
+#----------------------------------------------------------------------
+# Core Command Implementations
+#----------------------------------------------------------------------
+
+# Initial setup for cpc command
+core_setup_cpc() {
+    local current_script_path
+    current_script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Go up from modules/ to main directory
+    current_script_path="$(dirname "$current_script_path")"
+    
+    local repo_path_file="$HOME/.config/cpc/repo_path"
+    mkdir -p "$(dirname "$repo_path_file")"
+    
+    echo "$current_script_path" > "$repo_path_file"
+    
+    echo -e "${GREEN}cpc setup complete. Repository path set to: $current_script_path${ENDCOLOR}"
+    echo -e "${BLUE}You might want to add this script to your PATH, e.g., by creating a symlink in /usr/local/bin/cpc${ENDCOLOR}"
+    echo -e "${BLUE}Example: sudo ln -s \"$current_script_path/cpc\" /usr/local/bin/cpc${ENDCOLOR}"
+    echo -e "${BLUE}Also, create a 'cpc.env' file in '$current_script_path' for version management (see cpc.env.example).${ENDCOLOR}"
+}
+
+# Get or set the current cluster context (Tofu workspace)
+core_ctx() {
+    if [ -z "$1" ]; then
+        local current_ctx
+        current_ctx=$(get_current_cluster_context)
+        echo "Current cluster context: $current_ctx"
+        echo "Available Tofu workspaces:"
+        (cd "$REPO_PATH/terraform" && tofu workspace list)
+        return 0
+    elif [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: cpc ctx [<cluster_name>]"
+        echo "Sets the current cluster context for cpc and switches Tofu workspace."
+        return 0
+    fi
+    
+    local cluster_name="$1"
+    local cluster_context_file="$HOME/.config/cpc/cluster_context"
+    mkdir -p "$(dirname "$cluster_context_file")"
+    
+    echo "$cluster_name" > "$cluster_context_file"
+    echo -e "${GREEN}Cluster context set to: $cluster_name${ENDCOLOR}"
+    
+    pushd "$REPO_PATH/terraform" > /dev/null || return 1
+    if tofu workspace list | grep -qw "$cluster_name"; then
+        tofu workspace select "$cluster_name"
+    else
+        echo -e "${YELLOW}Tofu workspace '$cluster_name' does not exist. Creating and selecting.${ENDCOLOR}"
+        tofu workspace new "$cluster_name"
+    fi
+    popd > /dev/null || return 1
+    
+    # Update template variables for the new workspace context
+    set_workspace_template_vars "$cluster_name"
+}
+
+# Clone a workspace environment to create a new one
+core_clone_workspace() {
+    if [[ "$1" == "-h" || "$1" == "--help" || $# -lt 2 ]]; then
+        echo "Usage: cpc clone-workspace <source_workspace> <destination_workspace> [release_letter]"
+        echo "Clones a workspace environment to create a new one."
+        echo ""
+        echo "Arguments:"
+        echo "  <source_workspace>      Source workspace to clone (e.g., ubuntu, debian)"
+        echo "  <destination_workspace> New workspace name (e.g., k8s129, test-workspace)"
+        echo "  [release_letter]        Optional: Single letter to use for hostnames (defaults to first letter of destination)"
+        echo ""
+        echo "Example:"
+        echo "  cpc clone-workspace ubuntu k8s129 k"
+        return 0
+    fi
+
+    local source_workspace="$1"
+    local destination_workspace="$2"
+    
+    # Default release letter to first character of destination workspace
+    local release_letter
+    if [ -z "$3" ]; then
+        release_letter="${destination_workspace:0:1}"
+    else
+        release_letter="$3"
+    fi
+    
+    # Validate release letter is a single character
+    if [ ${#release_letter} -ne 1 ]; then
+        log_error "Release letter must be a single character."
+        return 1
+    fi
+    
+    # Check if release letter is already used by another workspace
+    local locals_tf="$REPO_PATH/terraform/locals.tf"
+    local existing_release_letters
+    existing_release_letters=$(grep -A 50 "release_letters_map = {" "$locals_tf" | grep -E '= "[a-zA-Z]"' | grep -v "$destination_workspace" | sed -E 's/.*= "([a-zA-Z])".*/\1/g')
+    
+    if echo "$existing_release_letters" | grep -q "$release_letter"; then
+        log_error "Release letter '$release_letter' is already used by another workspace."
+        log_info "Please choose a different release letter. Currently used letters:"
+        echo "$existing_release_letters" | tr '\n' ' '
+        echo ""
+        return 1
+    fi
+    
+    # Check if source workspace exists
+    local source_env="$REPO_PATH/envs/$source_workspace.env"
+    if [ ! -f "$source_env" ]; then
+        log_error "Source workspace $source_workspace does not exist."
+        log_info "Available workspaces:"
+        ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
+        return 1
+    fi
+    
+    # Check if destination workspace already exists
+    local dest_env_file="$REPO_PATH/envs/$destination_workspace.env"
+    if [ -f "$dest_env_file" ]; then
+        log_error "Destination workspace $destination_workspace already exists."
+        return 1
+    fi
+    
+    # Copy environment file
+    cp "$source_env" "$dest_env_file"
+    if [ $? -ne 0 ]; then
+        log_error "Failed to copy environment file."
+        return 1
+    fi
+    
+    # Add/update RELEASE_LETTER in the new environment file
+    if grep -q "^RELEASE_LETTER=" "$dest_env_file"; then
+        sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$dest_env_file"
+    else
+        echo -e "\n# Release letter used for hostname generation" >> "$dest_env_file"
+        echo "RELEASE_LETTER=$release_letter" >> "$dest_env_file"
+    fi
+    
+    # Update locals.tf - Add template VM ID mapping and release letter
+    pushd "$REPO_PATH/terraform" > /dev/null || return 1
+    
+    # Determine template variable to use
+    local template_var="var.pm_template_ubuntu_id"  # Default to Ubuntu template
+    if grep -q "\"$source_workspace\".*var.pm_template_${source_workspace}_id" "$locals_tf"; then
+        template_var="var.pm_template_${source_workspace}_id"
+    fi
+    
+    # Add template_vm_ids entry
+    sed -i "/^[[:space:]]*template_vm_ids = {/a \\    \"$destination_workspace\" = $template_var  # Auto-added by clone-workspace" "$locals_tf"
+    log_info "Added template_vm_ids entry: \"$destination_workspace\" = $template_var"
+    
+    # Add release letter mapping
+    sed -i "/release_letters_map = {/a \\    \"$destination_workspace\" = \"$release_letter\"  # Auto-added by clone-workspace" "$locals_tf"
+    
+    popd > /dev/null || return 1
+    
+    log_success "Successfully cloned workspace '$source_workspace' to '$destination_workspace' with release letter '$release_letter'"
+    log_info "New environment file created: $dest_env_file"
+    log_info "Updated locals.tf with template and release letter mappings"
+}
+
+# Delete a workspace environment
+core_delete_workspace() {
+    if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
+        echo "Usage: cpc delete-workspace <workspace_name> [--force]"
+        echo "Deletes a workspace environment and removes it from the Terraform configuration."
+        echo ""
+        echo "Arguments:"
+        echo "  <workspace_name>    Name of the workspace to delete (e.g., k8s129, test-workspace)"
+        echo "  --force             Skip confirmation prompt"
+        echo ""
+        echo "Example:"
+        echo "  cpc delete-workspace test-workspace"
+        return 0
+    fi
+    
+    local workspace_name="$1"
+    local force=false
+    if [[ "$2" == "--force" ]]; then
+        force=true
+    fi
+    
+    # Check if workspace exists
+    local env_file="$REPO_PATH/envs/$workspace_name.env"
+    if [ ! -f "$env_file" ]; then
+        log_error "Workspace '$workspace_name' not found."
+        log_info "Available workspaces:"
+        ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
+        return 1
+    fi
+    
+    # Check if it's one of the predefined workspaces
+    if [[ "$workspace_name" == "debian" || "$workspace_name" == "ubuntu" || "$workspace_name" == "rocky" || "$workspace_name" == "suse" ]]; then
+        log_error "Cannot delete predefined workspace '$workspace_name'."
+        log_info "These are base workspaces used as templates for cloning."
+        return 1
+    fi
+    
+    # Confirm deletion unless --force is used
+    if [ "$force" = false ]; then
+        log_warning "You are about to delete workspace '$workspace_name'."
+        log_warning "This will:"
+        log_warning " - Delete the environment file at $env_file"
+        log_warning " - Remove entries from locals.tf"
+        log_warning " - Delete the Tofu workspace if it exists"
+        log_warning " - Stop and destroy all VMs in this workspace"
+        read -p "Are you sure you want to continue? (y/N) " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            log_info "Operation cancelled."
+            return 0
+        fi
+    fi
+    
+    # Clean up Tofu workspace
+    pushd "$REPO_PATH/terraform" > /dev/null || { log_error "Failed to change to terraform directory"; return 1; }
+    
+    if tofu workspace list | grep -qw "$workspace_name"; then
+        local original_ws
+        original_ws=$(tofu workspace show)
+        
+        if [ "$original_ws" != "$workspace_name" ]; then
+            log_step "Switching to workspace '$workspace_name' to clean up resources..."
+            tofu workspace select "$workspace_name"
+        fi
+        
+        # Destroy all resources in the workspace
+        log_step "Destroying all resources in workspace '$workspace_name'..."
+        tofu destroy -auto-approve
+        
+        # Switch back and delete the workspace
+        if [ "$original_ws" != "$workspace_name" ]; then
+            tofu workspace select "$original_ws"
+        fi
+        
+        log_step "Deleting Tofu workspace '$workspace_name'..."
+        tofu workspace delete "$workspace_name"
+    fi
+    
+    popd > /dev/null || return 1
+    
+    # Remove environment file
+    rm -f "$env_file"
+    log_step "Removed environment file: $env_file"
+    
+    # Clean up locals.tf entries
+    local locals_tf="$REPO_PATH/terraform/locals.tf"
+    sed -i "/\"$workspace_name\"/d" "$locals_tf"
+    log_step "Removed entries from locals.tf"
+    
+    log_success "Successfully deleted workspace '$workspace_name'"
+}
+
+# Command wrapper for load_secrets function
+core_load_secrets_command() {
+    log_step "Loading secrets from SOPS..."
+    load_secrets
+    log_success "Secrets loaded successfully!"
+    log_info "Available variables:"
+    log_info "  PROXMOX_HOST: $PROXMOX_HOST"
+    log_info "  PROXMOX_USERNAME: $PROXMOX_USERNAME"
+    log_info "  VM_USERNAME: $VM_USERNAME"
+    log_info "  VM_SSH_KEY: ${VM_SSH_KEY:0:20}..."
+}
+
 # Setup CPC project
 cpc_setup() {
     log_header "Setting up CPC project"
@@ -248,4 +578,5 @@ cpc_setup() {
 # Export core functions
 export -f get_repo_path load_secrets load_env_vars set_workspace_template_vars
 export -f get_current_cluster_context set_cluster_context validate_workspace_name
-export -f cpc_ctx cpc_setup
+export -f cpc_setup cpc_core
+export -f core_setup_cpc core_ctx core_clone_workspace core_delete_workspace core_load_secrets_command
