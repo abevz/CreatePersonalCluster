@@ -380,7 +380,7 @@ display_usage() {
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
   echo "  clear-ssh-maps                 Clear SSH control sockets and connections for VMs"
   echo "  load_secrets                   Load and display secrets from SOPS configuration"
-  echo "  dns-pihole <action>            Manage Pi-hole DNS records. Action can be 'add' or 'unregister-dns'."
+  echo "  dns-pihole <action>            Manage Pi-hole DNS records. Actions: list, add, unregister-dns, interactive-add, interactive-unregister."
   echo "  generate-hostnames             Generate hostname configurations for VMs in Proxmox"
   echo "  scripts/<script_name>          Run any script from the scripts directory"
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
@@ -800,14 +800,62 @@ case "$COMMAND" in
     
     # Apply Terraform changes
     echo -e "${BLUE}Creating VM with Terraform...${ENDCOLOR}"
-    if ! ./cpc generate-hostnames; then
-      echo -e "${RED}Failed to generate hostnames${ENDCOLOR}"
-      exit 1
+    
+    # Pre-generate hostname file for the new node to avoid "file not found" error
+    if [[ "$node_type" == "worker" ]]; then
+      # Get the release letter from environment file
+      release_letter=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      
+      if [ -z "$release_letter" ]; then
+        echo -e "${YELLOW}Warning: RELEASE_LETTER not found in environment file, using first letter of workspace name${ENDCOLOR}"
+        release_letter="${current_ctx:0:1}"
+      fi
+      
+      # Generate expected hostname
+      node_num=$(echo "$new_node_name" | grep -Eo '[0-9]+$')
+      expected_hostname="${release_letter}w${node_num}.bevz.net"
+      
+      echo -e "${BLUE}Using release letter '${release_letter}' for hostname generation${ENDCOLOR}"
+      echo -e "${BLUE}Expected hostname for new node: ${expected_hostname}${ENDCOLOR}"
+      
+      # Create snippets directory if it doesn't exist
+      snippets_dir="$REPO_PATH/terraform/snippets"
+      mkdir -p "$snippets_dir"
+      
+      # Generate temp cloud-init user-data file
+      temp_userdata="$snippets_dir/node-${release_letter}w${node_num}-userdata.yaml"
+      
+      # Copy template or create minimal file if no template exists
+      template_file="$snippets_dir/node-template-userdata.yaml"
+      if [ -f "$template_file" ]; then
+        cp "$template_file" "$temp_userdata"
+        # Replace hostname placeholder
+        sed -i "s/HOSTNAME_PLACEHOLDER/$expected_hostname/g" "$temp_userdata"
+      else
+        cat > "$temp_userdata" << EOF
+#cloud-config
+hostname: $expected_hostname
+fqdn: $expected_hostname
+manage_etc_hosts: true
+EOF
+      fi
+      
+      echo -e "${BLUE}Pre-generated cloud-init hostname file for $expected_hostname${ENDCOLOR}"
     fi
     
+    # Generate hostnames (this may fail for new nodes, but we've pre-created the file above)
+    ./cpc generate-hostnames || true
+    
+    # Now run terraform apply
     if ! ./cpc deploy apply -auto-approve; then
       echo -e "${RED}Failed to apply Terraform changes${ENDCOLOR}"
       exit 1
+    fi
+    
+    # After VM creation, regenerate hostnames to ensure everything is updated
+    echo -e "${BLUE}Regenerating hostname configurations...${ENDCOLOR}"
+    if ! ./cpc generate-hostnames; then
+      echo -e "${YELLOW}Warning: Failed to regenerate hostnames, you may need to run this manually${ENDCOLOR}"
     fi
     
     echo -e "${GREEN}Successfully created VM $new_node_name!${ENDCOLOR}"
@@ -2799,27 +2847,57 @@ case "$COMMAND" in
     ;;
 
   dns-pihole)
-    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ -z "$1" ]]; then # Added check for missing argument
-      echo "Usage: cpc dns-pihole <action>" # Changed from ccr
-      echo "Manages Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs." # Changed
-      echo "Actions: 'add', 'unregister-dns'." # Added
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ -z "$1" ]]; then
+      echo "Usage: cpc dns-pihole <action>"
+      echo "Manages Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs."
+      echo "Actions:"
+      echo "  list             - Display current DNS records in Pi-hole"
+      echo "  add              - Add all missing DNS records to Pi-hole"
+      echo "  unregister-dns   - Remove all cluster DNS records from Pi-hole"
+      echo "  interactive-add  - Interactively select which DNS records to add"
+      echo "  interactive-unregister - Interactively select which DNS records to remove"
       echo "Requires 'sops' and 'curl' to be installed, and secrets.sops.yaml to be configured."
       exit 0
     fi
-    action="$1" # Removed local
-    if [[ "$action" != "add" && "$action" != "unregister-dns" ]]; then
-      echo -e "${RED}Error: Invalid action '$action' for update-pihole. Must be 'add' or 'unregister-dns'.${ENDCOLOR}" >&2
+    
+    action="$1"
+    
+    # Validate actions
+    valid_actions=("list" "add" "unregister-dns" "interactive-add" "interactive-unregister")
+    action_valid=false
+    for valid_action in "${valid_actions[@]}"; do
+      if [[ "$action" == "$valid_action" ]]; then
+        action_valid=true
+        break
+      fi
+    done
+    
+    if [[ "$action_valid" != "true" ]]; then
+      echo -e "${RED}Error: Invalid action '$action' for dns-pihole.${ENDCOLOR}" >&2
+      echo -e "${YELLOW}Valid actions: list, add, unregister-dns, interactive-add, interactive-unregister${ENDCOLOR}" >&2
       exit 1
     fi
 
-    echo -e "${BLUE}Updating Pi-hole DNS records (action: $action)...${ENDCOLOR}" # Changed
-    # Assuming the script is in REPO_PATH/scripts/
-    "$REPO_PATH/scripts/add_pihole_dns.py" --action "$action" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform" # Added --action
+    echo -e "${BLUE}Managing Pi-hole DNS records (action: $action)...${ENDCOLOR}"
+    
+    # Get the domain suffix from environment or use default
+    domain_suffix="${CLUSTER_DOMAIN:-bevz.net}"
+    
+    # Check if debug flag is provided
+    debug_flag=""
+    if [[ "$2" == "--debug" ]]; then
+      debug_flag="--debug"
+      echo -e "${YELLOW}Running in debug mode${ENDCOLOR}"
+    fi
+    
+    # Run the Python script with the appropriate action
+    "$REPO_PATH/scripts/add_pihole_dns.py" --action "$action" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform" --domain-suffix "$domain_suffix" $debug_flag
+    
     if [ $? -ne 0 ]; then
-      echo -e "${RED}Error updating Pi-hole DNS records.${ENDCOLOR}" >&2
+      echo -e "${RED}Error managing Pi-hole DNS records.${ENDCOLOR}" >&2
       exit 1
     fi
-    echo -e "${GREEN}Pi-hole DNS update script finished.${ENDCOLOR}"
+    echo -e "${GREEN}Pi-hole DNS management completed.${ENDCOLOR}"
     ;;
 
   cluster-info)

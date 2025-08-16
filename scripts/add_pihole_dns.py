@@ -64,6 +64,140 @@ def authenticate_pihole(pihole_ip, web_password):
         print(f"Error decoding JSON from Pi-hole authentication response: {e}. Response text: {response.text}")
         return None
 
+def get_dns_records(pihole_ip, sid, csrf_token, debug=False):
+    """Get all custom DNS records from Pi-hole.
+    
+    Tries multiple API endpoints that might exist in different Pi-hole versions.
+    """
+    # Use same endpoints as the add/delete operations
+    # And also try some other common endpoints for different Pi-hole versions
+    api_endpoints = [
+        "/api/config/dns/hosts",
+        "/api/dns/customdns",
+        "/admin/api.php?customdns",
+        "/api/customdns"
+    ]
+    
+    print(f"Fetching current DNS records from Pi-hole...")
+    
+    for endpoint in api_endpoints:
+        api_url = f"http://{pihole_ip}{endpoint}"
+        
+        command_parts = [
+            'curl', '-s',
+            '-H', "Content-Type: application/json",
+            '-H', f"X-CSRF-Token: {csrf_token}",
+            '--cookie', f"SID={sid}",
+            api_url
+        ]
+        
+        if debug:
+            print(f"DEBUG: Trying Pi-hole API endpoint: {endpoint}")
+            print(f"DEBUG_COMMAND: {' '.join(command_parts)}")
+
+        try:
+            result = subprocess.run(command_parts, capture_output=True, text=True, check=False)
+            response_text = result.stdout.strip()
+            
+            if debug:
+                print(f"DEBUG: Pi-hole endpoint {endpoint} response: '{response_text[:100]}...' (Return code: {result.returncode})")
+
+            if result.returncode == 0 and response_text:
+                try:
+                    response_json = json.loads(response_text)
+                    
+                    # Different Pi-hole API versions might return data in different formats
+                    # Let's handle various known response formats:
+                    
+                    # Case 1: Direct list of records
+                    if isinstance(response_json, list):
+                        print(f"Successfully retrieved {len(response_json)} DNS records from Pi-hole using endpoint {endpoint}.")
+                        return response_json
+                    
+                    # Case 2: Data in a "data" field
+                    elif isinstance(response_json, dict) and "data" in response_json and isinstance(response_json["data"], list):
+                        print(f"Successfully retrieved {len(response_json['data'])} DNS records from Pi-hole using endpoint {endpoint}.")
+                        return response_json["data"]
+                    
+                    # Case 3: Specific format with "customdns" field (some Pi-hole versions)
+                    elif isinstance(response_json, dict) and "customdns" in response_json and isinstance(response_json["customdns"], list):
+                        print(f"Successfully retrieved {len(response_json['customdns'])} DNS records from Pi-hole using endpoint {endpoint}.")
+                        return response_json["customdns"]
+                    
+                    # Case 4: Data in a nested structure (config -> dns -> hosts)
+                    elif isinstance(response_json, dict) and "config" in response_json and isinstance(response_json["config"], dict) and \
+                         "dns" in response_json["config"] and isinstance(response_json["config"]["dns"], dict) and \
+                         "hosts" in response_json["config"]["dns"]:
+                        hosts = response_json["config"]["dns"]["hosts"]
+                        if isinstance(hosts, list):
+                            # Parse entries like "10.10.10.187 pi.alert" into structured records
+                            records = []
+                            for entry in hosts:
+                                if isinstance(entry, str) and " " in entry:
+                                    parts = entry.split(" ", 1)
+                                    if len(parts) == 2:
+                                        ip = parts[0].strip()
+                                        domain = parts[1].strip()
+                                        records.append({"domain": domain, "ip": ip})
+                            print(f"Successfully retrieved {len(records)} DNS records from Pi-hole using endpoint {endpoint}.")
+                            return records
+                    
+                    # Case 5: Empty but valid response (no custom records)
+                    elif isinstance(response_json, dict) and ("success" in response_json or "took" in response_json):
+                        print(f"Pi-hole responded successfully, but no custom DNS records found (endpoint {endpoint}).")
+                        return []
+                    
+                    elif debug:
+                        print(f"DEBUG: Endpoint {endpoint} returned unexpected format: {json.dumps(response_json, indent=2)[:200]}...")
+                
+                except json.JSONDecodeError:
+                    if debug:
+                        print(f"DEBUG: Failed to parse response from endpoint {endpoint} as JSON: {response_text[:100]}...")
+            
+            # Continue to the next endpoint if this one didn't work
+            
+        except Exception as e:
+            if debug:
+                print(f"DEBUG: Error trying endpoint {endpoint}: {e}")
+    
+    # If we reach here, we couldn't get records from any endpoint
+    print("Warning: Unable to retrieve custom DNS records from any Pi-hole API endpoint.")
+    
+    # As a last resort, try to get custom.list directly via SSH
+    print("Attempting to check if there are entries in custom.list file on Pi-hole...")
+    
+    # Just tell the user there might be records we can't retrieve
+    print("Note: There might be DNS records in Pi-hole that we couldn't retrieve via the API.")
+    return []
+
+    try:
+        result = subprocess.run(command_parts, capture_output=True, text=True, check=False)
+        response_text = result.stdout.strip()
+        
+        if debug:
+            print(f"Pi-hole DNS API raw response: '{response_text}' (Return code: {result.returncode})")
+
+        if result.returncode == 0:
+            try:
+                response_json = json.loads(response_text)
+                if isinstance(response_json, list):
+                    print(f"Successfully retrieved {len(response_json)} DNS records from Pi-hole.")
+                    return response_json
+                else:
+                    print(f"Retrieved data is not a list: {response_json}")
+                    return []
+            except json.JSONDecodeError:
+                print(f"Failed to parse Pi-hole response as JSON: {response_text}")
+                return []
+        else:
+            print(f"Failed to get DNS records. curl command failed. Status: {result.returncode}", file=sys.stderr)
+            print(f"Curl Stdout: {result.stdout.strip()}", file=sys.stderr)
+            print(f"Curl Stderr: {result.stderr.strip()}", file=sys.stderr)
+            return []
+    except Exception as e:
+        print(f"An unexpected error occurred during Pi-hole DNS API call: {e}", file=sys.stderr)
+        return []
+
 def add_dns_record(pihole_ip, sid, csrf_token, domain, ip_address, debug=False):
     """Adds a DNS record to Pi-hole via its API using PUT /api/config/dns/hosts/."""
     
@@ -312,13 +446,40 @@ def load_sops_secrets(custom_secrets_file_path=None, debug=False): # Add debug p
     
     return get_sops_decoded_secrets(sops_file_to_use)
 
+def prompt_for_selection(records, action_description):
+    """Display the records and prompt the user to select one or all."""
+    print(f"\nAvailable records for {action_description}:")
+    for i, record in enumerate(records, 1):
+        print(f"{i}. {record['domain']} -> {record['ip']}")
+    
+    print(f"\nOptions:")
+    print(f"a. All records")
+    print(f"q. Quit without changes")
+    
+    while True:
+        choice = input(f"\nSelect an option (1-{len(records)}, a, q): ").strip().lower()
+        
+        if choice == 'q':
+            return []
+        elif choice == 'a':
+            return records
+        else:
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(records):
+                    return [records[idx]]
+                else:
+                    print(f"Invalid selection. Please choose between 1 and {len(records)}, 'a' for all, or 'q' to quit.")
+            except ValueError:
+                print("Invalid input. Please enter a number, 'a' for all, or 'q' to quit.")
+
 def main():
     parser = argparse.ArgumentParser(description="Manage Pi-hole DNS records based on Terraform outputs.")
     parser.add_argument(
         "--action",
-        choices=['add', 'unregister-dns'], # Changed 'delete' to 'unregister-dns'
+        choices=['list', 'add', 'unregister-dns', 'interactive-add', 'interactive-unregister'],
         required=True,
-        help="Action to perform: 'add' or 'unregister-dns' DNS records."
+        help="Action to perform: 'list' to show records, 'add' or 'unregister-dns' for DNS records, 'interactive-add' or 'interactive-unregister' for interactive mode."
     )
     parser.add_argument(
         "--tf-dir",
@@ -328,6 +489,10 @@ def main():
     parser.add_argument(
         "--secrets-file",
         help="Path to the SOPS-encrypted secrets YAML file. Defaults to ../terraform/secrets.sops.yaml relative to this script."
+    )
+    parser.add_argument(
+        "--domain-suffix",
+        help="Filter DNS records by this domain suffix (e.g., 'bevz.net'). Used to identify cluster records."
     )
     parser.add_argument(
         "--debug",
@@ -364,6 +529,21 @@ def main():
     sid = auth_details["sid"]
     csrf_token = auth_details["csrf"]
 
+    # Get current DNS records from Pi-hole
+    current_records = get_dns_records(pihole_ip, sid, csrf_token, debug=args.debug)
+    
+    if args.action == "list":
+        # Just print the current DNS records and exit
+        if current_records:
+            print("\nCurrent DNS records in Pi-hole:")
+            for i, record in enumerate(current_records, 1):
+                ip = record.get("ip", "N/A")
+                domain = record.get("domain", "N/A")
+                print(f"{i}. {domain} -> {ip}")
+        else:
+            print("No custom DNS records found in Pi-hole.")
+        sys.exit(0)
+
     # Get Terraform outputs
     success, tf_outputs = get_terraform_outputs(args.tf_dir, debug=args.debug) # Pass debug flag
     if not success:
@@ -386,7 +566,7 @@ def main():
     
     # Handle both list and dict types for outputs
     # If they are dicts, we assume keys match between FQDNs and IPs
-    records_to_process = []
+    terraform_records = []
 
     if isinstance(vm_fqdns_output, dict) and isinstance(vm_ipv4_addresses_output, dict):
         if args.debug:
@@ -402,7 +582,7 @@ def main():
         for key, fqdn_string in vm_fqdns_output.items():
             ip_address = vm_ipv4_addresses_output.get(key)
             if fqdn_string and ip_address: # Ensure both FQDN and IP are not None or empty
-                records_to_process.append({"domain": fqdn_string, "ip": ip_address})
+                terraform_records.append({"domain": fqdn_string, "ip": ip_address})
                 if args.debug:
                     print(f"DEBUG: Matched from dict: Key \'{key}\' -> FQDN \'{fqdn_string}\' with IP \'{ip_address}\'.")
             elif args.debug:
@@ -418,7 +598,7 @@ def main():
             if i < len(vm_ipv4_addresses_output):
                 ip_address = vm_ipv4_addresses_output[i]
                 if fqdn_string and ip_address: # Ensure both FQDN and IP are not None or empty
-                    records_to_process.append({"domain": fqdn_string, "ip": ip_address})
+                    terraform_records.append({"domain": fqdn_string, "ip": ip_address})
                     if args.debug:
                         print(f"DEBUG: Matched from list: Index {i} -> FQDN \'{fqdn_string}\' with IP \'{ip_address}\'.")
                 elif args.debug:
@@ -430,31 +610,134 @@ def main():
     else:
         print(f"ERROR: vm_fqdns_output (type: {type(vm_fqdns_output)}) and vm_ipv4_addresses_output (type: {type(vm_ipv4_addresses_output)}) are of incompatible or mixed types. Both must be lists or both must be dictionaries.")
         sys.exit(1)
-
+    
+    # Compare Terraform records with Pi-hole records
+    if not terraform_records:
+        print("INFO: No DNS records found in Terraform outputs. Nothing to process.")
+        sys.exit(0)
+    
+    # Convert Pi-hole records to a set for easy comparison
+    pihole_domains = {rec.get("domain"): rec.get("ip") for rec in current_records if rec.get("domain") and rec.get("ip")}
+    
+    # Determine missing/existing records
+    records_to_add = []
+    for rec in terraform_records:
+        domain = rec["domain"]
+        ip = rec["ip"]
+        
+        if domain not in pihole_domains:
+            # Not in Pi-hole, should be added
+            records_to_add.append(rec)
+        elif pihole_domains[domain] != ip:
+            # In Pi-hole but IP differs, should be updated
+            records_to_add.append(rec)
+    
+    # Determine records to delete (in Pi-hole but not in Terraform)
+    terraform_domains = {rec["domain"] for rec in terraform_records}
+    records_to_delete = []
+    
+    # Get domain suffix from args or use defaults
+    domain_suffixes = []
+    if args.domain_suffix:
+        # Ensure the suffix starts with a dot
+        suffix = args.domain_suffix if args.domain_suffix.startswith('.') else f".{args.domain_suffix}"
+        domain_suffixes.append(suffix)
+    else:
+        # Default domain suffixes
+        domain_suffixes = [".bevz.net", ".lan"]
+    
+    if args.debug:
+        print(f"DEBUG: Using domain suffixes for filtering: {domain_suffixes}")
+    
+    for rec in current_records:
+        domain = rec.get("domain")
+        ip = rec.get("ip")
+        
+        if domain and domain not in terraform_domains:
+            # Skip non-cluster records by checking domain suffix
+            if any(domain.endswith(suffix) for suffix in domain_suffixes):
+                records_to_delete.append({"domain": domain, "ip": ip})
+    
+    # Process according to action
+    if args.action == "interactive-add":
+        # Interactive mode for adding
+        if not records_to_add:
+            print("INFO: All Terraform records already exist in Pi-hole with correct IPs.")
+            sys.exit(0)
+        
+        print(f"Found {len(records_to_add)} records to add/update in Pi-hole.")
+        selected_records = prompt_for_selection(records_to_add, "addition/update")
+        
+        if not selected_records:
+            print("No records selected for addition. Exiting.")
+            sys.exit(0)
+        
+        records_to_process = selected_records
+        action = "add"
+        
+    elif args.action == "interactive-unregister":
+        # Interactive mode for deletion
+        # Only show cluster records from current cluster for deletion
+        cluster_records = []
+        for rec in terraform_records:
+            domain = rec["domain"]
+            ip = rec["ip"]
+            
+            if domain in pihole_domains:
+                cluster_records.append({"domain": domain, "ip": pihole_domains[domain]})
+        
+        if not cluster_records:
+            print("INFO: No cluster records found in Pi-hole to delete.")
+            sys.exit(0)
+        
+        print(f"Found {len(cluster_records)} cluster records in Pi-hole.")
+        selected_records = prompt_for_selection(cluster_records, "deletion")
+        
+        if not selected_records:
+            print("No records selected for deletion. Exiting.")
+            sys.exit(0)
+        
+        records_to_process = selected_records
+        action = "unregister-dns"
+        
+    elif args.action == "add":
+        # Normal add mode
+        if not records_to_add:
+            print("INFO: All Terraform records already exist in Pi-hole with correct IPs.")
+            sys.exit(0)
+        
+        records_to_process = records_to_add
+        action = "add"
+        
+    elif args.action == "unregister-dns":
+        # Normal delete mode
+        records_to_process = terraform_records
+        action = "unregister-dns"
+    
     if not records_to_process:
-        print("INFO: No matching DNS records found to process based on Terraform outputs after matching.")
+        print("INFO: No matching DNS records found to process.")
         # sys.exit(0) # Allow script to finish normally even if no records
     else:
         if args.debug:
-            print(f"DEBUG: Records to process ({args.action}): {records_to_process}")
+            print(f"DEBUG: Records to process ({action}): {records_to_process}")
             print("DEBUG: Debug mode enabled, showing records and exiting without processing:")
             for record in records_to_process:
                 print(f"  - {record['domain']} -> {record['ip']}")
             sys.exit(0)
         else:
-            print(f"INFO: Found {len(records_to_process)} DNS records to process with action '{args.action}'")
+            print(f"INFO: Found {len(records_to_process)} DNS records to process with action '{action}'")
 
     for record in records_to_process:
         domain = record["domain"]
         ip_address = record["ip"]
-        if args.action == "add":
+        if action == "add":
             print(f"Attempting to add DNS record: {domain} -> {ip_address}")
             add_dns_record(pihole_ip, sid, csrf_token, domain, ip_address, debug=args.debug)
-        elif args.action == "unregister-dns": # Changed from "delete"
+        elif action == "unregister-dns": # Changed from "delete"
             print(f"Attempting to unregister DNS record: {domain} (IP: {ip_address})")
             delete_dns_record(pihole_ip, sid, csrf_token, domain, ip_address, debug=args.debug)
     
-    print(f"INFO: Script finished processing DNS records with action '{args.action}'.")
+    print(f"INFO: Script finished processing DNS records with action '{action}'.")
 
 if __name__ == "__main__":
     main()
