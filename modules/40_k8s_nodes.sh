@@ -49,13 +49,17 @@ cpc_k8s_nodes() {
             shift
             k8s_reset_node "$@"
             ;;
+        reset-all-nodes)
+            shift
+            k8s_reset_all_nodes "$@"
+            ;;
         prepare-node)
             shift
             k8s_prepare_node "$@"
             ;;
         *)
             log_error "Unknown k8s node command: ${1:-}"
-            log_info "Available commands: add-nodes, remove-nodes, drain-node, upgrade-node, reset-node, prepare-node"
+            log_info "Available commands: add-nodes, remove-nodes, drain-node, upgrade-node, reset-node, reset-all-nodes, prepare-node"
             return 1
             ;;
     esac
@@ -351,6 +355,29 @@ k8s_show_prepare_node_help() {
     echo "After preparation, use 'cpc add-nodes --target-hosts <hostname|IP>' to join the cluster."
 }
 
+# Reset Kubernetes on all nodes in current context
+k8s_reset_all_nodes() {
+    local current_ctx
+    current_ctx=$(get_current_cluster_context) || return 1
+    
+    log_warning "This will reset Kubernetes on ALL nodes in context '$current_ctx'"
+    
+    local response
+    read -r -p "Are you sure you want to reset Kubernetes on ALL nodes? [y/N] " response
+    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        log_info "Operation cancelled."
+        return 0
+    fi
+    
+    log_info "Resetting Kubernetes on all nodes in context '$current_ctx'..."
+    if ansible_run_playbook "pb_reset_all_nodes.yml"; then
+        log_success "Successfully reset Kubernetes on all nodes"
+    else
+        log_error "Failed to reset Kubernetes on all nodes"
+        return 1
+    fi
+}
+
 #----------------------------------------------------------------------
 # Export functions for use by other modules
 #----------------------------------------------------------------------
@@ -360,6 +387,7 @@ export -f k8s_remove_nodes
 export -f k8s_drain_node
 export -f k8s_upgrade_node
 export -f k8s_reset_node
+export -f k8s_reset_all_nodes
 export -f k8s_prepare_node
 export -f k8s_show_add_nodes_help
 export -f k8s_show_remove_nodes_help
@@ -378,6 +406,7 @@ k8s_nodes_help() {
     echo "  drain-node <name> [opts]   - Drain workloads from specific node"
     echo "  upgrade-node <name> [opts] - Upgrade Kubernetes on specific node"
     echo "  reset-node <name>          - Reset Kubernetes on specific node"
+    echo "  reset-all-nodes            - Reset Kubernetes on ALL nodes in context"
     echo "  prepare-node <host>        - Install K8s components on new VM"
     echo ""
     echo "Functions:"
@@ -387,6 +416,7 @@ k8s_nodes_help() {
     echo "  k8s_drain_node()          - Drain specific node"
     echo "  k8s_upgrade_node()        - Upgrade specific node"
     echo "  k8s_reset_node()          - Reset specific node"
+    echo "  k8s_reset_all_nodes()     - Reset all nodes in context"
     echo "  k8s_prepare_node()        - Prepare new VM for cluster"
 }
 

@@ -38,13 +38,10 @@ locals {
 
   # VM ID ranges per OS type
   vm_id_ranges = {
-    "k8s129-test" = 700  # Fixed: Use unique range for k8s129-test
-    "k8s133" = 610  # Auto-added by clone-workspace
     "debian"        = 200
     "ubuntu"        = 300
     "rocky"         = 400
     "suse"          = 500
-    "test-workspace" = 600  # Fixed: Use 600 range instead of full VM ID
   }
 
   # Workspace IP mapping for automatic IP block distribution

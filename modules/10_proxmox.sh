@@ -23,6 +23,12 @@ function cpc_proxmox() {
         remove-vm)
             proxmox_remove_vm "$@"
             ;;
+        template)
+            proxmox_create_template "$@"
+            ;;
+        vmctl)
+            proxmox_vm_control "$@"
+            ;;
         *)
             log_error "Unknown proxmox command: $command"
             return 1
@@ -469,6 +475,50 @@ function proxmox_remove_vm() {
     fi
     
     log_info "Note: If the node was part of Kubernetes cluster, you may need to manually clean up the cluster state."
+}
+
+# Create VM template for Kubernetes
+function proxmox_create_template() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: cpc template"
+        echo ""
+        echo "Creates a VM template for Kubernetes cluster nodes."
+        echo "This command will:"
+        echo "1. Set workspace-specific template variables"
+        echo "2. Validate required template configuration"
+        echo "3. Execute the template creation script"
+        echo ""
+        echo "Template variables are loaded from envs/<workspace>.env"
+        return 0
+    fi
+
+    # Ensure workspace-specific template variables are set
+    local current_ctx
+    current_ctx=$(get_current_cluster_context) || return 1
+    
+    log_info "Setting template variables for workspace '$current_ctx'..."
+    set_workspace_template_vars "$current_ctx" || return 1
+    
+    # Check if essential template variables are set
+    if [ -z "$TEMPLATE_VM_ID" ] || [ -z "$TEMPLATE_VM_NAME" ] || [ -z "$IMAGE_NAME" ] || [ -z "$IMAGE_LINK" ]; then
+        log_error "Template variables not properly set for workspace '$current_ctx'."
+        log_error "Please ensure cpc.env contains the required TEMPLATE_VM_ID_*, TEMPLATE_VM_NAME_*, IMAGE_NAME_*, IMAGE_LINK_* variables."
+        return 1
+    fi
+    
+    log_info "Creating VM template using script..."
+    (
+        "$REPO_PATH/scripts/template.sh" "$@"
+    )
+}
+
+# VM control (placeholder function)
+function proxmox_vm_control() {
+    log_info "VM control (start, stop, create, delete) is primarily managed by Tofu in this project."
+    log_info "Please use 'tofu apply', 'tofu destroy', or modify your .tfvars and re-apply."
+    log_info "Example: To stop a VM, you might comment it out in Tofu and apply, or use Proxmox UI/API directly."
+    # Placeholder for future direct VM interactions if needed via Proxmox API etc.
+    # ansible_run_playbook "pb_vm_control.yml" "localhost" "-e vm_name=$1 -e action=$2"
 }
 
 log_debug "Module 10_proxmox.sh loaded successfully"

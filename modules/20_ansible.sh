@@ -37,9 +37,13 @@ cpc_ansible() {
             fi
             ansible_run_shell_command "$@"
             ;;
+        update-inventory)
+            shift
+            ansible_update_inventory_cache_advanced "$@"
+            ;;
         *)
             log_error "Unknown ansible command: ${1:-}"
-            log_info "Available commands: run-ansible, run-command"
+            log_info "Available commands: run-ansible, run-command, update-inventory"
             return 1
             ;;
     esac
@@ -287,6 +291,97 @@ ansible_update_inventory_cache() {
     fi
 }
 
+# Advanced inventory cache update with comprehensive cluster information
+ansible_update_inventory_cache_advanced() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: cpc update-inventory"
+        echo ""
+        echo "Update the Ansible inventory cache from current cluster state."
+        echo "This command fetches the latest cluster information and updates"
+        echo "the inventory cache file used by Ansible playbooks."
+        echo ""
+        echo "This is automatically called before Ansible operations, but can be"
+        echo "run manually to troubleshoot inventory issues."
+        return 0
+    fi
+
+    log_info "Updating Ansible inventory cache..."
+    
+    local repo_root
+    repo_root=$(get_repo_path) || return 1
+    local cache_file="$repo_root/.ansible_inventory_cache.json"
+    local terraform_dir="$repo_root/terraform"
+    
+    if [ ! -d "$terraform_dir" ]; then
+        log_error "terraform directory not found at $terraform_dir"
+        return 1
+    fi
+
+    # Export AWS credentials for terraform backend (needed for tofu output)
+    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+    # Load current cluster info using cluster-info (which handles credentials)
+    log_warning "Getting cluster information..."
+    
+    # Get cluster info and extract only the JSON part (last line that starts with {)
+    local cluster_info_output
+    cluster_info_output=$(cpc_tofu cluster-info --format json 2>/dev/null)
+    local cluster_summary
+    cluster_summary=$(echo "$cluster_info_output" | grep '^{.*}$' | tail -1)
+    
+    if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
+        log_error "Could not get cluster information from terraform"
+        log_info "Make sure terraform is applied and cluster is running"
+        return 1
+    fi
+    
+    # Generate inventory from cluster_summary
+    local inventory_json
+    inventory_json=$(echo "$cluster_summary" | jq '{
+      "_meta": {
+        "hostvars": (
+          to_entries | reduce .[] as $item ({}; 
+            . + {
+              ($item.value.IP): {
+                "ansible_host": $item.value.IP,
+                "node_name": $item.key,
+                "hostname": $item.value.hostname,
+                "vm_id": $item.value.VM_ID,
+                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            } + {
+              ($item.value.hostname): {
+                "ansible_host": $item.value.IP,
+                "node_name": $item.key,
+                "hostname": $item.value.hostname,
+                "vm_id": $item.value.VM_ID,
+                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            }
+          )
+        )
+      },
+      "all": {
+        "children": ["control_plane", "workers"]
+      },
+      "control_plane": {
+        "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("controlplane")) | .value.hostname) | .[]]
+      },
+      "workers": {
+        "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("worker")) | .value.hostname) | .[]]
+      }
+    }')
+    
+    # Write to cache file
+    echo "$inventory_json" > "$cache_file"
+    
+    log_success "Ansible inventory cache updated at $cache_file"
+    log_info "Inventory contents:"
+    jq '.' "$cache_file"
+}
+
 #----------------------------------------------------------------------
 # Export functions for use by other modules
 #----------------------------------------------------------------------
@@ -298,6 +393,7 @@ export -f ansible_show_help
 export -f ansible_show_run_command_help
 export -f ansible_list_playbooks
 export -f ansible_update_inventory_cache
+export -f ansible_update_inventory_cache_advanced
 
 #----------------------------------------------------------------------
 # Module help function
@@ -305,13 +401,15 @@ export -f ansible_update_inventory_cache
 ansible_help() {
     echo "Ansible Module (modules/20_ansible.sh)"
     echo "  run-ansible <playbook> [opts] - Execute Ansible playbook with context"
+    echo "  update-inventory              - Update inventory cache from cluster state"
     echo ""
     echo "Functions:"
-    echo "  cpc_ansible()                  - Main ansible command dispatcher"
-    echo "  ansible_run_playbook()         - Execute playbooks with inventory and context"
-    echo "  ansible_show_help()            - Display run-ansible help"
-    echo "  ansible_list_playbooks()       - List available playbooks"
-    echo "  ansible_update_inventory_cache() - Update inventory cache from Terraform"
+    echo "  cpc_ansible()                          - Main ansible command dispatcher"
+    echo "  ansible_run_playbook()                 - Execute playbooks with inventory and context"
+    echo "  ansible_show_help()                    - Display run-ansible help"
+    echo "  ansible_list_playbooks()               - List available playbooks"
+    echo "  ansible_update_inventory_cache()       - Update inventory cache from Terraform"
+    echo "  ansible_update_inventory_cache_advanced() - Advanced inventory update with cluster info"
 }
 
 export -f ansible_help
