@@ -30,6 +30,9 @@ source ./modules/10_proxmox.sh
 echo "Loading tofu module..."
 source ./modules/60_tofu.sh
 
+echo "Loading ansible module..."
+source ./modules/20_ansible.sh
+
 # Set REPO_PATH for modules
 export REPO_PATH="$SCRIPT_DIR"
 
@@ -72,6 +75,12 @@ cpc_tofu start-vms --help | head -3
 echo ""
 echo "Generate hostnames help:"
 cpc_tofu generate-hostnames --help | head -3
+
+echo ""
+echo "Testing Ansible module functions..."
+log_info "Testing ansible help functions:"
+echo "Run-ansible help:"
+cpc_ansible run-ansible --help | head -5
 
 echo ""
 echo "Testing Proxmox module functions..."
