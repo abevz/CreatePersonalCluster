@@ -318,6 +318,13 @@ display_usage() {
   echo "  configure-coredns              Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
   echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
   echo ""
+  echo "DNS/SSL Management:"
+  echo "  regenerate-certificates        Regenerate Kubernetes certificates with DNS hostname support"
+  echo "  test-dns <domain>              Test DNS resolution within the cluster"
+  echo "  verify-certificates            Verify SSL certificate validity and SANs"
+  echo "  check-cluster-dns              Comprehensive cluster DNS functionality check"
+  echo "  inspect-cert <cert-path>       Inspect specific certificate file details"
+  echo ""
   echo "Use 'cpc <command> --help' for more details on a specific command."
 }
 
@@ -1431,6 +1438,27 @@ case "$COMMAND" in
 
   configure-coredns)
     cpc_cluster_ops configure-coredns "$@"
+    ;;
+
+  # DNS/SSL commands
+  regenerate-certificates|regenerate-cert)
+    cpc_dns_ssl regenerate-certificates "$@"
+    ;;
+
+  test-dns|test-resolution)
+    cpc_dns_ssl test-dns "$@"
+    ;;
+
+  verify-certificates|verify-cert|check-cert)
+    cpc_dns_ssl verify-certificates "$@"
+    ;;
+
+  check-cluster-dns|test-cluster-dns)
+    cpc_dns_ssl check-cluster-dns "$@"
+    ;;
+
+  inspect-cert|show-cert)
+    cpc_dns_ssl inspect-cert "$@"
     ;;
 
   stop-vms)
