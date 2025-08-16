@@ -53,11 +53,8 @@ locals {
   workspace_ip_map = {
     "ubuntu"         = 1  # IP block #1: starting at static_ip_start + (1*block_size)
     "debian"         = 2  # IP block #2: starting at static_ip_start + (2*block_size)  
-    "k8s129-test"    = 4  # IP block #4: starting at static_ip_start + (4*block_size)
-    "k8s133"         = 5  # IP block #5: starting at static_ip_start + (5*block_size)
     "rocky"          = 6  # IP block #6: starting at static_ip_start + (6*block_size)
     "suse"           = 7  # IP block #7: starting at static_ip_start + (7*block_size)
-    "test-workspace" = 8  # IP block #8: starting at static_ip_start + (8*block_size)
   }
 
   # Calculate the base IP for the current workspace
