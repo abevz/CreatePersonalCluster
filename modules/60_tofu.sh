@@ -29,6 +29,9 @@ function cpc_tofu() {
         generate-hostnames|gen_hostnames)
             tofu_generate_hostnames "$@"
             ;;
+        cluster-info)
+            tofu_show_cluster_info "$@"
+            ;;
         *)
             log_error "Unknown tofu command: $command"
             return 1
@@ -283,6 +286,167 @@ function tofu_stop_vms() {
         exit 1
     fi
     log_success "VMs in context '$current_ctx' should now be stopping."
+}
+
+# Display cluster information in table or JSON format
+function tofu_show_cluster_info() {
+    local format="table"  # default format
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                tofu_cluster_info_help
+                return 0
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    if [[ "$format" != "table" && "$format" != "json" ]]; then
+        log_error "Invalid format '$format'. Supported formats: table, json"
+        return 1
+    fi
+
+    local current_ctx tf_dir
+    current_ctx=$(get_current_cluster_context) || return 1
+    tf_dir="$REPO_PATH/terraform"
+
+    if [ "$format" != "json" ]; then
+        log_info "Getting cluster information for context '$current_ctx'..."
+    fi
+
+    # Export AWS credentials for terraform backend
+    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+    # Load workspace environment variables for proper Terraform context
+    tofu_load_workspace_env_vars "$current_ctx"
+
+    pushd "$tf_dir" > /dev/null || { 
+        log_error "Failed to change to terraform directory"
+        return 1
+    }
+    
+    # Ensure we're in the correct workspace
+    if ! tofu workspace select "$current_ctx" &>/dev/null; then
+        log_error "Failed to select Tofu workspace '$current_ctx'"
+        popd > /dev/null
+        return 1
+    fi
+
+    # Get the simplified cluster summary
+    local cluster_summary
+    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null)
+    if [ $? -eq 0 ] && [ "$cluster_summary" != "null" ]; then
+        if [ "$format" = "json" ]; then
+            # Output raw JSON - check if it has .value or is direct
+            if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
+                echo "$cluster_summary" | jq '.value'
+            else
+                echo "$cluster_summary"
+            fi
+        else
+            # Table format - handle both .value and direct JSON
+            local json_data
+            if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
+                json_data=$(echo "$cluster_summary" | jq '.value')
+            else
+                json_data="$cluster_summary"
+            fi
+            
+            echo ""
+            echo -e "${GREEN}=== Cluster Information ===${ENDCOLOR}"
+            echo ""
+            printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
+            printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
+            
+            # Parse JSON and display in a table format
+            echo "$json_data" | jq -r 'to_entries[] | "\(.key) \(.value.VM_ID) \(.value.hostname) \(.value.IP)"' | \
+            while read -r node vm_id hostname ip; do
+                printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
+            done
+            echo ""
+        fi
+    else
+        log_error "Failed to get cluster summary. Make sure VMs are deployed."
+        popd > /dev/null
+        return 1
+    fi
+
+    popd > /dev/null
+}
+
+# Load workspace environment variables for Terraform context
+function tofu_load_workspace_env_vars() {
+    local current_ctx="$1"
+    local env_file="$REPO_PATH/envs/$current_ctx.env"
+    
+    if [ ! -f "$env_file" ]; then
+        return 0
+    fi
+    
+    # Load workspace-specific variables
+    local var_name var_value
+    while IFS='=' read -r var_name var_value; do
+        # Skip comments and empty lines
+        [[ "$var_name" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$var_name" ]] && continue
+        
+        # Remove quotes from value
+        var_value=$(echo "$var_value" | tr -d '"')
+        
+        case "$var_name" in
+            RELEASE_LETTER)
+                [ -n "$var_value" ] && export TF_VAR_release_letter="$var_value"
+                ;;
+            ADDITIONAL_WORKERS)
+                [ -n "$var_value" ] && export TF_VAR_additional_workers="$var_value"
+                ;;
+            ADDITIONAL_CONTROLPLANES)
+                [ -n "$var_value" ] && export TF_VAR_additional_controlplanes="$var_value"
+                ;;
+            STATIC_IP_BASE)
+                [ -n "$var_value" ] && export TF_VAR_static_ip_base="$var_value"
+                ;;
+            STATIC_IP_GATEWAY)
+                [ -n "$var_value" ] && export TF_VAR_static_ip_gateway="$var_value"
+                ;;
+            STATIC_IP_START)
+                [ -n "$var_value" ] && export TF_VAR_static_ip_start="$var_value"
+                ;;
+            NETWORK_CIDR)
+                [ -n "$var_value" ] && export TF_VAR_network_cidr="$var_value"
+                ;;
+            WORKSPACE_IP_BLOCK_SIZE)
+                [ -n "$var_value" ] && export TF_VAR_workspace_ip_block_size="$var_value"
+                ;;
+        esac
+    done < <(grep -E "^[A-Z_]+=" "$env_file" || true)
+}
+
+# Display help for cluster-info command
+function tofu_cluster_info_help() {
+    echo "Usage: cpc cluster-info [--format <format>]"
+    echo ""
+    echo "Display simplified cluster information showing only essential details:"
+    echo "  - VM_ID: Proxmox VM identifier"
+    echo "  - hostname: VM hostname (node name)"
+    echo "  - IP: VM IP address"
+    echo ""
+    echo "Options:"
+    echo "  --format <format>  Output format: 'table' (default) or 'json'"
+    echo ""
+    echo "This command provides a clean, concise view of your cluster infrastructure"
+    echo "without the detailed debug information from 'cpc deploy output'."
 }
 
 log_debug "Module 60_tofu.sh loaded successfully"

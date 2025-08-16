@@ -33,6 +33,9 @@ source ./modules/60_tofu.sh
 echo "Loading ansible module..."
 source ./modules/20_ansible.sh
 
+echo "Loading k8s cluster module..."
+source ./modules/30_k8s_cluster.sh
+
 # Set REPO_PATH for modules
 export REPO_PATH="$SCRIPT_DIR"
 
@@ -75,6 +78,15 @@ cpc_tofu start-vms --help | head -3
 echo ""
 echo "Generate hostnames help:"
 cpc_tofu generate-hostnames --help | head -3
+
+echo ""
+echo "Testing K8s Cluster module functions..."
+log_info "Testing k8s cluster help functions:"
+echo "Get-kubeconfig help:"
+cpc_k8s_cluster get-kubeconfig --help | head -5
+echo ""
+echo "Cluster-info help:"
+cpc_k8s_cluster cluster-info --help | head -5
 
 echo ""
 echo "Testing Ansible module functions..."
