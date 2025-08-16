@@ -5,6 +5,7 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
+    "k8s129" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "k8s129-test" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "k8s133" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "debian"        = var.pm_template_debian_id
@@ -18,6 +19,7 @@ locals {
   # Define a map for release letters based on the OS type (derived from workspace name)
   # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
   release_letters_map = {
+    "k8s129" = "k"  # Auto-added by clone-workspace
     "k8s129-test" = "k"  # Auto-added by clone-workspace
     "k8s133" = "j"  # Auto-added by clone-workspace
     "debian"        = "d"
@@ -38,6 +40,7 @@ locals {
 
   # VM ID ranges per OS type
   vm_id_ranges = {
+    "k8s129" = 800  # Auto-added by clone-workspace
     "k8s129-test" = 700  # Fixed: Use unique range for k8s129-test
     "k8s133" = 610  # Auto-added by clone-workspace
     "debian"        = 200
@@ -46,6 +49,24 @@ locals {
     "suse"          = 500
     "test-workspace" = 600  # Fixed: Use 600 range instead of full VM ID
   }
+
+  # Workspace IP mapping for automatic IP block distribution
+  # Each workspace gets a block of var.workspace_ip_block_size IPs
+  # Formula: workspace_base_ip = var.static_ip_start + (workspace_index * var.workspace_ip_block_size)
+  workspace_ip_map = {
+    "ubuntu"         = 1  # IP block #1: starting at static_ip_start + (1*block_size)
+    "debian"         = 2  # IP block #2: starting at static_ip_start + (2*block_size)  
+    "k8s129"         = 3  # IP block #3: starting at static_ip_start + (3*block_size)
+    "k8s129-test"    = 4  # IP block #4: starting at static_ip_start + (4*block_size)
+    "k8s133"         = 5  # IP block #5: starting at static_ip_start + (5*block_size)
+    "rocky"          = 6  # IP block #6: starting at static_ip_start + (6*block_size)
+    "suse"           = 7  # IP block #7: starting at static_ip_start + (7*block_size)
+    "test-workspace" = 8  # IP block #8: starting at static_ip_start + (8*block_size)
+  }
+
+  # Calculate the base IP for the current workspace
+  workspace_ip_index = lookup(local.workspace_ip_map, local.effective_os_type, 0)
+  workspace_base_ip = var.static_ip_start + (local.workspace_ip_index * var.workspace_ip_block_size)
 
   # Base configuration for node types, replacing old local.k8s_nodes
   base_node_definitions = {
@@ -118,6 +139,9 @@ locals {
 
       vm_id             = local.vm_id_ranges[local.effective_os_type] + definition.id_offset
       role              = definition.role # For cloud-init fqdn
+      # IP offset for static IP assignment using workspace block system
+      # Calculate: workspace_base_ip + node_role_offset + node_index
+      ip_offset         = local.workspace_base_ip + (definition.role == "c" ? 0 : 5) + definition.original_index - 1
 
       pve_nodes         = [var.pm_node]
       machine           = null # Set to null to use Proxmox default

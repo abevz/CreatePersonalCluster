@@ -1,13 +1,39 @@
 #!/bin/bash
 
-# Color definitions
+# =============================================================================
+# CPC (Cluster Provision & Configure) - Main Script
+# =============================================================================
+# Enhanced with modular architecture for better maintainability
+
+# Color definitions (kept for backward compatibility)
 export GREEN='\033[32m'
 export RED='\033[0;31m'
 export YELLOW='\033[0;33m'
 export BLUE='\033[1;34m'
 export ENDCOLOR='\033[0m'
 
-# Configuration
+# --- Load Modular Architecture ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load configuration first
+if [ -f "$SCRIPT_DIR/config.conf" ]; then
+    source "$SCRIPT_DIR/config.conf"
+fi
+
+# Load libraries
+for lib in "$SCRIPT_DIR/lib"/*.sh; do
+    [ -f "$lib" ] && source "$lib"
+done
+
+# Load modules  
+for module in "$SCRIPT_DIR/modules"/*.sh; do
+    [ -f "$module" ] && source "$module"
+done
+
+# Set REPO_PATH for modules
+export REPO_PATH="$SCRIPT_DIR"
+
+# Configuration (legacy, will be moved to config.conf)
 CONFIG_DIR="$HOME/.config/cpc" # Updated for CreatePersonalCluster project
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
 CLUSTER_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
@@ -160,6 +186,23 @@ load_env_vars() {
     source "$repo_root/$CPC_ENV_FILE" # Changed from CCR_ENV_FILE
     set +a # Stop automatically exporting
     echo -e "${BLUE}Loaded environment variables from $CPC_ENV_FILE${ENDCOLOR}" # Changed from CCR_ENV_FILE
+    
+    # Export static IP configuration variables to Terraform
+    if [ -n "$NETWORK_CIDR" ]; then
+      export TF_VAR_network_cidr="$NETWORK_CIDR"
+    fi
+    if [ -n "$STATIC_IP_START" ]; then
+      export TF_VAR_static_ip_start="$STATIC_IP_START"
+    fi
+    if [ -n "$WORKSPACE_IP_BLOCK_SIZE" ]; then
+      export TF_VAR_workspace_ip_block_size="$WORKSPACE_IP_BLOCK_SIZE"
+    fi
+    if [ -n "$STATIC_IP_BASE" ]; then
+      export TF_VAR_static_ip_base="$STATIC_IP_BASE"
+    fi
+    if [ -n "$STATIC_IP_GATEWAY" ]; then
+      export TF_VAR_static_ip_gateway="$STATIC_IP_GATEWAY"
+    fi
     
     # Set workspace-specific template variables based on current context
     # This function should only be called after REPO_PATH is set
@@ -442,228 +485,7 @@ case "$COMMAND" in
     ;;
 
   get-kubeconfig)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc get-kubeconfig [--context-name <name>] [--force]"
-      echo ""
-      echo "Retrieves the Kubernetes cluster configuration from the control plane node"
-      echo "and merges it into your local kubeconfig file (~/.kube/config)."
-      echo ""
-      echo "Options:"
-      echo "  --context-name <name>  Set a custom context name (default: cluster-<cpc_context>)"
-      echo "  --force               (Optional) Explicit flag to confirm overwriting existing context"
-      echo ""
-      echo "Note: Existing contexts with the same name will be automatically overwritten."
-      echo ""
-      echo "The command will:"
-      echo "  1. Connect to the control plane node and retrieve /etc/kubernetes/admin.conf"
-      echo "  2. Update server endpoint to use the control plane node's IP"
-      echo "  3. Merge the configuration into your local kubeconfig"
-      echo "  4. Set the new context as the current context"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    custom_context_name=""
-    force_overwrite=false
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --context-name)
-          custom_context_name="$2"
-          shift 2
-          ;;
-        --force)
-          force_overwrite=true
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    # Get current cluster context and repo path
-    current_ctx=$(get_current_cluster_context)
-    repo_root=$(get_repo_path)
-    
-    # Set context name
-    if [ -z "$custom_context_name" ]; then
-      context_name="cluster-${current_ctx}"
-    else
-      context_name="$custom_context_name"
-    fi
-
-    echo -e "${BLUE}Retrieving kubeconfig for cluster context: $current_ctx${ENDCOLOR}"
-    echo -e "${BLUE}Kubernetes context will be named: $context_name${ENDCOLOR}"
-
-    # Warn if context already exists
-    if kubectl config get-contexts -o name | grep -q "^${context_name}$"; then
-      if [ "$force_overwrite" = false ]; then
-        echo -e "${YELLOW}Context '$context_name' already exists and will be overwritten.${ENDCOLOR}"
-        echo -e "${YELLOW}Use --context-name to use a different name if desired.${ENDCOLOR}"
-      else
-        echo -e "${BLUE}Context '$context_name' exists and will be overwritten (--force specified).${ENDCOLOR}"
-      fi
-    fi
-
-    # Get control plane IP from Terraform/Tofu output
-    pushd "$repo_root/terraform" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
-    
-    # Ensure we're in the correct workspace
-    if ! tofu workspace select "$current_ctx" &>/dev/null; then
-      echo -e "${RED}Failed to select Tofu workspace '$current_ctx'${ENDCOLOR}" >&2
-      popd > /dev/null
-      exit 1
-    fi
-
-    # Get control plane node IP and try to resolve hostname
-    control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value')
-    if [ -z "$control_plane_ip" ] || [ "$control_plane_ip" = "null" ]; then
-      echo -e "${RED}Failed to get control plane IP from Tofu output${ENDCOLOR}" >&2
-      echo -e "${RED}Make sure the cluster is deployed and 'tofu output k8s_node_ips' returns valid data${ENDCOLOR}" >&2
-      popd > /dev/null
-      exit 1
-    fi
-
-    # Get hostname information from inventory
-    control_plane_hostname=$(python3 "$repo_root/ansible/inventory/tofu_inventory.py" --list 2>/dev/null | jq -r '._meta.hostvars["'$control_plane_ip'"].hostname // empty')
-    
-    popd > /dev/null
-
-    # Determine the best endpoint to use (prefer DNS hostname if resolvable)
-    api_server_endpoint=""
-    if [ -n "$control_plane_hostname" ]; then
-      echo -e "${BLUE}Found control plane hostname: $control_plane_hostname${ENDCOLOR}"
-      # Test if hostname resolves
-      if nslookup "$control_plane_hostname" >/dev/null 2>&1; then
-        api_server_endpoint="$control_plane_hostname"
-        echo -e "${GREEN}Using DNS hostname: $api_server_endpoint${ENDCOLOR}"
-      else
-        echo -e "${YELLOW}DNS hostname $control_plane_hostname does not resolve, falling back to IP${ENDCOLOR}"
-        api_server_endpoint="$control_plane_ip"
-      fi
-    else
-      echo -e "${YELLOW}No hostname found in inventory, using IP address${ENDCOLOR}"
-      api_server_endpoint="$control_plane_ip"
-    fi
-
-    echo -e "${BLUE}Control plane IP: $control_plane_ip${ENDCOLOR}"
-    echo -e "${BLUE}API server endpoint: $api_server_endpoint:6443${ENDCOLOR}"
-
-    # Create temporary directory for kubeconfig operations
-    temp_dir=$(mktemp -d)
-    temp_kubeconfig="$temp_dir/admin.conf"
-    
-    # Cleanup function
-    cleanup_temp() {
-      rm -rf "$temp_dir"
-    }
-    trap cleanup_temp EXIT
-
-    # Get ansible config to determine remote user
-    ansible_dir="$repo_root/ansible"
-    remote_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'root')
-
-    echo -e "${BLUE}Retrieving kubeconfig from control plane node...${ENDCOLOR}"
-    
-    # Copy kubeconfig from control plane node using sudo
-    if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-         "${remote_user}@${control_plane_ip}" \
-         "sudo cat /etc/kubernetes/admin.conf" > "$temp_kubeconfig" 2>/dev/null; then
-      echo -e "${RED}Failed to retrieve kubeconfig from control plane node${ENDCOLOR}" >&2
-      echo -e "${RED}Make sure you can SSH to $control_plane_ip as user $remote_user and use sudo${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Update server endpoint in the kubeconfig to use the preferred endpoint
-    if ! sed -i "s|server: https://.*:6443|server: https://${api_server_endpoint}:6443|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update server endpoint in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Update context and user names to avoid conflicts
-    if ! sed -i "s|kubernetes-admin@kubernetes|${context_name}|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update context name in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|name: kubernetes-admin|name: ${context_name}-admin|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update user name in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|name: kubernetes|name: ${context_name}-cluster|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update cluster name in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|cluster: kubernetes|cluster: ${context_name}-cluster|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update cluster reference in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|user: kubernetes-admin|user: ${context_name}-admin|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update user reference in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Merge the kubeconfig
-    echo -e "${BLUE}Merging kubeconfig into ~/.kube/config...${ENDCOLOR}"
-    
-    # Backup existing kubeconfig if it exists
-    if [ -f ~/.kube/config ]; then
-      cp ~/.kube/config ~/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
-      echo -e "${BLUE}Existing kubeconfig backed up${ENDCOLOR}"
-    fi
-
-    # Ensure .kube directory exists
-    mkdir -p ~/.kube
-
-    # Merge kubeconfig
-    if [ -f ~/.kube/config ] && [ -s ~/.kube/config ]; then
-      # Existing config exists and is not empty
-      
-      # Remove existing context if it exists to avoid conflicts
-      if kubectl config get-contexts -o name | grep -q "^${context_name}$"; then
-        echo -e "${BLUE}Removing existing context '$context_name' to avoid conflicts...${ENDCOLOR}"
-        kubectl config delete-context "$context_name" &>/dev/null || true
-        kubectl config delete-cluster "${context_name}-cluster" &>/dev/null || true
-        kubectl config delete-user "${context_name}-admin" &>/dev/null || true
-      fi
-      
-      KUBECONFIG=~/.kube/config:$temp_kubeconfig kubectl config view --flatten > ~/.kube/config.tmp
-      if [ -s ~/.kube/config.tmp ]; then
-        mv ~/.kube/config.tmp ~/.kube/config
-      else
-        echo -e "${YELLOW}Warning: Merge resulted in empty config, using new config only${ENDCOLOR}"
-        cp "$temp_kubeconfig" ~/.kube/config
-      fi
-    else
-      # No existing config or empty config
-      cp "$temp_kubeconfig" ~/.kube/config
-    fi
-
-    # Set the new context as current
-    if kubectl config use-context "$context_name" &>/dev/null; then
-      echo -e "${GREEN}Successfully set '$context_name' as the current context${ENDCOLOR}"
-    else
-      echo -e "${YELLOW}Kubeconfig merged but failed to set '$context_name' as current context${ENDCOLOR}"
-      echo -e "${YELLOW}You can manually switch using: kubectl config use-context $context_name${ENDCOLOR}"
-    fi
-
-    # Test the connection
-    echo -e "${BLUE}Testing connection to cluster...${ENDCOLOR}"
-    if kubectl cluster-info --context "$context_name" &>/dev/null; then
-      echo -e "${GREEN}Successfully connected to Kubernetes cluster!${ENDCOLOR}"
-      echo -e "${BLUE}Cluster information:${ENDCOLOR}"
-      kubectl cluster-info --context "$context_name"
-    else
-      echo -e "${YELLOW}Kubeconfig retrieved but connection test failed${ENDCOLOR}"
-      echo -e "${YELLOW}Please check cluster status and network connectivity${ENDCOLOR}"
-    fi
-
-    echo -e "${GREEN}Kubeconfig setup completed for context: $context_name${ENDCOLOR}"
+    cpc_tofu get-kubeconfig "$@"
     ;;
 
   add-vm)
@@ -1253,6 +1075,29 @@ EOF
     done
     sed -i "/vm_id_ranges = {/a \    \"$destination_workspace\" = $new_range  # Auto-added by clone-workspace" "$locals_tf"
     
+    # Add to workspace_ip_map with next available IP index
+    used_ip_indices=()
+    while IFS= read -r line; do
+      if [[ "$line" =~ \"[^\"]+\"[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+        ip_index=${BASH_REMATCH[1]}
+        used_ip_indices+=("$ip_index")
+      fi
+    done < <(grep -A 20 "workspace_ip_map = {" "$locals_tf" | grep -E '= [0-9]+')
+    
+    # Find next available IP index starting from 1
+    new_ip_index=1
+    while [[ " ${used_ip_indices[*]} " =~ " ${new_ip_index} " ]]; do
+      new_ip_index=$((new_ip_index + 1))
+    done
+    
+    # Calculate IP range for this workspace
+    ip_start=$((110 + (new_ip_index * 10)))
+    ip_end=$((ip_start + 9))
+    
+    sed -i "/workspace_ip_map = {/a \    \"$destination_workspace\" = $new_ip_index  # IP block #$new_ip_index: 10.10.10.$ip_start-$ip_end" "$locals_tf"
+    
+    echo -e "${BLUE}Assigned IP block #$new_ip_index (10.10.10.$ip_start-$ip_end) to workspace '$destination_workspace'${ENDCOLOR}"
+    
     echo -e "${BLUE}Updated locals.tf with new workspace entries${ENDCOLOR}"
     
     # Update validations.tf if it exists
@@ -1423,6 +1268,9 @@ EOF
     
     # Remove from vm_id_ranges
     sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*[0-9][0-9]*[[:space:]]*#.*clone-workspace/d" "$locals_tf"
+    
+    # Remove from workspace_ip_map (IP block assignments)
+    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*[0-9][0-9]*[[:space:]]*#.*IP block/d" "$locals_tf"
     
     echo -e "${BLUE}- Removed entries from locals.tf${ENDCOLOR}"
     
@@ -2966,6 +2814,33 @@ EOF
       if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
         export TF_VAR_additional_controlplanes="$ADDITIONAL_CONTROLPLANES"
       fi
+      
+      # Static IP configuration variables
+      STATIC_IP_BASE=$(grep -E "^STATIC_IP_BASE=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$STATIC_IP_BASE" ]; then
+        export TF_VAR_static_ip_base="$STATIC_IP_BASE"
+      fi
+      
+      STATIC_IP_GATEWAY=$(grep -E "^STATIC_IP_GATEWAY=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$STATIC_IP_GATEWAY" ]; then
+        export TF_VAR_static_ip_gateway="$STATIC_IP_GATEWAY"
+      fi
+      
+      STATIC_IP_START=$(grep -E "^STATIC_IP_START=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$STATIC_IP_START" ]; then
+        export TF_VAR_static_ip_start="$STATIC_IP_START"
+      fi
+      
+      # Advanced IP block system variables
+      NETWORK_CIDR=$(grep -E "^NETWORK_CIDR=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$NETWORK_CIDR" ]; then
+        export TF_VAR_network_cidr="$NETWORK_CIDR"
+      fi
+      
+      WORKSPACE_IP_BLOCK_SIZE=$(grep -E "^WORKSPACE_IP_BLOCK_SIZE=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
+      if [ -n "$WORKSPACE_IP_BLOCK_SIZE" ]; then
+        export TF_VAR_workspace_ip_block_size="$WORKSPACE_IP_BLOCK_SIZE"
+      fi
     fi
 
     pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
@@ -3018,127 +2893,11 @@ EOF
     ;;
 
   deploy)
-    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
-      echo "Usage: cpc deploy <tofu_command> [additional_tofu_options]"
-      echo ""
-      echo "Runs the specified 'tofu' command (e.g., plan, apply, validate, output, destroy) in the"
-      echo "Terraform directory for the current cpc context."
-      echo ""
-      echo "Key features:"
-      echo "  - Automatically changes to the '$REPO_PATH/terraform' directory."
-      echo "  - Ensures the Tofu workspace matches the current cpc context (e.g., 'debian', 'ubuntu')."
-      echo "  - For 'tofu plan', 'apply', 'destroy', 'import', and 'console' commands, automatically includes"
-      echo "    the context-specific variables file (e.g., 'environments/\$CONTEXT.tfvars') if it exists."
-      echo ""
-      echo "Examples:"
-      echo "  cpc deploy plan                                 # Plan changes for the current context"
-      echo "  cpc deploy apply -auto-approve                  # Apply changes with auto-approval"
-      echo "  cpc deploy output k8s_node_ips             # Get a specific output"
-      echo "  cpc deploy validate                             # Validate the configuration"
-      echo "  cpc deploy destroy -target=proxmox_vm_kvm.vm[0] # Destroy a specific resource"
-      echo "  cpc deploy workspace list                       # List Tofu workspaces"
-      exit 0
-    fi
-
-    current_ctx=$(get_current_cluster_context)
-    tf_dir="$REPO_PATH/terraform"
-    tfvars_file="$tf_dir/environments/${current_ctx}.tfvars"
-
-    echo -e "${BLUE}Preparing to run 'tofu $*' for context '$current_ctx' in $tf_dir...${ENDCOLOR}"
-
-    # Load RELEASE_LETTER from workspace environment file if it exists
-    env_file="$REPO_PATH/envs/$current_ctx.env"
-    if [ -f "$env_file" ]; then
-      RELEASE_LETTER=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$RELEASE_LETTER" ]; then
-        export TF_VAR_release_letter="$RELEASE_LETTER"
-        echo -e "${BLUE}Using RELEASE_LETTER='$RELEASE_LETTER' from workspace environment file${ENDCOLOR}"
-      fi
-      
-      ADDITIONAL_WORKERS=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$ADDITIONAL_WORKERS" ]; then
-        export TF_VAR_additional_workers="$ADDITIONAL_WORKERS"
-        echo -e "${BLUE}Using ADDITIONAL_WORKERS='$ADDITIONAL_WORKERS' from workspace environment file${ENDCOLOR}"
-      fi
-      
-      ADDITIONAL_CONTROLPLANES=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
-        export TF_VAR_additional_controlplanes="$ADDITIONAL_CONTROLPLANES"
-        echo -e "${BLUE}Using ADDITIONAL_CONTROLPLANES='$ADDITIONAL_CONTROLPLANES' from workspace environment file${ENDCOLOR}"
-      fi
-    fi
-
-    pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to directory $tf_dir${ENDCOLOR}"; exit 1; }
-    selected_workspace=$(tofu workspace show)
-    if [ "$selected_workspace" != "$current_ctx" ]; then
-        echo -e "${YELLOW}Warning: Current Tofu workspace ('$selected_workspace') does not match cpc context ('$current_ctx').${ENDCOLOR}"
-        echo -e "${YELLOW}Attempting to select workspace '$current_ctx'...${ENDCOLOR}"
-        tofu workspace select "$current_ctx"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}Error selecting Tofu workspace '$current_ctx'. Please check your Tofu setup.${ENDCOLOR}" >&2
-            popd > /dev/null
-            exit 1
-        fi
-    fi
-
-    tofu_subcommand="$1"
-    shift # Remove subcommand, rest are its arguments
-
-    final_tofu_cmd_array=(tofu "$tofu_subcommand")
-    
-    # Generate node hostname configurations for Proxmox if applying or planning
-    if [ "$tofu_subcommand" = "apply" ] || [ "$tofu_subcommand" = "plan" ]; then
-      echo -e "${BLUE}Generating node hostname configurations...${ENDCOLOR}"
-      if [ -x "$REPO_PATH/scripts/generate_node_hostnames.sh" ]; then
-        pushd "$REPO_PATH/scripts" > /dev/null
-        ./generate_node_hostnames.sh
-        HOSTNAME_SCRIPT_STATUS=$?
-        popd > /dev/null
-        
-        if [ $HOSTNAME_SCRIPT_STATUS -ne 0 ]; then
-          echo -e "${YELLOW}Warning: Hostname generation script returned non-zero status. Some VMs may have incorrect hostnames.${ENDCOLOR}"
-        else
-          echo -e "${GREEN}Hostname configurations generated successfully.${ENDCOLOR}"
-        fi
-      else
-        echo -e "${YELLOW}Warning: Hostname generation script not found or not executable. Some VMs may have incorrect hostnames.${ENDCOLOR}"
-      fi
-    fi
-
-    # Check if the subcommand is one that accepts -var-file
-    case "$tofu_subcommand" in
-      apply|plan|destroy|import|console)
-        if [ -f "$tfvars_file" ]; then
-          final_tofu_cmd_array+=("-var-file=$tfvars_file")
-          echo -e "${BLUE}Using tfvars file: $tfvars_file${ENDCOLOR}"
-        else
-          echo -e "${YELLOW}Warning: No specific tfvars file found for context '$current_ctx' at $tfvars_file. Using defaults if applicable.${ENDCOLOR}"
-        fi
-        ;;
-    esac
-
-    # Append remaining user-provided arguments
-    if [[ $# -gt 0 ]]; then
-      final_tofu_cmd_array+=("$@")
-    fi
-
-    echo -e "${BLUE}Executing: ${final_tofu_cmd_array[*]}${ENDCOLOR}"
-    "${final_tofu_cmd_array[@]}"
-    cmd_exit_code=$?
-
-    popd > /dev/null || exit 1
-
-    if [ $cmd_exit_code -ne 0 ]; then
-      echo -e "${RED}Error: '${final_tofu_cmd_array[*]}' failed with exit code $cmd_exit_code.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'.${ENDCOLOR}"
+    cpc_tofu deploy "$@"
     ;;
 
   generate-hostnames)
-    check_secrets_loaded
-    echo -e "${GREEN}Generating node hostname snippets...${ENDCOLOR}"
-    "$REPO_PATH/scripts/generate_node_hostnames.sh"
+    cpc_tofu generate-hostnames "$@"
     ;;
 
   run-ansible)
@@ -3188,42 +2947,11 @@ EOF
     ;;
 
   gen_hostnames)
-    echo "Generating node hostname configurations..."
-    if [[ -f "$REPO_PATH/scripts/generate_node_hostnames.sh" ]]; then
-      pushd "$REPO_PATH/scripts" > /dev/null
-      ./generate_node_hostnames.sh
-      HOSTNAME_SCRIPT_STATUS=$?
-      popd > /dev/null
-      
-      if [ $HOSTNAME_SCRIPT_STATUS -ne 0 ]; then
-        echo -e "${RED}Error: Hostname generation failed with status $HOSTNAME_SCRIPT_STATUS${ENDCOLOR}"
-        exit 1
-      else
-        echo -e "${GREEN}Hostname configurations generated successfully.${ENDCOLOR}"
-      fi
-    else 
-      echo -e "${RED}Hostname generation script not found at $REPO_PATH/scripts/generate_node_hostnames.sh${ENDCOLOR}"
-      exit 1
-    fi
+    cpc_tofu gen_hostnames "$@"
     ;;
 
   start-vms)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc start-vms"
-      echo "Starts all VMs in the current cpc context by running 'tofu apply' with vm_started=true."
-      exit 0
-    fi
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${BLUE}Starting VMs for context '$current_ctx'...${ENDCOLOR}"
-    # Call the deploy command internally, passing the appropriate tofu apply options
-    # Ensure that the deploy command is in the PATH or use its full path if cpc is not installed globally
-    # Assuming cpc is in PATH for simplicity here. If not, use: "$0" deploy ...
-    "$0" deploy apply -var="vm_started=true" -auto-approve
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Error starting VMs for context '$current_ctx'.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}VMs in context '$current_ctx' should now be starting.${ENDCOLOR}"
+    cpc_tofu start-vms "$@"
     ;;
 
   configure-coredns)
@@ -3318,24 +3046,7 @@ EOF
     ;;
 
   stop-vms)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc stop-vms"
-      echo "Stops all VMs in the current cpc context by running 'tofu apply' with vm_started=false."
-      exit 0
-    fi
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${BLUE}Stopping VMs for context '$current_ctx'...${ENDCOLOR}"
-    read -r -p "Are you sure you want to stop all VMs in context '$current_ctx'? [y/N] " response
-    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-      echo "Operation cancelled."
-      exit 0
-    fi
-    "$0" deploy apply -var="vm_started=false" -auto-approve
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Error stopping VMs for context '$current_ctx'.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}VMs in context '$current_ctx' should now be stopping.${ENDCOLOR}"
+    cpc_tofu stop-vms "$@"
     ;;
 
   "" | "-h" | "--help" | "help")

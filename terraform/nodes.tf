@@ -88,7 +88,14 @@ resource "proxmox_virtual_environment_vm" "node" {
 
     ip_config {
       ipv4 {
-        address = "dhcp" # Set to DHCP
+        # Dynamic IP configuration using new workspace block system
+        # Use static IP if either STATIC_IP_BASE (legacy) or ip_offset (new system) is available
+        address = var.static_ip_base != "" ? "${var.static_ip_base}${each.value.ip_offset}" : (
+          each.value.ip_offset > 0 ? "${cidrhost(var.network_cidr, each.value.ip_offset)}/24" : "dhcp"
+        )
+        gateway = var.static_ip_base != "" ? var.static_ip_gateway : (
+          each.value.ip_offset > 0 ? cidrhost(var.network_cidr, 1) : null
+        )
       }
       # IPv6 configuration omitted as ipv6.enabled is false
     }
