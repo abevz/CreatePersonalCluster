@@ -317,6 +317,7 @@ display_usage() {
   echo "  upgrade-addons                 Install/upgrade cluster addons with interactive menu (CNI, MetalLB, cert-manager, ArgoCD, etc.)."
   echo "  configure-coredns              Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
   echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
+  echo "  status|cluster-status          Check Kubernetes cluster status and health."
   echo ""
   echo "DNS/SSL Management:"
   echo "  regenerate-certificates        Regenerate Kubernetes certificates with DNS hostname support"
@@ -439,6 +440,10 @@ case "$COMMAND" in
 
   upgrade-k8s)
     cpc_k8s_cluster upgrade-k8s "$@"
+    ;;
+
+  status|cluster-status)
+    cpc_k8s_cluster status "$@"
     ;;
 
   vmctl)

@@ -45,9 +45,13 @@ cpc_k8s_cluster() {
             shift
             k8s_reset_all_nodes "$@"
             ;;
+        status|cluster-status)
+            shift
+            k8s_cluster_status "$@"
+            ;;
         *)
             log_error "Unknown k8s cluster command: ${1:-}"
-            log_info "Available commands: bootstrap, get-kubeconfig, upgrade-k8s, reset-all-nodes"
+            log_info "Available commands: bootstrap, get-kubeconfig, upgrade-k8s, reset-all-nodes, status"
             return 1
             ;;
     esac
@@ -436,6 +440,178 @@ k8s_show_upgrade_help() {
     echo "Warning: This will upgrade the control plane. Ensure you have backups!"
 }
 
+# Check Kubernetes cluster status and health
+k8s_cluster_status() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "Usage: cpc status|cluster-status"
+        echo ""
+        echo "Check Kubernetes cluster status and health in the current workspace."
+        echo "This command will:"
+        echo "1. Check if VMs are running"
+        echo "2. Test SSH connectivity to nodes"
+        echo "3. Check Kubernetes cluster status"
+        echo "4. Verify core components"
+        echo "5. Show cluster info (nodes, pods, services)"
+        echo ""
+        echo "No options required - uses current workspace context."
+        return 0
+    fi
+
+    local current_ctx
+    current_ctx=$(get_current_cluster_context) || return 1
+    
+    log_info "=== Kubernetes Cluster Status Check ==="
+    log_info "Workspace: $current_ctx"
+    echo ""
+    
+    # 1. Check VM infrastructure status
+    log_info "📋 1. Checking VM infrastructure..."
+    
+    # Use the same mechanism as cluster-info to get cluster data
+    local tf_dir="$REPO_PATH/terraform"
+    local cluster_data=""
+    
+    pushd "$tf_dir" >/dev/null 2>&1 || { 
+        log_error "Failed to change to terraform directory"
+        return 1
+    }
+    
+    # Ensure we're in the correct workspace
+    if tofu workspace select "$current_ctx" &>/dev/null; then
+        cluster_data=$(tofu output -json cluster_summary 2>/dev/null)
+        if [ $? -eq 0 ] && [ "$cluster_data" != "null" ] && [ -n "$cluster_data" ]; then
+            # Extract the actual data (handle both .value and direct JSON)
+            local json_data
+            if echo "$cluster_data" | jq -e '.value' >/dev/null 2>&1; then
+                json_data=$(echo "$cluster_data" | jq '.value')
+            else
+                json_data="$cluster_data"
+            fi
+            
+            local vm_count
+            vm_count=$(echo "$json_data" | jq '. | length' 2>/dev/null || echo "0")
+            
+            if [[ "$vm_count" -gt 0 ]]; then
+                log_success "VMs deployed: $vm_count"
+                # Show brief cluster info
+                echo ""
+                echo -e "${GREEN}Cluster VMs:${ENDCOLOR}"
+                echo "$json_data" | jq -r 'to_entries[] | "  ✓ \(.key) (\(.value.hostname)) - \(.value.IP)"'
+            else
+                log_error "No VMs found in cluster summary"
+                popd >/dev/null
+                return 1
+            fi
+        else
+            log_error "No VMs found or unable to get cluster info"
+            log_info "Run 'cpc deploy apply' to create infrastructure"
+            popd >/dev/null
+            return 1
+        fi
+    else
+        log_error "Failed to select Tofu workspace '$current_ctx'"
+        popd >/dev/null
+        return 1
+    fi
+    
+    popd >/dev/null
+    echo ""
+    
+    # 2. Check SSH connectivity
+    log_info "🔗 2. Testing SSH connectivity..."
+    if command -v ansible-inventory &> /dev/null; then
+        local hosts_reachable=0
+        local hosts_total=0
+        
+        # Get all hosts from inventory
+        while IFS= read -r host; do
+            if [[ -n "$host" && "$host" != "null" ]]; then
+                hosts_total=$((hosts_total + 1))
+                if timeout 5 ansible "$host" -m ping &>/dev/null; then
+                    hosts_reachable=$((hosts_reachable + 1))
+                    log_success "✓ $host - reachable"
+                else
+                    log_error "✗ $host - unreachable"
+                fi
+            fi
+        done < <(ansible-inventory --list 2>/dev/null | jq -r '.all.hosts[]?' 2>/dev/null || echo "")
+        
+        if [[ $hosts_total -eq 0 ]]; then
+            log_warning "No hosts found in inventory. Run 'cpc update-inventory' first."
+        elif [[ $hosts_reachable -eq $hosts_total ]]; then
+            log_success "All $hosts_total hosts reachable via SSH"
+        else
+            log_warning "$hosts_reachable/$hosts_total hosts reachable"
+        fi
+    else
+        log_warning "ansible-inventory not available, skipping SSH check"
+    fi
+    echo ""
+    
+    # 3. Check Kubernetes cluster
+    log_info "⚙️ 3. Checking Kubernetes cluster status..."
+    if command -v kubectl &> /dev/null; then
+        # Try to get cluster info
+        if kubectl cluster-info &>/dev/null; then
+            log_success "Kubernetes cluster is accessible"
+            
+            # Get nodes status
+            local nodes_ready=0
+            local nodes_total=0
+            
+            while IFS= read -r line; do
+                if [[ -n "$line" ]]; then
+                    nodes_total=$((nodes_total + 1))
+                    if echo "$line" | grep -q "Ready"; then
+                        nodes_ready=$((nodes_ready + 1))
+                        log_success "✓ $(echo "$line" | awk '{print $1}') - Ready"
+                    else
+                        log_warning "⚠ $(echo "$line" | awk '{print $1}') - $(echo "$line" | awk '{print $2}')"
+                    fi
+                fi
+            done < <(kubectl get nodes --no-headers 2>/dev/null | grep -v '^$' || echo "")
+            
+            if [[ $nodes_total -eq 0 ]]; then
+                log_error "No nodes found in cluster"
+            elif [[ $nodes_ready -eq $nodes_total ]]; then
+                log_success "All $nodes_total nodes are Ready"
+            else
+                log_warning "$nodes_ready/$nodes_total nodes are Ready"
+            fi
+            
+        else
+            log_error "Cannot connect to Kubernetes cluster"
+            log_info "Try running 'cpc get-kubeconfig' to retrieve cluster config"
+        fi
+    else
+        log_warning "kubectl not available, skipping Kubernetes check"
+    fi
+    echo ""
+    
+    # 4. Show summary
+    log_info "📊 4. Cluster Summary:"
+    if kubectl get nodes &>/dev/null; then
+        echo "Nodes:"
+        kubectl get nodes 2>/dev/null || log_error "Failed to get nodes"
+        echo ""
+        echo "System Pods:"
+        kubectl get pods -n kube-system --no-headers 2>/dev/null | awk '{print $1, $3}' | head -10 || log_error "Failed to get system pods"
+        echo ""
+        echo "Cluster version:"
+        kubectl version --short 2>/dev/null || log_error "Failed to get cluster version"
+    else
+        log_error "Kubernetes cluster not accessible"
+        log_info ""
+        log_info "💡 Next steps:"
+        log_info "  1. If VMs are running but cluster is not accessible:"
+        log_info "     → cpc get-kubeconfig"
+        log_info "  2. If cluster is not bootstrapped:"
+        log_info "     → cpc bootstrap"
+        log_info "  3. If VMs are not deployed:"
+        log_info "     → cpc deploy apply"
+    fi
+}
+
 #----------------------------------------------------------------------
 # Export functions for use by other modules
 #----------------------------------------------------------------------
@@ -444,6 +620,7 @@ export -f k8s_bootstrap
 export -f k8s_get_kubeconfig
 export -f k8s_upgrade
 export -f k8s_reset_all_nodes
+export -f k8s_cluster_status
 export -f k8s_show_bootstrap_help
 export -f k8s_show_kubeconfig_help
 export -f k8s_show_upgrade_help
@@ -457,6 +634,7 @@ k8s_cluster_help() {
     echo "  get-kubeconfig            - Retrieve and merge cluster kubeconfig"
     echo "  upgrade-k8s [opts]        - Upgrade Kubernetes control plane"
     echo "  reset-all-nodes           - Reset all nodes in cluster"
+    echo "  status|cluster-status     - Check cluster status and health"
     echo ""
     echo "Functions:"
     echo "  cpc_k8s_cluster()         - Main cluster command dispatcher"
@@ -464,6 +642,7 @@ k8s_cluster_help() {
     echo "  k8s_get_kubeconfig()      - Retrieve and merge kubeconfig"
     echo "  k8s_upgrade()             - Upgrade control plane components"
     echo "  k8s_reset_all_nodes()     - Reset all cluster nodes"
+    echo "  k8s_cluster_status()      - Check cluster status and health"
 }
 
 export -f k8s_cluster_help
