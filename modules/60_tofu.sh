@@ -214,33 +214,85 @@ function tofu_deploy() {
   log_success "'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'."
 }
 
-# Generate hostname configurations
+# modules/60_tofu.sh
+
+# ЗАМЕНИТЕ ВСЮ ФУНКЦИЮ ЦЕЛИКОМ
 function tofu_generate_hostnames() {
-  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    echo "Usage: cpc generate-hostnames"
-    echo ""
-    echo "Generate node hostname snippets for Proxmox VM templates."
-    echo ""
-    echo "This command generates Proxmox-specific hostname configuration snippets"
-    echo "that are used during VM deployment to set proper hostnames for"
-    echo "Kubernetes nodes based on the current workspace context."
-    return 0
+  check_secrets_loaded || return 1
+
+  log_info "Generating node hostname configurations..."
+
+  local proxmox_host
+  proxmox_host=$(sops -d --extract '["PROXMOX_HOST"]' "$SECRETS_FILE")
+  local proxmox_user
+  proxmox_user=$(sops -d --extract '["PROXMOX_USERNAME"]' "$SECRETS_FILE")
+
+  if [ -z "$proxmox_host" ] || [ -z "$proxmox_user" ]; then
+    log_error "Proxmox host or username not found in secrets file."
+    return 1
   fi
 
-  check_secrets_loaded
-  log_info "Generating node hostname snippets..."
-  if [ -x "$REPO_PATH/scripts/generate_node_hostnames.sh" ]; then
-    "$REPO_PATH/scripts/generate_node_hostnames.sh"
-    if [ $? -eq 0 ]; then
-      log_success "Node hostname configurations generated successfully."
-    else
-      log_error "Hostname generation failed."
-      exit 1
-    fi
-  else
-    log_error "Hostname generation script not found at $REPO_PATH/scripts/generate_node_hostnames.sh"
-    exit 1
+  local storage_config
+  storage_config=$(get_config_value "SNIPPET_STORAGE_PATH" "/DataPool/MyStorage/snippets")
+  local release_letter
+  release_letter=$(get_release_letter)
+
+  log_info "Using storage configuration: $storage_config"
+  log_info "Using RELEASE_LETTER='$release_letter' from workspace .env file"
+
+  log_info "Getting node information from terraform output..."
+  # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Используем cluster_summary ---
+  local summary_json
+  summary_json=$(tofu output -json cluster_summary 2>/dev/null)
+
+  if [[ -z "$summary_json" || "$summary_json" == "null" || "$summary_json" == "{}" ]]; then
+    log_warning "Could not get node information from terraform output. State is likely empty."
+    return 1 # Важно вернуть ошибку, чтобы другие функции это обработали
   fi
+
+  log_info "Generating cloud-init snippets for each node from tofu output..."
+
+  # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Парсим новый output ---
+  while IFS= read -r hostname; do
+    if [[ -n "$hostname" ]]; then
+      log_info "Using hostname from terraform output: $hostname"
+
+      local snippet_content
+      snippet_content=$(generate_cloud_init_snippet_for_node "$hostname")
+      local snippet_filename="node-${hostname}-userdata.yaml" # Имя файла должно быть node-HOSTNAME-userdata.yaml
+
+      echo "$snippet_content" >"$TERRAFORM_DIR/snippets/$snippet_filename"
+      log_success "Created cloud-init snippet for $hostname"
+    fi
+  done < <(echo "$summary_json" | jq -r 'to_entries[].value.hostname')
+
+  # ... (Остальная часть функции, копирование файлов, остается без изменений) ...
+
+  log_info "Debug: PROXMOX_HOST='$proxmox_host', PROXMOX_USERNAME='$proxmox_user'"
+
+  log_info "Copying snippets to Proxmox host..."
+  local snippets_dir="$TERRAFORM_DIR/snippets"
+
+  if [ -d "$snippets_dir" ] && [ -n "$(ls -A "$snippets_dir")" ]; then
+    for snippet_file in "$snippets_dir"/*.yaml; do
+      if [ -f "$snippet_file" ]; then
+        local filename
+        filename=$(basename "$snippet_file")
+
+        if rsync -avz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+          "$snippet_file" "${VM_USERNAME}@${proxmox_host}:${storage_config}/"; then
+          log_success "Copied $filename to Proxmox host at $storage_config/"
+        else
+          log_error "Failed to copy $filename to Proxmox host."
+        fi
+      fi
+    done
+    log_success "Done copying snippets to Proxmox host at $storage_config/"
+  else
+    log_warning "No snippets found to copy."
+  fi
+
+  log_success "Hostname configurations generated successfully."
 }
 
 # Start VMs in current context
@@ -462,5 +514,44 @@ function tofu_cluster_info_help() {
   echo "This command provides a clean, concise view of your cluster infrastructure"
   echo "without the detailed debug information from 'cpc deploy output'."
 }
+
+function tofu_update_node_info() {
+  log_info "Updating node info from tofu output..."
+
+  local summary_json
+  summary_json=$(tofu output -json cluster_summary 2>/dev/null)
+
+  if [[ -z "$summary_json" || "$summary_json" == "null" || "$summary_json" == "{}" ]]; then
+    log_warning "Could not get node info from tofu output. State may be empty."
+    unset TOFU_NODE_IPS
+    unset TOFU_NODE_NAMES
+    declare -gA TOFU_NODE_IPS
+    declare -gA TOFU_NODE_NAMES
+    return 1
+  fi
+
+  declare -gA TOFU_NODE_IPS
+  declare -gA TOFU_NODE_NAMES
+
+  while IFS= read -r line; do
+    local key=$(echo "$line" | cut -d'=' -f1)
+    local ip=$(echo "$line" | cut -d'=' -f2)
+    local hostname=$(echo "$line" | cut -d'=' -f3)
+
+    local short_key=${key#*${CPC_CONTEXT}-}
+
+    TOFU_NODE_IPS["$short_key"]="$ip"
+    TOFU_NODE_NAMES["$short_key"]="$hostname"
+  done < <(echo "$summary_json" | jq -r 'to_entries[] | "\(.key)=\(.value.IP)=\(.value.hostname)"')
+
+  if [[ ${#TOFU_NODE_NAMES[@]} -eq 0 ]]; then
+    log_warning "Tofu output was parsed, but no nodes were found."
+    return 1
+  fi
+
+  log_success "Successfully loaded info for ${#TOFU_NODE_NAMES[@]} nodes."
+  return 0
+}
+export -f tofu_update_node_info
 
 log_debug "Module 60_tofu.sh loaded successfully"
