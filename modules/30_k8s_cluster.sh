@@ -98,12 +98,18 @@ k8s_bootstrap() {
   # Verify that VMs are deployed and accessible
   if [ "$skip_check" = false ]; then
     log_info "Checking VM existence and connectivity..."
-    if ! tofu_update_node_info; then
+
+    # Вызываем 'cpc' для получения JSON. Эта команда работает.
+    local tofu_output_json
+    tofu_output_json=$("$repo_root/cpc" deploy output -json cluster_summary 2>/dev/null)
+
+    # Передаем полученный JSON в нашу простую функцию-парсер
+    if ! tofu_update_node_info "$tofu_output_json"; then
       log_error "No VMs found in Tofu output. Please deploy VMs first with 'cpc deploy apply'"
       return 1
     fi
-    log_success "VM check passed. Found ${#TOFU_NODE_NAMES[@]} nodes."
 
+    log_success "VM check passed. Found ${#TOFU_NODE_NAMES[@]} nodes."
   fi
 
   # Check if cluster is already initialized (unless forced)
@@ -113,7 +119,14 @@ k8s_bootstrap() {
     # Try to connect to potential control plane and check if Kubernetes is running
     pushd "$repo_root/terraform" >/dev/null || return 1
     local control_plane_ip
-    control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value' | head -1)
+    # control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value' | head -1)
+    control_plane_ip=$("$repo_root/cpc" deploy output | grep -A 4 "control_plane" | grep "ansible_host" | head -n 1 | awk -F'"' '{print $4}')
+    if [[ -z "$control_plane_ip" ]]; then
+      log_error "Could not get control_plane_ip from './cpc deploy output'. Bootstrap aborted."
+      return 1
+    fi
+    log_success "Got control plane IP: $control_plane_ip"
+
     popd >/dev/null
 
     if [ -n "$control_plane_ip" ] && [ "$control_plane_ip" != "null" ]; then

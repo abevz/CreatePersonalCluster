@@ -516,40 +516,24 @@ function tofu_cluster_info_help() {
 }
 
 function tofu_update_node_info() {
-  log_info "Updating node info from tofu output..."
+  local summary_json="$1"
 
-  local summary_json
-  summary_json=$(tofu output -json cluster_summary 2>/dev/null)
-
-  if [[ -z "$summary_json" || "$summary_json" == "null" || "$summary_json" == "{}" ]]; then
-    log_warning "Could not get node info from tofu output. State may be empty."
-    unset TOFU_NODE_IPS
-    unset TOFU_NODE_NAMES
-    declare -gA TOFU_NODE_IPS
-    declare -gA TOFU_NODE_NAMES
+  if [[ -z "$summary_json" || "$summary_json" == "null" ]]; then
+    log_error "Received empty or null JSON in tofu_update_node_info."
     return 1
   fi
 
-  declare -gA TOFU_NODE_IPS
-  declare -gA TOFU_NODE_NAMES
+  # Разбираем JSON и экспортируем переменные
+  TOFU_NODE_NAMES=($(echo "$summary_json" | jq -r 'keys_unsorted[]'))
+  TOFU_NODE_IPS=($(echo "$summary_json" | jq -r '.[].IP'))
+  TOFU_NODE_HOSTNAMES=($(echo "$summary_json" | jq -r '.[].hostname'))
+  TOFU_NODE_VM_IDS=($(echo "$summary_json" | jq -r '.[].VM_ID'))
 
-  while IFS= read -r line; do
-    local key=$(echo "$line" | cut -d'=' -f1)
-    local ip=$(echo "$line" | cut -d'=' -f2)
-    local hostname=$(echo "$line" | cut -d'=' -f3)
-
-    local short_key=${key#*${CPC_CONTEXT}-}
-
-    TOFU_NODE_IPS["$short_key"]="$ip"
-    TOFU_NODE_NAMES["$short_key"]="$hostname"
-  done < <(echo "$summary_json" | jq -r 'to_entries[] | "\(.key)=\(.value.IP)=\(.value.hostname)"')
-
-  if [[ ${#TOFU_NODE_NAMES[@]} -eq 0 ]]; then
-    log_warning "Tofu output was parsed, but no nodes were found."
+  if [ ${#TOFU_NODE_NAMES[@]} -eq 0 ]; then
+    log_error "Parsed zero nodes from Tofu output."
     return 1
   fi
 
-  log_success "Successfully loaded info for ${#TOFU_NODE_NAMES[@]} nodes."
   return 0
 }
 export -f tofu_update_node_info
