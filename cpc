@@ -36,7 +36,7 @@ export REPO_PATH="$SCRIPT_DIR"
 # Configuration (legacy, will be moved to config.conf)
 CONFIG_DIR="$HOME/.config/cpc" # Updated for CreatePersonalCluster project
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
-CLUSTER_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
+CPC_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE and ccr.env
 
 # --- Helper Functions ---
@@ -61,8 +61,8 @@ get_repo_path() {
 export -f get_repo_path
 
 get_current_cluster_context() {
-  if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
-    cat "$CLUSTER_CONTEXT_FILE"
+  if [ -f "$CPC_CONTEXT_FILE" ]; then
+    cat "$CPC_CONTEXT_FILE"
   else
     echo -e "${RED}Error: No cpc context set.${ENDCOLOR}" >&2
     echo -e "${BLUE}The cpc context determines the Tofu workspace and associated configuration (e.g., OS type).${ENDCOLOR}" >&2
@@ -206,9 +206,9 @@ load_env_vars() {
     
     # Set workspace-specific template variables based on current context
     # This function should only be called after REPO_PATH is set
-    if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
+    if [ -f "$CPC_CONTEXT_FILE" ]; then
       local current_workspace
-      current_workspace=$(cat "$CLUSTER_CONTEXT_FILE")
+      current_workspace=$(cat "$CPC_CONTEXT_FILE")
       set_workspace_template_vars "$current_workspace"
     fi
   else

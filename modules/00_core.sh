@@ -139,9 +139,9 @@ load_env_vars() {
         [ -n "${STATIC_IP_GATEWAY:-}" ] && export TF_VAR_static_ip_gateway="$STATIC_IP_GATEWAY"
         
         # Set workspace-specific template variables based on current context
-        if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
+        if [ -f "$CPC_CONTEXT_FILE" ]; then
             local current_workspace
-            current_workspace=$(cat "$CLUSTER_CONTEXT_FILE")
+            current_workspace=$(cat "$CPC_CONTEXT_FILE")
             set_workspace_template_vars "$current_workspace"
         fi
     else
@@ -203,8 +203,8 @@ set_workspace_template_vars() {
 
 # Get current cluster context
 get_current_cluster_context() {
-    if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
-        cat "$CLUSTER_CONTEXT_FILE"
+    if [ -f "$CPC_CONTEXT_FILE" ]; then
+        cat "$CPC_CONTEXT_FILE"
     else
         echo "default"
     fi
@@ -219,7 +219,7 @@ set_cluster_context() {
         return 1
     fi
     
-    echo "$context" > "$CLUSTER_CONTEXT_FILE"
+    echo "$context" > "$CPC_CONTEXT_FILE"
     log_success "Cluster context set to: $context"
 }
 

@@ -10,7 +10,7 @@ export ENDCOLOR='\033[0m'
 # Configuration
 CONFIG_DIR="$HOME/.config/my-kthw-cpc"
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
-CLUSTER_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
+CPC_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 
 # Helper functions
 get_repo_path() {
@@ -23,8 +23,8 @@ get_repo_path() {
 }
 
 get_current_cluster_context() {
-  if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
-    cat "$CLUSTER_CONTEXT_FILE"
+  if [ -f "$CPC_CONTEXT_FILE" ]; then
+    cat "$CPC_CONTEXT_FILE"
   else
     echo -e "${RED}Error: No cpc context set.${ENDCOLOR}" >&2
     exit 1
