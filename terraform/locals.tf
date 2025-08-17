@@ -121,7 +121,7 @@ locals {
   final_nodes_map = {
     for node_key, definition in local.node_definitions :
     # Constructing a key like "debian-controlplane-1"
-    "${local.effective_os_type}-${node_key}-${definition.original_index}" => {
+    "${terraform.workspace}-${node_key}" => {
       cluster_name      = local.effective_os_type
       node_class        = node_key
       index             = definition.original_index
