@@ -1,7 +1,7 @@
 locals {
   # effective_os_type will be equal to the name of the current Tofu workspace
   effective_os_type = terraform.workspace
-  hostname_template = "%s%s%s.${var.vm_domain}"
+  hostname_template = "%s%s%s.%s"
   network_prefix = join(".", slice(split(".", var.network_cidr), 0, 3))
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
@@ -136,7 +136,8 @@ locals {
       ip_offset         = local.workspace_base_ip + (definition.role == "c" ? 0 : 5) + definition.original_index - 1
       
       static_ip_address = "${local.network_prefix}.${local.workspace_base_ip + (definition.role == "c" ? 0 : 5) + definition.original_index - 1}"
-      hostname = format(local.hostname_template, local.release_letter, definition.role, definition.original_index)
+
+      hostname = format(local.hostname_template, definition.role, local.release_letter, definition.original_index, trimprefix(var.vm_domain, "."))
 
       pve_nodes         = [var.pm_node]
       machine           = null
