@@ -5,6 +5,7 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
+    "k8s129" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "k8s129-test" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "k8s133" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
     "debian"        = var.pm_template_debian_id
@@ -18,13 +19,11 @@ locals {
   # Define a map for release letters based on the OS type (derived from workspace name)
   # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
   release_letters_map = {
-    "k8s129-test" = "k"  # Auto-added by clone-workspace
-    "k8s133" = "j"  # Auto-added by clone-workspace
+    "k8s129" = "k"  # Auto-added by clone-workspace
     "debian"        = "d"
     "ubuntu"        = "u"
     "rocky"         = "r"
     "suse"          = "s"
-    "test-workspace" = "t"   # Use 't' for test-workspace
     # Ensure there are entries here for all your expected workspace names
   }
 
@@ -60,9 +59,9 @@ locals {
 
   # Base configuration for node types, replacing old local.k8s_nodes
   base_node_definitions = {
-    controlplane = { role = "c", id_offset = 0, original_index = 1 }
-    worker1      = { role = "w", id_offset = 1, original_index = 1 }
-    worker2      = { role = "w", id_offset = 2, original_index = 2 }
+    controlplane-1 = { role = "c", id_offset = 0, original_index = 1 }
+    worker-1      = { role = "w", id_offset = 1, original_index = 1 }
+    worker-2      = { role = "w", id_offset = 2, original_index = 2 }
   }
 
   # Parse additional workers from environment variable
@@ -123,52 +122,50 @@ locals {
     for node_key, definition in local.node_definitions :
     # Constructing a key like "debian-controlplane-1"
     "${local.effective_os_type}-${node_key}-${definition.original_index}" => {
-      cluster_name      = local.effective_os_type # Used in nodes.tf example key pattern
-      node_class        = node_key                # Used in nodes.tf example key pattern
-      index             = definition.original_index # Used in nodes.tf example key pattern & cloud-init
+      cluster_name      = local.effective_os_type
+      node_class        = node_key
+      index             = definition.original_index
+      role              = definition.role
 
-      vm_id             = local.vm_id_ranges[local.effective_os_type] + definition.id_offset
-      role              = definition.role # For cloud-init fqdn
+      # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+      # Заменяем старую, ошибочную строку на восстановленную формулу
+      vm_id             = 300 + (local.workspace_ip_index * 100) + (definition.role == "c" ? 0 : 20) + definition.original_index
+
       # IP offset for static IP assignment using workspace block system
-      # Calculate: workspace_base_ip + node_role_offset + node_index
       ip_offset         = local.workspace_base_ip + (definition.role == "c" ? 0 : 5) + definition.original_index - 1
 
       pve_nodes         = [var.pm_node]
-      machine           = null # Set to null to use Proxmox default
+      machine           = null
       cores             = var.vm_cpu_cores
       sockets           = 1
       cpu_type          = "kvm64"
       memory            = var.vm_memory_dedicated
       disks = [
         {
-          size         = var.vm_disk_size
-          datastore_id = "MyStorage"
-          file_format  = "raw"
-          backup       = true
-          iothread     = true
-          cache_mode   = "none"
-          aio_mode     = "io_uring"
-          discard      = "ignore"
-          ssd          = false
-          # interface is handled by nodes.tf dynamic disk block
+          size            = var.vm_disk_size
+          datastore_id    = "MyStorage"
+          file_format     = "raw"
+          backup          = true
+          iothread        = true
+          cache_mode      = "none"
+          aio_mode        = "io_uring"
+          discard         = "ignore"
+          ssd             = false
         }
       ]
       devices           = []
-      # ipv4 and ipv6 structures are for nodes.tf's initialization block if it were to handle static IPs.
-      # Since we're aiming for DHCP via cloud-init's user_data, these are mostly for reference by nodes.tf's dns block.
       ipv4 = {
-        # address = "dhcp" will be set in initialization.ip_config directly
-        dns1    = var.dns_servers[0]
-        dns2    = length(var.dns_servers) > 1 ? var.dns_servers[1] : null
+        dns1            = var.dns_servers[0]
+        dns2            = length(var.dns_servers) > 1 ? var.dns_servers[1] : null
       }
       ipv6 = {
-        enabled = false
+        enabled         = false
       }
-      dns_search_domain = trimprefix(var.vm_domain, ".") # For nodes.tf's initialization.dns block
-      vlan_id           = null                            # For nodes.tf's network_device block
-      bridge            = var.network_bridge              # For nodes.tf's network_device block
-      on_boot           = false                           # For nodes.tf direct attribute
-      reboot_after_update = false                       # For nodes.tf direct attribute
+      dns_search_domain = trimprefix(var.vm_domain, ".")
+      vlan_id           = null
+      bridge            = var.network_bridge
+      on_boot           = false
+      reboot_after_update = false
     }
   }
 
