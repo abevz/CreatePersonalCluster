@@ -17,17 +17,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load configuration first
 if [ -f "$SCRIPT_DIR/config.conf" ]; then
-    source "$SCRIPT_DIR/config.conf"
+  source "$SCRIPT_DIR/config.conf"
 fi
 
 # Load libraries
 for lib in "$SCRIPT_DIR/lib"/*.sh; do
-    [ -f "$lib" ] && source "$lib"
+  [ -f "$lib" ] && source "$lib"
 done
 
-# Load modules  
+# Load modules
 for module in "$SCRIPT_DIR/modules"/*.sh; do
-    [ -f "$module" ] && source "$module"
+  [ -f "$module" ] && source "$module"
 done
 
 # Set REPO_PATH for modules
@@ -42,7 +42,7 @@ CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE
 # --- Helper Functions ---
 check_required_commands() {
   for cmd in "$@"; do
-    if ! command -v "$cmd" &> /dev/null; then
+    if ! command -v "$cmd" &>/dev/null; then
       echo -e "${RED}Error: '$cmd' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
       exit 1
     fi
@@ -67,7 +67,7 @@ get_current_cluster_context() {
     echo -e "${RED}Error: No cpc context set.${ENDCOLOR}" >&2
     echo -e "${BLUE}The cpc context determines the Tofu workspace and associated configuration (e.g., OS type).${ENDCOLOR}" >&2
     echo -e "${BLUE}Please set a context using 'cpc ctx <workspace_name>'.${ENDCOLOR}" >&2
-    
+
     # Attempt to get repo_path to list workspaces.
     # This relies on REPO_PATH_FILE being set by 'cpc setup-cpc'.
     if [ -f "$REPO_PATH_FILE" ]; then
@@ -76,7 +76,7 @@ get_current_cluster_context() {
       if [ -d "$repo_p_for_listing/terraform" ]; then
         echo -e "${BLUE}Available Tofu workspaces in '$repo_p_for_listing/terraform' (use one of these for <workspace_name>):${ENDCOLOR}" >&2
         # Ensure tofu command is available for listing or provide a message
-        if command -v tofu &> /dev/null; then
+        if command -v tofu &>/dev/null; then
           (cd "$repo_p_for_listing/terraform" && tofu workspace list | sed 's/^*/  /') >&2
         else
           echo -e "${YELLOW}  'tofu' command not found. Cannot list workspaces. Please ensure OpenTofu is installed and in your PATH.${ENDCOLOR}" >&2
@@ -108,29 +108,29 @@ load_secrets() {
   local repo_root
   repo_root=$(get_repo_path)
   local secrets_file="$repo_root/terraform/secrets.sops.yaml"
-  
+
   if [ ! -f "$secrets_file" ]; then
     echo -e "${RED}Error: secrets.sops.yaml not found at $secrets_file${ENDCOLOR}" >&2
     exit 1
   fi
-  
+
   # Check if sops is installed
-  if ! command -v sops &> /dev/null; then
+  if ! command -v sops &>/dev/null; then
     echo -e "${RED}Error: 'sops' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
     exit 1
   fi
-  
+
   # Check if jq is installed
-  if ! command -v jq &> /dev/null; then
+  if ! command -v jq &>/dev/null; then
     echo -e "${RED}Error: 'jq' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
     exit 1
   fi
-  
+
   echo -e "${BLUE}Loading secrets from secrets.sops.yaml...${ENDCOLOR}"
-  
+
   # Export sensitive variables from SOPS
   export PROXMOX_HOST
-  export PROXMOX_USERNAME  
+  export PROXMOX_USERNAME
   export PROXMOX_PASSWORD
   export VM_USERNAME
   export VM_PASSWORD
@@ -138,16 +138,16 @@ load_secrets() {
   export AWS_ACCESS_KEY_ID
   export AWS_SECRET_ACCESS_KEY
   export AWS_DEFAULT_REGION
-  
+
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
   secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)")
-  
+
   if [ $? -ne 0 ]; then
     echo -e "${RED}Error: Failed to decrypt secrets.sops.yaml. Check your SOPS configuration.${ENDCOLOR}" >&2
     exit 1
   fi
-  
+
   # Parse secrets from JSON
   PROXMOX_HOST=$(echo "$secrets_json" | jq -r '.virtual_environment_endpoint' | sed 's|https://||' | sed 's|:8006/api2/json||')
   PROXMOX_USERNAME=$(echo "$secrets_json" | jq -r '.proxmox_username')
@@ -155,19 +155,19 @@ load_secrets() {
   VM_USERNAME=$(echo "$secrets_json" | jq -r '.vm_username')
   VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
   VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
-  
+
   # Parse MinIO/S3 credentials for Terraform backend
   AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
   AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
-  AWS_DEFAULT_REGION="us-east-1"  # Set default region for MinIO
-  
+  AWS_DEFAULT_REGION="us-east-1" # Set default region for MinIO
+
   # Verify that all required secrets were loaded
   if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
     echo -e "${RED}Error: Failed to load one or more required secrets from secrets.sops.yaml${ENDCOLOR}" >&2
     echo -e "${BLUE}Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY${ENDCOLOR}" >&2
     exit 1
   fi
-  
+
   echo -e "${BLUE}Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_USERNAME: $VM_USERNAME)${ENDCOLOR}"
 }
 export -f load_secrets
@@ -176,17 +176,17 @@ export -f load_secrets
 load_env_vars() {
   local repo_root
   repo_root=$(get_repo_path)
-  
+
   # Load secrets first
   load_secrets
-  
+
   if [ -f "$repo_root/$CPC_ENV_FILE" ]; then # Changed from CCR_ENV_FILE
     # shellcheck source=cpc.env
-    set -a # Automatically export all variables
-    source "$repo_root/$CPC_ENV_FILE" # Changed from CCR_ENV_FILE
-    set +a # Stop automatically exporting
+    set -a                                                                      # Automatically export all variables
+    source "$repo_root/$CPC_ENV_FILE"                                           # Changed from CCR_ENV_FILE
+    set +a                                                                      # Stop automatically exporting
     echo -e "${BLUE}Loaded environment variables from $CPC_ENV_FILE${ENDCOLOR}" # Changed from CCR_ENV_FILE
-    
+
     # Export static IP configuration variables to Terraform
     if [ -n "$NETWORK_CIDR" ]; then
       export TF_VAR_network_cidr="$NETWORK_CIDR"
@@ -203,7 +203,7 @@ load_env_vars() {
     if [ -n "$STATIC_IP_GATEWAY" ]; then
       export TF_VAR_static_ip_gateway="$STATIC_IP_GATEWAY"
     fi
-    
+
     # Set workspace-specific template variables based on current context
     # This function should only be called after REPO_PATH is set
     if [ -f "$CPC_CONTEXT_FILE" ]; then
@@ -220,15 +220,15 @@ export -f load_env_vars
 # Set workspace-specific template variables based on current workspace
 set_workspace_template_vars() {
   local workspace="$1"
-  
+
   if [ -z "$workspace" ]; then
     echo -e "${YELLOW}Warning: No workspace specified for setting template variables${ENDCOLOR}"
     return 1
   fi
-  
+
   # Path to the environment file
   local env_file="$REPO_PATH/envs/$workspace.env"
-  
+
   # Check if the environment file exists
   if [[ ! -f "$env_file" ]]; then
     echo -e "${YELLOW}Warning: Environment file for workspace '$workspace' not found.${ENDCOLOR}"
@@ -237,10 +237,10 @@ set_workspace_template_vars() {
     ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//' | tr '\n' ', ' | sed 's/,$/\n/'
     return 1
   fi
-  
+
   # Load variables from environment file
   source "$env_file"
-  
+
   # Set default values for any variables that might be missing
   : "${TEMPLATE_VM_ID:=900}"
   : "${TEMPLATE_VM_NAME:=tpl-default-k8s}"
@@ -261,7 +261,7 @@ set_workspace_template_vars() {
   : "${CERT_MANAGER_VERSION:=v1.15.0}"
   : "${ARGOCD_VERSION:=v2.12.0}"
   : "${INGRESS_NGINX_VERSION:=v1.11.0}"
-  
+
   echo -e "${BLUE}Set template variables for workspace '$workspace':${ENDCOLOR}"
   echo -e "${BLUE}  TEMPLATE_VM_ID: $TEMPLATE_VM_ID${ENDCOLOR}"
   echo -e "${BLUE}  TEMPLATE_VM_NAME: $TEMPLATE_VM_NAME${ENDCOLOR}"
@@ -348,224 +348,223 @@ if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$C
   load_env_vars # Will now use CPC_ENV_FILE
 fi
 
-
 case "$COMMAND" in
-  setup-cpc) # Changed from setup-ccr
-    cpc_core setup-cpc "$@"
-    ;;
+setup-cpc) # Changed from setup-ccr
+  cpc_core setup-cpc "$@"
+  ;;
 
-  get-kubeconfig)
-    cpc_k8s_cluster get-kubeconfig "$@"
-    ;;
+get-kubeconfig)
+  cpc_k8s_cluster get-kubeconfig "$@"
+  ;;
 
-  add-vm)
-    cpc_proxmox add-vm "$@"
-    ;;
+add-vm)
+  cpc_proxmox add-vm "$@"
+  ;;
 
-  remove-vm)
-    cpc_proxmox remove-vm "$@"
-    ;;
+remove-vm)
+  cpc_proxmox remove-vm "$@"
+  ;;
 
-  ctx)
-    cpc_core ctx "$@"
-    ;;
-  
-  clone-workspace)
-    cpc_core clone-workspace "$@"
-    ;;
+ctx)
+  cpc_core ctx "$@"
+  ;;
 
-  delete-workspace)
-    cpc_core delete-workspace "$@"
-    ;;
-  
-  template)
-    cpc_proxmox template "$@"
-    ;;
+clone-workspace)
+  cpc_core clone-workspace "$@"
+  ;;
 
-  load_secrets)
-    cpc_core load_secrets "$@"
-    ;;
+delete-workspace)
+  cpc_core delete-workspace "$@"
+  ;;
 
-  bootstrap)
-    cpc_k8s_cluster bootstrap "$@"
-    ;;
+template)
+  cpc_proxmox template "$@"
+  ;;
 
-  run-playbook)
-    cpc_ansible run-ansible "$@"
-    ;;
+load_secrets)
+  cpc_core load_secrets "$@"
+  ;;
 
-  clear-ssh-hosts)
-    cpc_ssh clear-ssh-hosts "$@"
-    ;;
+bootstrap)
+  cpc_k8s_cluster bootstrap "$@"
+  ;;
 
-  clear-ssh-maps)
-    cpc_ssh clear-ssh-maps "$@"
-    ;;
+run-playbook)
+  cpc_ansible run-ansible "$@"
+  ;;
 
-  add-nodes)
-    cpc_k8s_nodes add-nodes "$@"
-    ;;
+clear-ssh-hosts)
+  cpc_ssh clear-ssh-hosts "$@"
+  ;;
 
-  prepare-node)
-    cpc_k8s_nodes prepare-node "$@"
-    ;;
+clear-ssh-maps)
+  cpc_ssh clear-ssh-maps "$@"
+  ;;
 
-  update-inventory)
-    cpc_ansible update-inventory "$@"
-    ;;
+add-nodes)
+  cpc_k8s_nodes add "$@"
+  ;;
 
-  remove-nodes)
-    cpc_k8s_nodes remove-nodes "$@"
-    ;;
+prepare-node)
+  cpc_k8s_nodes prepare "$@"
+  ;;
 
-  drain-node)
-    cpc_k8s_nodes drain-node "$@"
-    ;;
+update-inventory)
+  cpc_ansible update-inventory "$@"
+  ;;
 
-  upgrade-node)
-    cpc_k8s_nodes upgrade-node "$@"
-    ;;
+remove-nodes)
+  cpc_k8s_nodes remove "$@"
+  ;;
 
-  reset-node)
-    cpc_k8s_nodes reset-node "$@"
-    ;;
+drain-node)
+  cpc_k8s_nodes drain "$@"
+  ;;
 
-  reset-all-nodes)
-    cpc_k8s_nodes reset-all-nodes "$@"
-    ;;
+upgrade-node)
+  cpc_k8s_nodes upgrade "$@"
+  ;;
 
-  upgrade-addons)
-    cpc_cluster_ops upgrade-addons "$@"
-    ;;
+reset-node)
+  cpc_k8s_nodes reset "$@"
+  ;;
 
-  upgrade-k8s)
-    cpc_k8s_cluster upgrade-k8s "$@"
-    ;;
+reset-all-nodes)
+  cpc_k8s_nodes reset-all "$@"
+  ;;
 
-  status|cluster-status)
-    cpc_k8s_cluster status "$@"
-    ;;
+upgrade-addons)
+  cpc_cluster_ops upgrade-addons "$@"
+  ;;
 
-  vmctl)
-    cpc_proxmox vmctl "$@"
-    ;;
+upgrade-k8s)
+  cpc_k8s_cluster upgrade-k8s "$@"
+  ;;
 
-  run-command)
-    cpc_ansible run-command "$@"
-    ;;
+status | cluster-status)
+  cpc_k8s_cluster status "$@"
+  ;;
 
-  dns-pihole)
-    cpc_dns_pihole "$@"
-    ;;
+vmctl)
+  cpc_proxmox vmctl "$@"
+  ;;
 
-  cluster-info)
-    cpc_tofu cluster-info "$@"
-    ;;
+run-command)
+  cpc_ansible run-command "$@"
+  ;;
 
-  deploy)
-    cpc_tofu deploy "$@"
-    ;;
+dns-pihole)
+  cpc_dns_pihole "$@"
+  ;;
 
-  generate-hostnames)
-    cpc_tofu generate-hostnames "$@"
-    ;;
+cluster-info)
+  cpc_tofu cluster-info "$@"
+  ;;
 
-  run-ansible)
-    cpc_ansible run-ansible "$@"
-    ;;
+deploy)
+  cpc_tofu deploy "$@"
+  ;;
 
-  gen_hostnames)
-    cpc_tofu gen_hostnames "$@"
-    ;;
+generate-hostnames)
+  cpc_tofu generate-hostnames "$@"
+  ;;
 
-  start-vms)
-    cpc_tofu start-vms "$@"
-    ;;
+run-ansible)
+  cpc_ansible run-ansible "$@"
+  ;;
 
-  configure-coredns)
-    cpc_cluster_ops configure-coredns "$@"
-    ;;
+gen_hostnames)
+  cpc_tofu gen_hostnames "$@"
+  ;;
 
-  # DNS/SSL commands
-  regenerate-certificates|regenerate-cert)
-    cpc_dns_ssl regenerate-certificates "$@"
-    ;;
+start-vms)
+  cpc_tofu start-vms "$@"
+  ;;
 
-  test-dns|test-resolution)
-    cpc_dns_ssl test-dns "$@"
-    ;;
+configure-coredns)
+  cpc_cluster_ops configure-coredns "$@"
+  ;;
 
-  verify-certificates|verify-cert|check-cert)
-    cpc_dns_ssl verify-certificates "$@"
-    ;;
+# DNS/SSL commands
+regenerate-certificates | regenerate-cert)
+  cpc_dns_ssl regenerate-certificates "$@"
+  ;;
 
-  check-cluster-dns|test-cluster-dns)
-    cpc_dns_ssl check-cluster-dns "$@"
-    ;;
+test-dns | test-resolution)
+  cpc_dns_ssl test-dns "$@"
+  ;;
 
-  inspect-cert|show-cert)
-    cpc_dns_ssl inspect-cert "$@"
-    ;;
+verify-certificates | verify-cert | check-cert)
+  cpc_dns_ssl verify-certificates "$@"
+  ;;
 
-  stop-vms)
-    cpc_tofu stop-vms "$@"
-    ;;
+check-cluster-dns | test-cluster-dns)
+  cpc_dns_ssl check-cluster-dns "$@"
+  ;;
 
-  "" | "-h" | "--help" | "help")
-    display_usage
-    ;;
+inspect-cert | show-cert)
+  cpc_dns_ssl inspect-cert "$@"
+  ;;
 
-  scripts/*)
-    # Handle running scripts directly: ./cpc scripts/script_name.sh
-    script_path="$REPO_PATH/$COMMAND"
-    if [[ -f "$script_path" && -x "$script_path" ]]; then
-      echo -e "${BLUE}Running script: $script_path${ENDCOLOR}"
-      # Pass all remaining arguments to the script
-      "$script_path" "$@"
-    elif [[ -f "$script_path" ]]; then
-      echo -e "${RED}Error: Script $script_path exists but is not executable.${ENDCOLOR}" >&2
-      echo -e "${BLUE}Try: chmod +x $script_path${ENDCOLOR}" >&2
-      exit 1
-    else
-      echo -e "${RED}Error: Script not found at $script_path${ENDCOLOR}" >&2
-      exit 1
-    fi
-    ;;
+stop-vms)
+  cpc_tofu stop-vms "$@"
+  ;;
 
-  # Legacy aliases for backward compatibility
-  add-node)
-    echo -e "${YELLOW}Warning: 'add-node' is deprecated. Use 'add-vm' instead.${ENDCOLOR}"
-    shift
-    set -- "add-vm" "$@"
-    exec "$0" "$@"
-    ;;
+"" | "-h" | "--help" | "help")
+  display_usage
+  ;;
 
-  remove-node)
-    echo -e "${YELLOW}Warning: 'remove-node' is deprecated. Use 'remove-vm' instead.${ENDCOLOR}"
-    shift
-    set -- "remove-vm" "$@"
-    exec "$0" "$@"
-    ;;
-
-  update-pihole)
-    echo -e "${YELLOW}Warning: 'update-pihole' is deprecated. Use 'dns-pihole' instead.${ENDCOLOR}"
-    shift
-    set -- "dns-pihole" "$@"
-    exec "$0" "$@"
-    ;;
-
-  delete-node)
-    echo -e "${YELLOW}Warning: 'delete-node' is deprecated. Use 'remove-nodes' instead.${ENDCOLOR}"
-    # Pass all arguments as is to remove-nodes
-    set -- "remove-nodes" "$@"
-    exec "$0" "$@"
-    ;;
-
-  *)
-    echo -e "${RED}Unknown command: $COMMAND${ENDCOLOR}" >&2
-    display_usage
+scripts/*)
+  # Handle running scripts directly: ./cpc scripts/script_name.sh
+  script_path="$REPO_PATH/$COMMAND"
+  if [[ -f "$script_path" && -x "$script_path" ]]; then
+    echo -e "${BLUE}Running script: $script_path${ENDCOLOR}"
+    # Pass all remaining arguments to the script
+    "$script_path" "$@"
+  elif [[ -f "$script_path" ]]; then
+    echo -e "${RED}Error: Script $script_path exists but is not executable.${ENDCOLOR}" >&2
+    echo -e "${BLUE}Try: chmod +x $script_path${ENDCOLOR}" >&2
     exit 1
-    ;;
+  else
+    echo -e "${RED}Error: Script not found at $script_path${ENDCOLOR}" >&2
+    exit 1
+  fi
+  ;;
+
+# Legacy aliases for backward compatibility
+add-node)
+  echo -e "${YELLOW}Warning: 'add-node' is deprecated. Use 'add-vm' instead.${ENDCOLOR}"
+  shift
+  set -- "add-vm" "$@"
+  exec "$0" "$@"
+  ;;
+
+remove-node)
+  echo -e "${YELLOW}Warning: 'remove-node' is deprecated. Use 'remove-vm' instead.${ENDCOLOR}"
+  shift
+  set -- "remove-vm" "$@"
+  exec "$0" "$@"
+  ;;
+
+update-pihole)
+  echo -e "${YELLOW}Warning: 'update-pihole' is deprecated. Use 'dns-pihole' instead.${ENDCOLOR}"
+  shift
+  set -- "dns-pihole" "$@"
+  exec "$0" "$@"
+  ;;
+
+delete-node)
+  echo -e "${YELLOW}Warning: 'delete-node' is deprecated. Use 'remove-nodes' instead.${ENDCOLOR}"
+  # Pass all arguments as is to remove-nodes
+  set -- "remove-nodes" "$@"
+  exec "$0" "$@"
+  ;;
+
+*)
+  echo -e "${RED}Unknown command: $COMMAND${ENDCOLOR}" >&2
+  display_usage
+  exit 1
+  ;;
 esac
 
 exit 0

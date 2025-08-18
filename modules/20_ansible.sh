@@ -143,59 +143,52 @@ ansible_show_run_command_help() {
 }
 
 # Execute Ansible playbooks with proper context and inventory
-function ansible_run_playbook() {
+ansible_run_playbook() {
   local playbook_name="$1"
-  shift # Убираем имя плейбука
-
+  shift
   local repo_root
   repo_root=$(get_repo_path)
-  local ansible_dir="$repo_root/ansible"
+  local ansible_dir="${repo_root}/ansible"
 
-  # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
-  # Логика определения, какой инвентарь использовать
-  local inventory_to_use="$ansible_dir/inventory/tofu_inventory.py" # По умолчанию
-  local other_args=()
-  local next_is_inventory_path=false
-
-  for arg in "$@"; do
-    if [ "$next_is_inventory_path" = true ]; then
-      inventory_to_use="$arg"
-      next_is_inventory_path=false
-    elif [[ "$arg" == "-i" ]]; then
-      next_is_inventory_path=true
-    else
-      other_args+=("$arg")
-    fi
-  done
+  # Создаем статический файл инвентаря для этого запуска
+  local temp_inventory_file
+  temp_inventory_file=$(ansible_create_temp_inventory)
+  if [[ $? -ne 0 ]]; then
+    return 1 # Сообщение об ошибке уже выведено
+  fi
 
   local ansible_cmd_array=(
     "ansible-playbook"
-    "-i" "$inventory_to_use" # Используем правильный инвентарь
+    "-i" "${temp_inventory_file}," # Используем сгенерированный инвентарь
     "playbooks/$playbook_name"
     "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   )
-  # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
   local ansible_user
-  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'abevz')
+  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "${ansible_dir}/ansible.cfg")
   ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
 
-  # Добавляем остальные аргументы (кроме -i)
-  if [[ ${#other_args[@]} -gt 0 ]]; then
-    ansible_cmd_array+=("${other_args[@]}")
+  if [[ $# -gt 0 ]]; then
+    ansible_cmd_array+=("$@")
   fi
 
   log_info "Running: ${ansible_cmd_array[*]}"
 
-  pushd "$ansible_dir" >/dev/null
+  pushd "$ansible_dir" >/dev/null || return 1
+
   "${ansible_cmd_array[@]}"
   local exit_code=$?
-  popd >/dev/null
 
-  if [ $exit_code -ne 0 ]; then
-    log_error "Ansible playbook $playbook_name failed with exit code $exit_code."
+  popd >/dev/null || return 1
+
+  # Очищаем временный файл
+  rm "$temp_inventory_file"
+
+  if [[ $exit_code -ne 0 ]]; then
+    log_error "Ansible playbook ${playbook_name} failed with exit code ${exit_code}."
     return 1
   fi
+  log_success "Ansible playbook ${playbook_name} completed successfully."
   return 0
 }
 
