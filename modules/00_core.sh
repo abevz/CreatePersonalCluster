@@ -359,183 +359,151 @@ core_clone_workspace() {
     echo "  cpc clone-workspace ubuntu k8s129 k"
     return 0
   fi
-
   local source_workspace="$1"
-  local destination_workspace="$2"
+  local new_workspace_name="$2"
+  local release_letter="$3"
+  local repo_root
+  repo_root=$(get_repo_path)
+  local source_env_file="$repo_root/$ENVIRONMENTS_DIR/${source_workspace}.env"
+  local new_env_file="$repo_root/$ENVIRONMENTS_DIR/${new_workspace_name}.env"
+  local locals_tf_file="$repo_root/$TERRAFORM_DIR/locals.tf"
+  local locals_tf_backup_file="${locals_tf_file}.bak"
 
-  # Default release letter to first character of destination workspace
-  local release_letter
-  if [ -z "$3" ]; then
-    release_letter="${destination_workspace:0:1}"
-  else
-    release_letter="$3"
+  # --- Проверки ---
+  if [[ ! -f "$source_env_file" ]]; then
+    log_error "Source workspace environment file not found: $source_env_file"
+    return 1
   fi
-
-  # Validate release letter is a single character
-  if [ ${#release_letter} -ne 1 ]; then
-    log_error "Release letter must be a single character."
+  if [[ -f "$new_env_file" ]]; then
+    log_error "New workspace environment file already exists: $new_env_file"
+    return 1
+  fi
+  if ! [[ "$release_letter" =~ $RELEASE_LETTER_PATTERN ]]; then
+    log_error "Invalid release letter. Must be a single letter."
     return 1
   fi
 
-  # Check if release letter is already used by another workspace
-  local locals_tf="$REPO_PATH/terraform/locals.tf"
-  local existing_release_letters
-  existing_release_letters=$(grep -A 50 "release_letters_map = {" "$locals_tf" | grep -E '= "[a-zA-Z]"' | grep -v "$destination_workspace" | sed -E 's/.*= "([a-zA-Z])".*/\1/g')
+  # --- Сохраняем текущий контекст, чтобы вернуться к нему в конце ---
+  local original_context
+  original_context=$(get_current_cluster_context)
 
-  if echo "$existing_release_letters" | grep -q "$release_letter"; then
-    log_error "Release letter '$release_letter' is already used by another workspace."
-    log_info "Please choose a different release letter. Currently used letters:"
-    echo "$existing_release_letters" | tr '\n' ' '
-    echo ""
+  # --- Создаем резервную копию locals.tf для надежного отката ---
+  cp "$locals_tf_file" "$locals_tf_backup_file"
+
+  log_step "Cloning workspace '$source_workspace' to '$new_workspace_name'..."
+
+  # 1. Создаем и модифицируем файлы
+  cp "$source_env_file" "$new_env_file"
+  sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$new_env_file"
+  log_info "New environment file created: $new_env_file"
+
+  local template_var_name="pm_template_${source_workspace}_id"
+  local new_entry="  \"${new_workspace_name}\" = var.${template_var_name}"
+  sed -i "/template_vm_ids = {/a\\$new_entry" "$locals_tf_file"
+
+  local release_letter_entry="  \"${new_workspace_name}\" = \"${release_letter}\""
+  sed -i "/release_letters = {/a\\$release_letter_entry" "$locals_tf_file"
+  log_info "Updated locals.tf with mappings."
+
+  # 2. Переключаем контекст на новый воркспейс
+  set_cluster_context "$new_workspace_name"
+
+  # 3. Создаем новый воркспейс в Terraform
+  log_step "Creating Terraform workspace '$new_workspace_name'..."
+  if ! cpc_tofu workspace new "$new_workspace_name"; then
+    log_error "Failed to create Terraform workspace '$new_workspace_name'."
+    log_error "Reverting changes..."
+    # --- Откат изменений в случае ошибки ---
+    rm -f "$new_env_file"
+    mv "$locals_tf_backup_file" "$locals_tf_file"
+    set_cluster_context "$original_context" # Возвращаем старый контекст
+    log_warning "Changes have been reverted."
     return 1
   fi
 
-  # Check if source workspace exists
-  local source_env="$REPO_PATH/envs/$source_workspace.env"
-  if [ ! -f "$source_env" ]; then
-    log_error "Source workspace $source_workspace does not exist."
-    log_info "Available workspaces:"
-    ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
-    return 1
-  fi
+  # 4. Успешное завершение и очистка
+  rm -f "$locals_tf_backup_file" # Удаляем бэкап, так как он больше не нужен
+  log_success "Successfully cloned workspace '$source_workspace' to '$new_workspace_name'."
+  log_info "Switched context to '$new_workspace_name'."
 
-  # Check if destination workspace already exists
-  local dest_env_file="$REPO_PATH/envs/$destination_workspace.env"
-  if [ -f "$dest_env_file" ]; then
-    log_error "Destination workspace $destination_workspace already exists."
-    return 1
-  fi
-
-  # Copy environment file
-  cp "$source_env" "$dest_env_file"
-  if [ $? -ne 0 ]; then
-    log_error "Failed to copy environment file."
-    return 1
-  fi
-
-  # Add/update RELEASE_LETTER in the new environment file
-  if grep -q "^RELEASE_LETTER=" "$dest_env_file"; then
-    sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$dest_env_file"
-  else
-    echo -e "\n# Release letter used for hostname generation" >>"$dest_env_file"
-    echo "RELEASE_LETTER=$release_letter" >>"$dest_env_file"
-  fi
-
-  # Update locals.tf - Add template VM ID mapping and release letter
-  pushd "$REPO_PATH/terraform" >/dev/null || return 1
-
-  # Determine template variable to use
-  local template_var="var.pm_template_ubuntu_id" # Default to Ubuntu template
-  if grep -q "\"$source_workspace\".*var.pm_template_${source_workspace}_id" "$locals_tf"; then
-    template_var="var.pm_template_${source_workspace}_id"
-  fi
-
-  # Add template_vm_ids entry
-  sed -i "/^[[:space:]]*template_vm_ids = {/a \\    \"$destination_workspace\" = $template_var  # Auto-added by clone-workspace" "$locals_tf"
-  log_info "Added template_vm_ids entry: \"$destination_workspace\" = $template_var"
-
-  # Add release letter mapping
-  sed -i "/release_letters_map = {/a \\    \"$destination_workspace\" = \"$release_letter\"  # Auto-added by clone-workspace" "$locals_tf"
-
-  popd >/dev/null || return 1
-
-  log_success "Successfully cloned workspace '$source_workspace' to '$destination_workspace' with release letter '$release_letter'"
-  log_info "New environment file created: $dest_env_file"
-  log_info "Updated locals.tf with template and release letter mappings"
 }
 
-# Delete a workspace environment
-core_delete_workspace() {
-  if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
-    echo "Usage: cpc delete-workspace <workspace_name> [--force]"
-    echo "Deletes a workspace environment and removes it from the Terraform configuration."
-    echo ""
-    echo "Arguments:"
-    echo "  <workspace_name>    Name of the workspace to delete (e.g., k8s129, test-workspace)"
-    echo "  --force             Skip confirmation prompt"
-    echo ""
-    echo "Example:"
-    echo "  cpc delete-workspace test-workspace"
-    return 0
+# (в modules/00_core.sh)
+# (в modules/00_core.sh)
+
+function core_delete_workspace() {
+  if [[ -z "$1" ]]; then
+    log_error "Usage: cpc delete-workspace <workspace_name>"
+    return 1
   fi
 
   local workspace_name="$1"
-  local force=false
-  if [[ "$2" == "--force" ]]; then
-    force=true
-  fi
+  local repo_root
+  repo_root=$(get_repo_path)
+  local env_file="$repo_root/$ENVIRONMENTS_DIR/${workspace_name}.env"
+  local locals_tf_file="$repo_root/$TERRAFORM_DIR/locals.tf"
 
-  # Check if workspace exists
-  local env_file="$REPO_PATH/envs/$workspace_name.env"
-  if [ ! -f "$env_file" ]; then
-    log_error "Workspace '$workspace_name' not found."
-    log_info "Available workspaces:"
-    ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
+  local original_context
+  original_context=$(get_current_cluster_context)
+
+  log_warning "This command will first DESTROY all infrastructure in workspace '$workspace_name'."
+  read -p "Are you sure you want to DESTROY and DELETE workspace '$workspace_name'? This cannot be undone. (y/n) " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    log_info "Operation cancelled."
     return 1
   fi
 
-  # Check if it's one of the predefined workspaces
-  if [[ "$workspace_name" == "debian" || "$workspace_name" == "ubuntu" || "$workspace_name" == "rocky" || "$workspace_name" == "suse" ]]; then
-    log_error "Cannot delete predefined workspace '$workspace_name'."
-    log_info "These are base workspaces used as templates for cloning."
+  # 1. Переключаемся в контекст, который будем удалять, для уничтожения ресурсов
+  set_cluster_context "$workspace_name"
+
+  # 2. Уничтожаем все ресурсы
+  log_step "Destroying all resources in workspace '$workspace_name'..."
+  if ! cpc_tofu deploy destroy; then
+    log_error "Failed to destroy resources for workspace '$workspace_name'."
+    log_error "Workspace deletion aborted. Please destroy resources manually before trying again."
+    set_cluster_context "$original_context" # Возвращаем исходный контекст в случае ошибки
+    return 1
+  fi
+  log_success "All resources for '$workspace_name' have been destroyed."
+
+  # 3. Переключаемся в БЕЗОПАСНЫЙ контекст ПЕРЕД удалением.
+  #    Если мы удаляем не тот контекст, в котором были, возвращаемся в него.
+  #    Иначе - переключаемся в 'ubuntu' (или 'default', если 'ubuntu' нет).
+  local safe_context="ubuntu" # 'ubuntu' - хороший кандидат по умолчанию
+  if [[ "$original_context" != "$workspace_name" ]]; then
+    safe_context="$original_context"
+  fi
+
+  log_step "Switching to safe context ('$safe_context') to perform deletion..."
+  # Используем твою же функцию для переключения
+  if ! core_ctx "$safe_context"; then
+    log_error "Could not switch to a safe workspace ('$safe_context'). Aborting workspace deletion."
+    log_warning "Resources were destroyed, but the empty workspace '$workspace_name' remains."
     return 1
   fi
 
-  # Confirm deletion unless --force is used
-  if [ "$force" = false ]; then
-    log_warning "You are about to delete workspace '$workspace_name'."
-    log_warning "This will:"
-    log_warning " - Delete the environment file at $env_file"
-    log_warning " - Remove entries from locals.tf"
-    log_warning " - Delete the Tofu workspace if it exists"
-    log_warning " - Stop and destroy all VMs in this workspace"
-    read -p "Are you sure you want to continue? (y/N) " confirm
-    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-      log_info "Operation cancelled."
-      return 0
-    fi
+  # 4. Теперь, находясь в безопасном воркспейсе, удаляем целевой
+  log_step "Deleting Terraform workspace '$workspace_name' from the backend..."
+  if ! cpc_tofu workspace delete "$workspace_name"; then
+    log_error "Failed to delete the Terraform workspace '$workspace_name' from backend."
+  else
+    log_success "Terraform workspace '$workspace_name' has been deleted."
   fi
 
-  # Clean up Tofu workspace
-  pushd "$REPO_PATH/terraform" >/dev/null || {
-    log_error "Failed to change to terraform directory"
-    return 1
-  }
-
-  if tofu workspace list | grep -qw "$workspace_name"; then
-    local original_ws
-    original_ws=$(tofu workspace show)
-
-    if [ "$original_ws" != "$workspace_name" ]; then
-      log_step "Switching to workspace '$workspace_name' to clean up resources..."
-      tofu workspace select "$workspace_name"
-    fi
-
-    # Destroy all resources in the workspace
-    log_step "Destroying all resources in workspace '$workspace_name'..."
-    tofu destroy -auto-approve
-
-    # Switch back and delete the workspace
-    if [ "$original_ws" != "$workspace_name" ]; then
-      tofu workspace select "$original_ws"
-    fi
-
-    log_step "Deleting Tofu workspace '$workspace_name'..."
-    tofu workspace delete "$workspace_name"
+  # 5. Подчищаем локальные файлы конфигурации
+  log_step "Removing local configuration for '$workspace_name'..."
+  if [[ -f "$env_file" ]]; then
+    rm -f "$env_file"
+    log_info "Removed environment file: $env_file."
   fi
 
-  popd >/dev/null || return 1
+  if grep -q "\"${workspace_name}\"" "$locals_tf_file"; then
+    sed -i "/\"${workspace_name}\"/d" "$locals_tf_file"
+    log_info "Removed entries for '$workspace_name' from locals.tf."
+  fi
 
-  # Remove environment file
-  rm -f "$env_file"
-  log_step "Removed environment file: $env_file"
-
-  # Clean up locals.tf entries
-  local locals_tf="$REPO_PATH/terraform/locals.tf"
-  sed -i "/\"$workspace_name\"/d" "$locals_tf"
-  log_step "Removed entries from locals.tf"
-
-  log_success "Successfully deleted workspace '$workspace_name'"
+  log_success "Workspace '$workspace_name' has been successfully deleted."
 }
 
 # Command wrapper for load_secrets function

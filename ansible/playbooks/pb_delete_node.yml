@@ -1,48 +1,18 @@
----
+# ansible/playbooks/pb_delete_node.yml
+
 - name: Delete Node from Kubernetes Cluster
-  hosts: localhost # Runs kubectl from the control machine
-  gather_facts: true
-
-  vars:
-    node_to_delete: "" # Expected -e node_to_delete=nodename
-    reset_after_delete: "--no-reset-node" # Expected -e reset_after_delete=--reset-node or --no-reset-node
-
+  hosts: all
+  become: yes
   tasks:
-    - name: Check if node_to_delete is provided
-      ansible.builtin.fail:
-        msg: "Variable 'node_to_delete' must be provided."
-      when: node_to_delete == ""
+    - name: Drain the node before deletion
+      command: kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      run_once: true
 
-    - name: Ensure KUBECONFIG is set or use default
-      ansible.builtin.set_fact:
-        effective_kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default(ansible_env.HOME + '/.kube/config', true) }}"
+    - name: Delete the node from the cluster
+      command: kubectl delete node {{ inventory_hostname }}
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      run_once: true
 
-    - name: Display KUBECONFIG being used
-      ansible.builtin.debug:
-        msg: "Using KUBECONFIG: {{ effective_kubeconfig }}"
-
-    - name: Delete the specified node from the cluster
-      ansible.builtin.command:
-        cmd: "kubectl delete node {{ node_to_delete }}"
-      environment:
-        KUBECONFIG: "{{ effective_kubeconfig }}"
-      register: delete_result
-      changed_when: delete_result.rc == 0
-      failed_when: delete_result.rc != 0
-
-    - name: Display delete result
-      ansible.builtin.debug:
-        var: delete_result.stdout_lines
-
-    - name: Conditionally reset the node (if specified)
-      when: reset_after_delete == "--reset-node"
-      block:
-        - name: "Trigger kubeadm reset on the deleted node: {{ node_to_delete }}"
-          ansible.builtin.debug:
-            msg: "This step would call another playbook or role to run 'kubeadm reset' on '{{ node_to_delete }}'."
-        # This would typically be another play targeting the actual node:
-        # - ansible.builtin.include_playbook: pb_reset_node.yml
-        #   vars:
-        #     target_node_for_reset: "{{ node_to_delete }}"
-        # For now, it's a debug message.
-        # You would need to ensure your inventory can target 'node_to_delete' by its name/IP.
+    - name: Reset the node
+      command: kubeadm reset --force

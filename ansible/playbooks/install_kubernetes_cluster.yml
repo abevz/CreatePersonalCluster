@@ -8,7 +8,13 @@
   gather_facts: yes
 
   vars:
-    kubernetes_version: "1.31" # Specify desired Kubernetes version (e.g., 1.31, 1.30)
+    - name: Install Kubernetes binaries and container runtime
+      hosts: all
+      become: yes
+      vars:
+        kubernetes_version: "{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
+      roles:
+        - setup_kubernetes_cluster    
     # For Debian/Ubuntu, package versions will be like {{ kubernetes_version }}.x-xx
     # For RedHat, package versions will be like {{ kubernetes_version }}.x-x
 

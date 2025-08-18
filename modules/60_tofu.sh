@@ -20,6 +20,17 @@ function cpc_tofu() {
   deploy)
     tofu_deploy "$@"
     ;;
+  workspace)
+    # Прямая обработка команд workspace
+    local tf_dir
+    tf_dir="$(get_repo_path)/$TERRAFORM_DIR"
+    pushd "$tf_dir" >/dev/null || return 1
+    log_command "tofu workspace $*"
+    tofu workspace "$@"
+    local exit_code=$?
+    popd >/dev/null
+    return $exit_code
+    ;;
   start-vms)
     tofu_start_vms "$@"
     ;;

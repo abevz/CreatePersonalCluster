@@ -6,21 +6,17 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
-    "k8s129" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
-    "k8s129-test" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
-    "k8s133" = var.pm_template_ubuntu_id  # Auto-added by clone-workspace
+  "k8s129" = var.pm_template_ubuntu_id
     "debian"        = var.pm_template_debian_id
     "ubuntu"        = var.pm_template_ubuntu_id
     "rocky"         = var.pm_template_rocky_id
     "suse"          = var.pm_template_suse_id
-    "test-workspace" = var.pm_template_ubuntu_id  # Use Ubuntu template for test-workspace
     # Add other OS types and their corresponding template IDs as needed
   }
 
   # Define a map for release letters based on the OS type (derived from workspace name)
   # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
   release_letters_map = {
-    "k8s129" = "k"  # Auto-added by clone-workspace
     "debian"        = "d"
     "ubuntu"        = "u"
     "rocky"         = "r"
@@ -35,14 +31,6 @@ locals {
   release_letter = var.release_letter != "" ? var.release_letter : lookup(local.release_letters_map, local.effective_os_type, "x")
 
   environment = terraform.workspace # Changed from var.environment
-
-  # VM ID ranges per OS type
-  vm_id_ranges = {
-    "debian"        = 200
-    "ubuntu"        = 300
-    "rocky"         = 400
-    "suse"          = 500
-  }
 
   # Workspace IP mapping for automatic IP block distribution
   # Each workspace gets a block of var.workspace_ip_block_size IPs
