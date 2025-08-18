@@ -143,7 +143,7 @@ ansible_show_run_command_help() {
 }
 
 # Execute Ansible playbooks with proper context and inventory
-ansible_run_playbook() {
+function ansible_run_playbook() {
   local playbook_name="$1"
   shift # Убираем имя плейбука
 
@@ -152,24 +152,25 @@ ansible_run_playbook() {
   local ansible_dir="$repo_root/ansible"
 
   # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
-  local inventory_to_use="$ansible_dir/inventory/tofu_inventory.py" # Инвентарь по умолчанию
-  local extra_args_array=()
+  # Логика определения, какой инвентарь использовать
+  local inventory_to_use="$ansible_dir/inventory/tofu_inventory.py" # По умолчанию
+  local other_args=()
+  local next_is_inventory_path=false
 
-  # Ищем в аргументах флаг -i. Если находим, то используем его значение.
-  for ((i = 1; i <= $#; i++)); do
-    if [[ "${!i}" == "-i" ]]; then
-      # Нашли -i. Следующий аргумент - это наш путь к инвентарю.
-      ((i++))
-      inventory_to_use="${!i}"
+  for arg in "$@"; do
+    if [ "$next_is_inventory_path" = true ]; then
+      inventory_to_use="$arg"
+      next_is_inventory_path=false
+    elif [[ "$arg" == "-i" ]]; then
+      next_is_inventory_path=true
     else
-      # Сохраняем все остальные аргументы
-      extra_args_array+=("${!i}")
+      other_args+=("$arg")
     fi
   done
 
   local ansible_cmd_array=(
     "ansible-playbook"
-    "-i" "$inventory_to_use"
+    "-i" "$inventory_to_use" # Используем правильный инвентарь
     "playbooks/$playbook_name"
     "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
   )
@@ -179,9 +180,9 @@ ansible_run_playbook() {
   ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'abevz')
   ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
 
-  # Добавляем остальные аргументы
-  if [[ ${#extra_args_array[@]} -gt 0 ]]; then
-    ansible_cmd_array+=("${extra_args_array[@]}")
+  # Добавляем остальные аргументы (кроме -i)
+  if [[ ${#other_args[@]} -gt 0 ]]; then
+    ansible_cmd_array+=("${other_args[@]}")
   fi
 
   log_info "Running: ${ansible_cmd_array[*]}"

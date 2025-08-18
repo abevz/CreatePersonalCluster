@@ -163,9 +163,20 @@
       register: calico_install_result
       changed_when: true
 
+    # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+    - name: Wait for Calico pods to be created before checking their status
+      ansible.builtin.shell: kubectl get pods -n calico-system --no-headers
+      register: calico_pod_list
+      until: calico_pod_list.stdout_lines | length > 0
+      retries: 20
+      delay: 15
+      when: calico_install_result.changed
+      changed_when: false
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     - name: Wait for Calico pods to be ready
       ansible.builtin.shell: kubectl wait --for=condition=Ready pods --all -n calico-system --timeout=300s
-      when: calico_pods_count.stdout == "0"
+      when: calico_install_result.changed
       changed_when: false
 
 - name: Join Worker Nodes to Cluster

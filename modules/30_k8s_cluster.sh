@@ -58,6 +58,9 @@ cpc_k8s_cluster() {
 }
 
 # Bootstrap a complete Kubernetes cluster on deployed VMs
+#
+# В файле: modules/30_k8s_cluster.sh
+
 k8s_bootstrap() {
   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     k8s_show_bootstrap_help
@@ -122,21 +125,35 @@ k8s_bootstrap() {
     log_success "VM check passed. Found ${#TOFU_NODE_NAMES[@]} nodes."
   fi
 
-  # ШАГ 4: Извлекаем 'ansible_inventory' и сохраняем его во временный JSON файл
+  # ШАГ 4: Извлекаем 'ansible_inventory' и КОНВЕРТИРУЕМ его в СТАТИЧЕСКИЙ JSON
   log_info "Generating temporary static JSON inventory for Ansible..."
-  local ansible_inventory_json
-  ansible_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
+  local dynamic_inventory_json
+  dynamic_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
 
   local temp_inventory_file
   temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
-  echo "$ansible_inventory_json" >"$temp_inventory_file"
 
-  log_success "Temporary JSON inventory created at $temp_inventory_file"
+  # С помощью jq преобразуем динамический JSON в статический, который Ansible поймет
+  jq '
+    . as $inv |
+    {
+      "all": {
+        "children": {
+          "control_plane": {
+            "hosts": ($inv.control_plane.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
+          },
+          "workers": {
+            "hosts": ($inv.workers.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
+          }
+        }
+      }
+    }
+  ' <<<"$dynamic_inventory_json" >"$temp_inventory_file"
 
-  # Check if cluster is already initialized
+  log_success "Temporary static JSON inventory created at $temp_inventory_file"
+
+  # Check if cluster is already initialized (unless forced)
   if [ "$force_bootstrap" = false ]; then
-    log_info "Checking if cluster is already initialized..."
-
     local control_plane_ip
     control_plane_ip=$(echo "$cluster_summary_json" | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value.IP' | head -1)
 
@@ -159,8 +176,16 @@ k8s_bootstrap() {
   # Run the bootstrap playbooks
   log_success "Starting Kubernetes cluster bootstrap..."
 
-  # Собираем аргументы для Ansible, включая наш временный инвентарь
   local ansible_extra_args=("-i" "$temp_inventory_file")
+
+  # ПРОВЕРКА СВЯЗИ
+  log_info "Testing Ansible connectivity to all nodes..."
+  if ! ansible all "${ansible_extra_args[@]}" -m ping --ssh-extra-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"; then
+    log_error "Failed to connect to all nodes via Ansible"
+    rm -f "$temp_inventory_file"
+    return 1
+  fi
+  log_success "Ansible connectivity test passed"
 
   # Step 1: Install Kubernetes components
   log_info "Step 1: Installing Kubernetes components..."
@@ -192,7 +217,6 @@ k8s_bootstrap() {
   log_info "  1. Get cluster access: cpc get-kubeconfig"
   log_info "  2. Install addons: cpc upgrade-addons"
   log_info "  3. Verify cluster: kubectl get nodes -o wide"
-
 }
 
 # Retrieve and merge Kubernetes cluster config into local kubeconfig
