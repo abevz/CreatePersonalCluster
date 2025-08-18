@@ -95,42 +95,52 @@ k8s_bootstrap() {
 
   log_info "Starting Kubernetes bootstrap for context '$current_ctx'..."
 
-  # Verify that VMs are deployed and accessible
+  # ШАГ 1: Получаем ВЕСЬ вывод (логи + JSON) от рабочей команды
+  log_info "Getting all infrastructure data from Tofu..."
+  local raw_output
+  raw_output=$("$repo_root/cpc" deploy output -json 2>/dev/null)
+
+  # ШАГ 2: С помощью 'sed' вырезаем чистый JSON из всего текста
+  local all_tofu_outputs_json
+  all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
+
+  if [[ -z "$all_tofu_outputs_json" ]]; then
+    log_error "Failed to extract JSON from 'cpc deploy output'. Please check for errors."
+    return 1
+  fi
+
+  # ШАГ 3: Извлекаем 'cluster_summary' для проверки VM
+  local cluster_summary_json
+  cluster_summary_json=$(echo "$all_tofu_outputs_json" | jq '.cluster_summary.value')
+
   if [ "$skip_check" = false ]; then
     log_info "Checking VM existence and connectivity..."
-
-    # Вызываем 'cpc' для получения JSON. Эта команда работает.
-    local tofu_output_json
-    tofu_output_json=$("$repo_root/cpc" deploy output -json cluster_summary 2>/dev/null)
-
-    # Передаем полученный JSON в нашу простую функцию-парсер
-    if ! tofu_update_node_info "$tofu_output_json"; then
+    if ! tofu_update_node_info "$cluster_summary_json"; then
       log_error "No VMs found in Tofu output. Please deploy VMs first with 'cpc deploy apply'"
       return 1
     fi
-
     log_success "VM check passed. Found ${#TOFU_NODE_NAMES[@]} nodes."
   fi
 
-  # Check if cluster is already initialized (unless forced)
+  # ШАГ 4: Извлекаем 'ansible_inventory' и сохраняем его во временный JSON файл
+  log_info "Generating temporary static JSON inventory for Ansible..."
+  local ansible_inventory_json
+  ansible_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
+
+  local temp_inventory_file
+  temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
+  echo "$ansible_inventory_json" >"$temp_inventory_file"
+
+  log_success "Temporary JSON inventory created at $temp_inventory_file"
+
+  # Check if cluster is already initialized
   if [ "$force_bootstrap" = false ]; then
     log_info "Checking if cluster is already initialized..."
 
-    # Try to connect to potential control plane and check if Kubernetes is running
-    pushd "$repo_root/terraform" >/dev/null || return 1
     local control_plane_ip
-    # control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value' | head -1)
-    control_plane_ip=$("$repo_root/cpc" deploy output | grep -A 4 "control_plane" | grep "ansible_host" | head -n 1 | awk -F'"' '{print $4}')
-    if [[ -z "$control_plane_ip" ]]; then
-      log_error "Could not get control_plane_ip from './cpc deploy output'. Bootstrap aborted."
-      return 1
-    fi
-    log_success "Got control plane IP: $control_plane_ip"
-
-    popd >/dev/null
+    control_plane_ip=$(echo "$cluster_summary_json" | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value.IP' | head -1)
 
     if [ -n "$control_plane_ip" ] && [ "$control_plane_ip" != "null" ]; then
-      # Check if kubeconfig exists on control plane
       local ansible_dir="$repo_root/ansible"
       local remote_user
       remote_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'root')
@@ -140,6 +150,7 @@ k8s_bootstrap() {
         "test -f /etc/kubernetes/admin.conf" 2>/dev/null; then
         log_warning "Kubernetes cluster appears to already be initialized on $control_plane_ip"
         log_warning "Use --force to bootstrap anyway (this will reset the cluster)"
+        rm -f "$temp_inventory_file"
         return 1
       fi
     fi
@@ -147,53 +158,41 @@ k8s_bootstrap() {
 
   # Run the bootstrap playbooks
   log_success "Starting Kubernetes cluster bootstrap..."
-  local ansible_dir="$repo_root/ansible"
-  local inventory_file="$ansible_dir/inventory/tofu_inventory.py"
 
-  # Check if inventory exists
-  if [ ! -f "$inventory_file" ]; then
-    log_error "Ansible inventory not found at $inventory_file"
-    return 1
-  fi
-
-  # First, verify connectivity to all nodes
-  log_info "Testing Ansible connectivity to all nodes..."
-  pushd "$ansible_dir" >/dev/null || return 1
-  if ! ansible all -i "$inventory_file" -m ping --ssh-extra-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"; then
-    log_error "Failed to connect to all nodes via Ansible"
-    log_error "Please check SSH access and ensure VMs are running"
-    popd >/dev/null
-    return 1
-  fi
-  popd >/dev/null
-
-  log_success "Ansible connectivity test passed"
+  # Собираем аргументы для Ansible, включая наш временный инвентарь
+  local ansible_extra_args=("-i" "$temp_inventory_file")
 
   # Step 1: Install Kubernetes components
-  log_info "Step 1: Installing Kubernetes components (kubelet, kubeadm, kubectl, containerd)..."
-  if ! ansible_run_playbook "install_kubernetes_cluster.yml"; then
+  log_info "Step 1: Installing Kubernetes components..."
+  if ! ansible_run_playbook "install_kubernetes_cluster.yml" "${ansible_extra_args[@]}"; then
     log_error "Failed to install Kubernetes components"
+    rm -f "$temp_inventory_file"
     return 1
   fi
 
-  # Step 2: Initialize cluster and setup CNI with DNS hostname support
-  log_info "Step 2: Initializing Kubernetes cluster with DNS hostname support and installing Calico CNI..."
-  if ! ansible_run_playbook "initialize_kubernetes_cluster_with_dns.yml"; then
-    log_error "Failed to initialize Kubernetes cluster with DNS support"
+  # Step 2: Initialize cluster
+  log_info "Step 2: Initializing Kubernetes cluster..."
+  if ! ansible_run_playbook "initialize_kubernetes_cluster_with_dns.yml" "${ansible_extra_args[@]}"; then
+    log_error "Failed to initialize Kubernetes cluster"
+    rm -f "$temp_inventory_file"
     return 1
   fi
 
   # Step 3: Validate cluster
   log_info "Step 3: Validating cluster installation..."
-  if ! ansible_run_playbook "validate_cluster.yml" -l control_plane; then
+  if ! ansible_run_playbook "validate_cluster.yml" -l control_plane "${ansible_extra_args[@]}"; then
     log_warning "Cluster validation failed, but continuing..."
   fi
+
+  # Удаляем временный файл
+  rm -f "$temp_inventory_file"
 
   log_success "Kubernetes cluster bootstrap completed successfully!"
   log_info "Next steps:"
   log_info "  1. Get cluster access: cpc get-kubeconfig"
   log_info "  2. Install addons: cpc upgrade-addons"
   log_info "  3. Verify cluster: kubectl get nodes -o wide"
+
 }
 
 # Retrieve and merge Kubernetes cluster config into local kubeconfig
