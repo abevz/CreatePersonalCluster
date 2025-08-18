@@ -9,15 +9,14 @@
     discovery_token_ca_cert_hash: "" # Will be discovered if not provided
 
   tasks:
+    - name: Set control plane endpoint
+      set_fact:
+        control_plane_endpoint: "{{ hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443' }}"
+
     - name: Gather facts from control plane
       setup:
       delegate_to: "{{ groups['control_plane'][0] }}"
       delegate_facts: yes
-      run_once: true
-
-    - name: Set control plane endpoint
-      set_fact:
-        control_plane_endpoint: "{{ hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443' }}"
       run_once: true
 
     - name: Generate join token if not provided
@@ -32,7 +31,6 @@
         join_token: "{{ join_command_output.stdout.split(' ')[4] }}"
         discovery_token_ca_cert_hash: "{{ join_command_output.stdout.split(' ')[6] }}"
       when: join_command_output is defined and join_command_output.stdout is defined
-      run_once: true
 
     - name: Display join information
       debug:

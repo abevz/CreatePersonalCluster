@@ -626,33 +626,59 @@ _get_hostname_by_ip() {
 # @description Creates a temporary static inventory file from the current workspace's Terraform output.
 # @stdout The path to the created temporary inventory file.
 # @return 1 on failure.
-ansible_create_temp_inventory() {
-  log_debug "Creating temporary Ansible inventory from Terraform output..."
+
+function ansible_create_temp_inventory() {
+  log_debug "Creating temporary static Ansible inventory from Terraform output..."
 
   local raw_output
   raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null)
-
-  local all_tofu_outputs_json
-  all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
-
-  if [[ -z "$all_tofu_outputs_json" ]]; then
-    log_error "Failed to extract JSON from 'cpc deploy output' for inventory creation."
+  if [[ $? -ne 0 || -z "$raw_output" ]]; then
+    log_error "Command 'cpc deploy output -json' failed or returned empty."
     return 1
   fi
 
-  local ansible_inventory_string
-  ansible_inventory_string=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value')
+  local all_tofu_outputs_json
+  all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
+  if [[ -z "$all_tofu_outputs_json" ]]; then
+    log_error "Failed to extract JSON from Terraform output."
+    return 1
+  fi
 
-  if [[ -z "$ansible_inventory_string" || "$ansible_inventory_string" == "null" ]]; then
-    log_error "Ansible inventory data is empty in Terraform outputs."
+  local dynamic_inventory_json
+  # Сначала извлекаем JSON-строку, а затем парсим ее как JSON (fromjson)
+  dynamic_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
+  if [[ -z "$dynamic_inventory_json" || "$dynamic_inventory_json" == "null" ]]; then
+    log_error "Ansible inventory data is empty or invalid in Terraform outputs."
     return 1
   fi
 
   local temp_inventory_file
-  temp_inventory_file=$(mktemp)
-  echo "$ansible_inventory_string" >"$temp_inventory_file"
+  temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
 
-  # Возвращаем путь к временному файлу
+  # Преобразуем динамический JSON в статический, который Ansible поймет
+  jq '
+      . as $inv |
+      {
+        "all": {
+          "children": {
+            "control_plane": {
+              "hosts": ($inv.control_plane.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
+            },
+            "workers": {
+              "hosts": ($inv.workers.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
+            }
+          }
+        }
+      }
+    ' <<<"$dynamic_inventory_json" >"$temp_inventory_file"
+
+  if [[ $? -ne 0 ]]; then
+    log_error "Failed to create static inventory file using jq."
+    rm -f "$temp_inventory_file"
+    return 1
+  fi
+
+  log_debug "Temporary static inventory created at $temp_inventory_file"
   echo "$temp_inventory_file"
   return 0
 }

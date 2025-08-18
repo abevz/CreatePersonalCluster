@@ -143,29 +143,41 @@ ansible_show_run_command_help() {
 }
 
 # Execute Ansible playbooks with proper context and inventory
-ansible_run_playbook() {
-  local playbook_name="$1"
+function ansible_run_playbook() {
+  local playbook_name=$1
   shift
   local repo_root
   repo_root=$(get_repo_path)
-  local ansible_dir="${repo_root}/ansible"
+  local ansible_dir="$repo_root/ansible"
 
-  # Создаем статический файл инвентаря для этого запуска
   local temp_inventory_file
   temp_inventory_file=$(ansible_create_temp_inventory)
   if [[ $? -ne 0 ]]; then
-    return 1 # Сообщение об ошибке уже выведено
+    return 1
   fi
 
-  local ansible_cmd_array=(
-    "ansible-playbook"
-    "-i" "${temp_inventory_file}," # Используем сгенерированный инвентарь
-    "playbooks/$playbook_name"
-    "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-  )
+  local ansible_cmd_array=('ansible-playbook' '-i' "$temp_inventory_file" "playbooks/$playbook_name" '--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null')
+
+  # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+  # Получаем текущий контекст и путь к его .env файлу
+  local current_ctx
+  current_ctx=$(get_current_cluster_context)
+  local env_file="$repo_root/envs/${current_ctx}.env"
+
+  if [[ -f "$env_file" ]]; then
+    log_debug "Loading variables from $env_file for Ansible..."
+    # Считываем все переменные из файла и добавляем их через -e
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # Пропускаем пустые строки и комментарии
+      if [[ -n "$line" && ! "$line" =~ ^\s*# ]]; then
+        ansible_cmd_array+=("-e" "$line")
+      fi
+    done <"$env_file"
+  fi
+  # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
   local ansible_user
-  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "${ansible_dir}/ansible.cfg")
+  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")
   ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
 
   if [[ $# -gt 0 ]]; then
@@ -173,22 +185,18 @@ ansible_run_playbook() {
   fi
 
   log_info "Running: ${ansible_cmd_array[*]}"
-
-  pushd "$ansible_dir" >/dev/null || return 1
-
+  pushd "$ansible_dir" >/dev/null
   "${ansible_cmd_array[@]}"
   local exit_code=$?
-
-  popd >/dev/null || return 1
-
-  # Очищаем временный файл
+  popd >/dev/null
   rm "$temp_inventory_file"
 
   if [[ $exit_code -ne 0 ]]; then
-    log_error "Ansible playbook ${playbook_name} failed with exit code ${exit_code}."
+    log_error "Ansible playbook $playbook_name failed with exit code $exit_code."
     return 1
   fi
-  log_success "Ansible playbook ${playbook_name} completed successfully."
+
+  log_success "Ansible playbook $playbook_name completed successfully."
   return 0
 }
 
