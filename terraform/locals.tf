@@ -6,6 +6,7 @@ locals {
   # Define a map for VM template names based on the OS type (derived from workspace name)
   # This allows selecting the correct template dynamically.
   template_vm_ids = {
+  "k8s133" = var.pm_template_ubuntu_id
   "k8s129" = var.pm_template_ubuntu_id
     "debian"        = var.pm_template_debian_id
     "ubuntu"        = var.pm_template_ubuntu_id
@@ -14,16 +15,12 @@ locals {
     # Add other OS types and their corresponding template IDs as needed
   }
 
-  # Define a map for release letters based on the OS type (derived from workspace name)
-  # This helps in naming conventions, e.g., 'd' for Debian, 'u' for Ubuntu.
-  release_letters_map = {
-    "debian"        = "d"
-    "ubuntu"        = "u"
-    "rocky"         = "r"
-    "suse"          = "s"
-    # Ensure there are entries here for all your expected workspace names
-  }
-
+release_letters_map = {
+  "debian"        = "d"
+  "ubuntu"        = "u"
+  "rocky"         = "r"
+  "suse"          = "s"
+}  
   # Get the release letter for the current workspace
   # 1. Use var.release_letter if it's set (from environment RELEASE_LETTER)
   # 2. Otherwise, fall back to the map with the workspace name
@@ -36,10 +33,12 @@ locals {
   # Each workspace gets a block of var.workspace_ip_block_size IPs
   # Formula: workspace_base_ip = var.static_ip_start + (workspace_index * var.workspace_ip_block_size)
   workspace_ip_map = {
+    "k8s133"      = 6  # Auto-added by clone-workspace
+    "k8s129"      = 5  # Auto-added by clone-workspace
     "ubuntu"         = 1  # IP block #1: starting at static_ip_start + (1*block_size)
     "debian"         = 2  # IP block #2: starting at static_ip_start + (2*block_size)  
-    "rocky"          = 6  # IP block #6: starting at static_ip_start + (6*block_size)
-    "suse"           = 7  # IP block #7: starting at static_ip_start + (7*block_size)
+    "rocky"          = 3  # IP block #6: starting at static_ip_start + (6*block_size)
+    "suse"           = 4  # IP block #7: starting at static_ip_start + (7*block_size)
   }
 
   # Calculate the base IP for the current workspace

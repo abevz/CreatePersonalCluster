@@ -8,15 +8,7 @@
   gather_facts: yes
 
   vars:
-    - name: Install Kubernetes binaries and container runtime
-      hosts: all
-      become: yes
-      vars:
-        kubernetes_version: "{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
-      roles:
-        - setup_kubernetes_cluster    
-    # For Debian/Ubuntu, package versions will be like {{ kubernetes_version }}.x-xx
-    # For RedHat, package versions will be like {{ kubernetes_version }}.x-x
+    kubernetes_version: "{{ KUBERNETES_SHORT_VERSION | default('1.29') }}"
 
   pre_tasks:
     - name: Update package cache (Debian/Ubuntu)

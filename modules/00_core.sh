@@ -401,9 +401,31 @@ core_clone_workspace() {
   local new_entry="  \"${new_workspace_name}\" = var.${template_var_name}"
   sed -i "/template_vm_ids = {/a\\$new_entry" "$locals_tf_file"
 
-  local release_letter_entry="  \"${new_workspace_name}\" = \"${release_letter}\""
-  sed -i "/release_letters = {/a\\$release_letter_entry" "$locals_tf_file"
-  log_info "Updated locals.tf with mappings."
+  # --- ИСПРАВЛЕННЫЙ БЛОК ---
+  log_info "Updating workspace_ip_map with the first available IP index..."
+
+  # Extract all currently used IDs from the map, sort them uniquely
+  local used_ids
+  used_ids=$(grep -A 20 "workspace_ip_map = {" "$locals_tf_file" | grep -oP '=\s*\K[0-9]+' | sort -n | uniq)
+
+  local next_id=1
+  if [ -n "$used_ids" ]; then
+    # Loop through the sorted list of used IDs to find the first gap
+    for id in $used_ids; do
+      if [ "$id" -eq "$next_id" ]; then
+        # This ID is taken, check the next one
+        next_id=$((next_id + 1))
+      else
+        # We found a gap. The current $next_id is free.
+        break
+      fi
+    done
+  fi
+  # If no gaps were found, next_id will be one greater than the max used ID.
+
+  # Add the new workspace to the map using the found available ID
+  sed -i "/workspace_ip_map = {/a \\    \"$new_workspace_name\"      = ${next_id}  # Auto-added by clone-workspace" "$locals_tf_file"
+  log_info "Added workspace_ip_map entry: \"$new_workspace_name\" = ${next_id}"
 
   # 2. Переключаем контекст на новый воркспейс
   set_cluster_context "$new_workspace_name"

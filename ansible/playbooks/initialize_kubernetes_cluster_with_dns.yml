@@ -6,7 +6,8 @@
   gather_facts: yes
   vars:
     pod_cidr: "192.168.0.0/16"  # Default for Calico
-    
+    kubernetes_version: "{{ KUBERNETES_LONG_VERSION | default('1.29') }}"
+     
   tasks:
     - name: Check if cluster is already initialized
       ansible.builtin.stat:
@@ -41,7 +42,7 @@
           ---
           apiVersion: kubeadm.k8s.io/v1beta3
           kind: ClusterConfiguration
-          kubernetesVersion: v1.31.9
+          kubernetesVersion: {{ kubernetes_version }}
           controlPlaneEndpoint: "{{ ansible_fqdn }}:6443"
           apiServer:
             certSANs:
