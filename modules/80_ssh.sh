@@ -385,7 +385,7 @@ ssh_get_vm_ips_from_context() {
 
   popd >/dev/null || return 1
 
-  # Check that we received something
+  # Проверка, что мы что-то получили
   if [[ -z "$vm_ips" ]]; then
     return 1
   fi

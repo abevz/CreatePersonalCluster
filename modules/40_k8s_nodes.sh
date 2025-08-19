@@ -120,7 +120,7 @@ function _execute_node_playbook() {
 
   log_info "Found host '$target_hostname' for IP '$target_hosts'. Proceeding..."
 
-  # Pass node_type as a variable to Ansible, not as an argument
+  # Передаем node_type как переменную в Ansible, а не как аргумент
   ansible_run_playbook "$playbook_name" -l "$target_hostname" -e "node_type=$node_type" "${extra_ansible_args[@]}"
 }
 

@@ -298,7 +298,7 @@ k8s_get_kubeconfig() {
     mv "${kubeconfig_path}.merged" "${kubeconfig_path}"
 
     local context_name="cluster-${current_ctx}"
-    # Rename the context if it exists, suppressing errors
+    # Переименовываем контекст, если он существует, подавляя ошибки
     kubectl config get-contexts "kubernetes-admin@kubernetes" &>/dev/null && kubectl config rename-context "kubernetes-admin@kubernetes" "${context_name}"
     kubectl config use-context "${context_name}"
 

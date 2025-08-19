@@ -168,13 +168,13 @@ function ansible_run_playbook() {
     log_debug "Loading variables from $env_file for Ansible..."
     # Считываем все переменные из файла и добавляем их через -e
     while IFS= read -r line || [[ -n "$line" ]]; do
-      # Skip empty lines and comments
+      # Пропускаем пустые строки и комментарии
       if [[ -n "$line" && ! "$line" =~ ^\s*# ]]; then
         ansible_cmd_array+=("-e" "$line")
       fi
     done <"$env_file"
   fi
-  # --- END OF FIX ---
+  # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
   local ansible_user
   ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")

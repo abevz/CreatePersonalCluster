@@ -133,18 +133,6 @@
         state: started
         enabled: yes
 
-    - name: Configure containerd with Docker Hub credentials
-      ansible.builtin.blockinfile:
-        path: /etc/containerd/config.toml
-        block: |
-          [plugins."io.containerd.grpc.v1.cri".registry.configs."docker.io".auth]
-            username = "{{ lookup('env', 'DOCKER_HUB_USERNAME') }}"
-            password = "{{ lookup('env', 'DOCKER_HUB_PASSWORD') }}"
-        marker: "# {mark} ANSIBLE MANAGED BLOCK DOCKERHUB AUTH"
-      become: yes
-      notify: Restart containerd
-      when: lookup('env', 'DOCKER_HUB_USERNAME') | length > 0
-        
     # Section: Install Kubernetes components (kubelet, kubeadm, kubectl)
     - name: Add Kubernetes GPG key (Debian/Ubuntu)
       ansible.builtin.get_url:
@@ -197,49 +185,7 @@
         disable_excludes: kubernetes # Important if you used exclude in repo definition
       when: ansible_os_family == "RedHat"
       notify: Hold Kubernetes packages RedHat
-      
-    - name: Install Python Kubernetes client library for all OS families
-      block:
-        - name: Install for Debian/Ubuntu
-          ansible.builtin.apt:
-            name: python3-kubernetes
-            state: present
-            update_cache: yes
-          when: ansible_os_family == "Debian"
 
-        - name: Install for Rocky Linux/RHEL
-          ansible.builtin.dnf:
-            name: python3-kubernetes
-            state: present
-          when: ansible_os_family == "RedHat"
-
-        - name: Install for SUSE/SLES
-          ansible.builtin.zypper:
-            name: python3-kubernetes
-            state: present
-          when: ansible_os_family == "Suse"
-      become: yes
-
-    - name: Install jmespath for json_query filter
-      block:
-        - name: Install for Debian/Ubuntu
-          ansible.builtin.apt:
-            name: python3-jmespath
-            state: present
-          when: ansible_os_family == "Debian"
-
-        - name: Install for Rocky Linux/RHEL
-          ansible.builtin.dnf:
-            name: python3-jmespath
-            state: present
-          when: ansible_os_family == "RedHat"
-
-        - name: Install for SUSE/SLES
-          ansible.builtin.zypper:
-            name: python3-jmespath
-            state: present
-          when: ansible_os_family == "Suse"
-      become: yes
 
     - name: Set SELinux to permissive (Rocky Linux - for simplicity, consider proper policies for production)
       ansible.builtin.selinux:
