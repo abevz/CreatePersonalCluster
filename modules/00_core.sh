@@ -325,7 +325,7 @@ core_ctx() {
   fi
 
   local cluster_name="$1"
-  local cluster_context_file="$HOME/.config/cpc/cluster_context"
+  local cluster_context_file="$CPC_CONTEXT_FILE"
   mkdir -p "$(dirname "$cluster_context_file")"
 
   echo "$cluster_name" >"$cluster_context_file"
@@ -397,35 +397,68 @@ core_clone_workspace() {
   sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$new_env_file"
   log_info "New environment file created: $new_env_file"
 
-  local template_var_name="pm_template_${source_workspace}_id"
-  local new_entry="  \"${new_workspace_name}\" = var.${template_var_name}"
-  sed -i "/template_vm_ids = {/a\\$new_entry" "$locals_tf_file"
+  #  local template_var_name="pm_template_${source_workspace}_id"
+  #  local new_entry="  \"${new_workspace_name}\" = var.${template_var_name}"
+  #  sed -i "/template_vm_ids = {/a\\$new_entry" "$locals_tf_file"
 
-  # --- ИСПРАВЛЕННЫЙ БЛОК ---
+  # --- ЧАСТЬ 1: ИСПРАВЛЕНИЕ template_vm_ids ---
+
+  log_info "Updating template_vm_ids map..."
+
+  # Используем awk для поиска значения ТОЛЬКО внутри блока template_vm_ids
+  local source_value
+  source_value=$(awk -v workspace="\"${source_workspace}\"" '
+  /template_vm_ids = {/,/}/{
+    if ($1 == workspace) {
+      # Нашли нужную строку, извлекаем значение
+      split($0, parts, "=")
+      gsub(/[[:space:]]/, "", parts[2]) # Убираем пробелы
+      gsub(/#.*/, "", parts[2])        # Убираем комментарии
+      print parts[2]
+      exit
+    }
+  }' "$locals_tf_file")
+
+  if [[ -z "$source_value" ]]; then
+    log_error "Could not find a template value for '${source_workspace}' in the template_vm_ids map."
+    return 1
+  fi
+  log_success "Found template value: ${source_value}"
+
+  # Создаем и вставляем новую запись
+  local new_template_entry="  \"${new_workspace_name}\" = ${source_value}"
+  awk -i inplace -v new_entry="$new_template_entry" '
+  /template_vm_ids = {/ { print; print new_entry; next }
+  1' "$locals_tf_file"
+  log_success "Added new entry to template_vm_ids."
+
+  # --- ЧАСТЬ 2: ИСПРАВЛЕНИЕ workspace_ip_map ---
+
   log_info "Updating workspace_ip_map with the first available IP index..."
 
-  # Extract all currently used IDs from the map, sort them uniquely
+  # 1. Получить отсортированный и уникальный список всех используемых ID
   local used_ids
-  used_ids=$(grep -A 20 "workspace_ip_map = {" "$locals_tf_file" | grep -oP '=\s*\K[0-9]+' | sort -n | uniq)
+  used_ids=$(awk '/workspace_ip_map = {/,/}/' "$locals_tf_file" | grep -oP '=\s*\K[0-9]+' | sort -un)
 
   local next_id=1
-  if [ -n "$used_ids" ]; then
-    # Loop through the sorted list of used IDs to find the first gap
+  if [[ -n "$used_ids" ]]; then
+    # 2. Искать первую "дырку" в последовательности
     for id in $used_ids; do
-      if [ "$id" -eq "$next_id" ]; then
-        # This ID is taken, check the next one
-        next_id=$((next_id + 1))
-      else
-        # We found a gap. The current $next_id is free.
+      if [[ "$next_id" -lt "$id" ]]; then
+        # Нашли! next_id не занят, а id уже больше.
         break
       fi
+      # Если id совпадает с next_id, увеличиваем и проверяем следующий
+      next_id=$((next_id + 1))
     done
   fi
-  # If no gaps were found, next_id will be one greater than the max used ID.
 
-  # Add the new workspace to the map using the found available ID
-  sed -i "/workspace_ip_map = {/a \\    \"$new_workspace_name\"      = ${next_id}  # Auto-added by clone-workspace" "$locals_tf_file"
-  log_info "Added workspace_ip_map entry: \"$new_workspace_name\" = ${next_id}"
+  # 3. Создаем и вставляем новую запись с ПРАВИЛЬНЫМ свободным ID
+  local new_ip_entry="    \"${new_workspace_name}\"         = ${next_id}  # Auto-added by clone-workspace"
+  awk -i inplace -v new_entry="$new_ip_entry" '
+  /workspace_ip_map = {/ { print; print new_entry; next }
+  1' "$locals_tf_file"
+  log_success "Added workspace_ip_map entry: \"${new_workspace_name}\" = ${next_id}"
 
   # 2. Переключаем контекст на новый воркспейс
   set_cluster_context "$new_workspace_name"
