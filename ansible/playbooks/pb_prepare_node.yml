@@ -116,7 +116,7 @@
           - "kubectl={{ KUBERNETES_LONG_VERSION }}-1.1"
         state: present
         allow_downgrade: yes
-        update_cache: yes # Добавлено для надежности
+        update_cache: yes # Added for reliability
       when: ansible_os_family == "Debian"
 
     - name: Hold Kubernetes components at their current version

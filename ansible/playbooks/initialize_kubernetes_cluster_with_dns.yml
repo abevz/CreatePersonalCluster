@@ -175,10 +175,17 @@
       changed_when: false
     # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-    - name: Wait for Calico pods to be ready
-      ansible.builtin.shell: kubectl wait --for=condition=Ready pods --all -n calico-system --timeout=300s
-      when: calico_install_result.changed
-      changed_when: false
+    - name: Wait for Calico Deployments to be available
+      command: "kubectl wait --for=condition=Available deployment --all -n calico-system --timeout=300s"
+      register: calico_deploy_wait_result
+      changed_when: true
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Wait for Calico DaemonSet to be ready
+      command: "kubectl rollout status daemonset/calico-node -n calico-system --timeout=300s"
+      register: calico_ds_wait_result
+      changed_when: true
+      delegate_to: "{{ groups['control_plane'][0] }}"
 
 - name: Join Worker Nodes to Cluster
   hosts: workers
@@ -247,37 +254,40 @@
           API Server Certificate SANs:
           {{ cert_sans.stdout }}
 
-    - name: Wait for kubelet serving CSRs to be created
-      ansible.builtin.shell: kubectl get csr --no-headers | grep -c "kubelet-serving" || echo "0"
-      register: csr_count
-      until: csr_count.stdout|int > 0
-      retries: 12
-      delay: 10
-      changed_when: false
-      ignore_errors: true
-
-    - name: Check for pending kubelet serving CSRs
-      ansible.builtin.shell: kubectl get csr --no-headers | grep "kubelet-serving" | grep "Pending" | wc -l
-      register: pending_csr_count
-      changed_when: false
-      ignore_errors: true
-
-    - name: Approve pending kubelet serving CSRs
-      ansible.builtin.shell: kubectl get csr -o name | grep "kubelet-serving" | xargs kubectl certificate approve
-      when: pending_csr_count.stdout|int > 0
-      register: csr_approval_result
+    - name: Wait for all nodes to report Ready status
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      command: "kubectl wait --for=condition=Ready nodes --all --timeout=300s"
       changed_when: true
+      tags:
+        - bootstrap
 
-    - name: Display CSR approval result
-      ansible.builtin.debug:
-        msg: |
-          CSR Approval Result:
-          Pending CSRs found: {{ pending_csr_count.stdout }}
-          {% if pending_csr_count.stdout|int > 0 %}
-          Approved CSRs: {{ csr_approval_result.stdout }}
-          {% else %}
-          No pending kubelet serving CSRs found.
-          {% endif %}
+    - name: Wait for all worker node CSRs to appear and approve them
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      tags:
+        - bootstrap
+      block:
+        - name: Wait until all worker CSRs are created
+          # Используем jsonpath, чтобы kubectl сам отфильтровал и вернул только имена нужных CSR
+          command: >
+            kubectl get csr -o jsonpath='{.items[?(@.spec.signerName=="kubernetes.io/kubelet-serving")].metadata.name}'
+          register: pending_csr_names
+          # Условие стало очень простым: считаем количество слов в выводе
+          until: "pending_csr_names.stdout.split(' ') | length >= (groups['workers'] | length)"
+          retries: 30
+          delay: 10
+          changed_when: false
+
+        - name: Approve all found kubelet serving CSRs
+          # We use the result of the previous command directly
+          command: "kubectl certificate approve {{ item }}"
+          loop: "{{ pending_csr_names.stdout.split(' ') }}"
+          when: pending_csr_names.stdout | length > 0
+          changed_when: true
+
+        - name: Display CSR approval status
+          ansible.builtin.debug:
+            msg: "Successfully approved {{ pending_csr_names.stdout.split() | length }} pending kubelet serving CSRs."
+          when: pending_csr_names.stdout | length > 0
 
     - name: Final cluster status verification
       ansible.builtin.shell: kubectl get nodes -o wide

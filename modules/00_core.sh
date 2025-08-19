@@ -84,6 +84,8 @@ load_secrets() {
   export AWS_ACCESS_KEY_ID
   export AWS_SECRET_ACCESS_KEY
   export AWS_DEFAULT_REGION
+  export DOCKER_HUB_USERNAME
+  export DOCKER_HUB_PASSWORD
 
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
@@ -102,6 +104,11 @@ load_secrets() {
   VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
   VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
 
+  DOCKER_HUB_USERNAME=$(echo "$secrets_json" | jq -r '.docker_hub_username')
+
+  echo "DEBUG: Docker Hub User is [${DOCKER_HUB_USERNAME}]"
+
+  DOCKER_HUB_PASSWORD=$(echo "$secrets_json" | jq -r '.docker_hub_password')
   # Parse MinIO/S3 credentials for Terraform backend
   AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
   AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
@@ -369,7 +376,7 @@ core_clone_workspace() {
   local locals_tf_file="$repo_root/$TERRAFORM_DIR/locals.tf"
   local locals_tf_backup_file="${locals_tf_file}.bak"
 
-  # --- Проверки ---
+  # --- Checks ---
   if [[ ! -f "$source_env_file" ]]; then
     log_error "Source workspace environment file not found: $source_env_file"
     return 1
@@ -383,16 +390,16 @@ core_clone_workspace() {
     return 1
   fi
 
-  # --- Сохраняем текущий контекст, чтобы вернуться к нему в конце ---
+  # --- Save the current context to return to it at the end ---
   local original_context
   original_context=$(get_current_cluster_context)
 
-  # --- Создаем резервную копию locals.tf для надежного отката ---
+  # --- Create a backup of locals.tf for a reliable rollback ---
   cp "$locals_tf_file" "$locals_tf_backup_file"
 
   log_step "Cloning workspace '$source_workspace' to '$new_workspace_name'..."
 
-  # 1. Создаем и модифицируем файлы
+  # 1. Create and modify files
   cp "$source_env_file" "$new_env_file"
   sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$new_env_file"
   log_info "New environment file created: $new_env_file"
@@ -401,19 +408,19 @@ core_clone_workspace() {
   #  local new_entry="  \"${new_workspace_name}\" = var.${template_var_name}"
   #  sed -i "/template_vm_ids = {/a\\$new_entry" "$locals_tf_file"
 
-  # --- ЧАСТЬ 1: ИСПРАВЛЕНИЕ template_vm_ids ---
+  # --- PART 1: FIX template_vm_ids ---
 
   log_info "Updating template_vm_ids map..."
 
-  # Используем awk для поиска значения ТОЛЬКО внутри блока template_vm_ids
+  # Use awk to find the value ONLY inside the template_vm_ids block
   local source_value
   source_value=$(awk -v workspace="\"${source_workspace}\"" '
   /template_vm_ids = {/,/}/{
     if ($1 == workspace) {
-      # Нашли нужную строку, извлекаем значение
+      # Found the required line, extracting the value
       split($0, parts, "=")
-      gsub(/[[:space:]]/, "", parts[2]) # Убираем пробелы
-      gsub(/#.*/, "", parts[2])        # Убираем комментарии
+      gsub(/[[:space:]]/, "", parts[2]) # Remove spaces
+      gsub(/#.*/, "", parts[2])        # Remove comments
       print parts[2]
       exit
     }
@@ -425,66 +432,66 @@ core_clone_workspace() {
   fi
   log_success "Found template value: ${source_value}"
 
-  # Создаем и вставляем новую запись
+  # Create and insert a new record
   local new_template_entry="  \"${new_workspace_name}\" = ${source_value}"
   awk -i inplace -v new_entry="$new_template_entry" '
   /template_vm_ids = {/ { print; print new_entry; next }
   1' "$locals_tf_file"
   log_success "Added new entry to template_vm_ids."
 
-  # --- ЧАСТЬ 2: ИСПРАВЛЕНИЕ workspace_ip_map ---
+  # --- PART 2: FIX workspace_ip_map ---
 
   log_info "Updating workspace_ip_map with the first available IP index..."
 
-  # 1. Получить отсортированный и уникальный список всех используемых ID
+  # 1. Get a sorted and unique list of all used IDs
   local used_ids
   used_ids=$(awk '/workspace_ip_map = {/,/}/' "$locals_tf_file" | grep -oP '=\s*\K[0-9]+' | sort -un)
 
   local next_id=1
   if [[ -n "$used_ids" ]]; then
-    # 2. Искать первую "дырку" в последовательности
+    # 2. Look for the first "hole" in the sequence
     for id in $used_ids; do
       if [[ "$next_id" -lt "$id" ]]; then
-        # Нашли! next_id не занят, а id уже больше.
+        # Found it! next_id is not taken, and id is already larger.
         break
       fi
-      # Если id совпадает с next_id, увеличиваем и проверяем следующий
+      # If id matches next_id, increment and check the next one
       next_id=$((next_id + 1))
     done
   fi
 
-  # 3. Создаем и вставляем новую запись с ПРАВИЛЬНЫМ свободным ID
+  # 3. Create and insert a new record with the CORRECT free ID
   local new_ip_entry="    \"${new_workspace_name}\"         = ${next_id}  # Auto-added by clone-workspace"
   awk -i inplace -v new_entry="$new_ip_entry" '
   /workspace_ip_map = {/ { print; print new_entry; next }
   1' "$locals_tf_file"
   log_success "Added workspace_ip_map entry: \"${new_workspace_name}\" = ${next_id}"
 
-  # 2. Переключаем контекст на новый воркспейс
+  # 2. Switch the context to the new workspace
   set_cluster_context "$new_workspace_name"
 
-  # 3. Создаем новый воркспейс в Terraform
+  # 3. Create a new workspace in Terraform
   log_step "Creating Terraform workspace '$new_workspace_name'..."
   if ! cpc_tofu workspace new "$new_workspace_name"; then
     log_error "Failed to create Terraform workspace '$new_workspace_name'."
     log_error "Reverting changes..."
-    # --- Откат изменений в случае ошибки ---
+    # --- Rollback changes in case of an error ---
     rm -f "$new_env_file"
     mv "$locals_tf_backup_file" "$locals_tf_file"
-    set_cluster_context "$original_context" # Возвращаем старый контекст
+    set_cluster_context "$original_context" # Return to the old context
     log_warning "Changes have been reverted."
     return 1
   fi
 
-  # 4. Успешное завершение и очистка
-  rm -f "$locals_tf_backup_file" # Удаляем бэкап, так как он больше не нужен
+  # 4. Successful completion and cleanup
+  rm -f "$locals_tf_backup_file" # Delete the backup, as it is no longer needed
   log_success "Successfully cloned workspace '$source_workspace' to '$new_workspace_name'."
   log_info "Switched context to '$new_workspace_name'."
 
 }
 
-# (в modules/00_core.sh)
-# (в modules/00_core.sh)
+# (in modules/00_core.sh)
+# (in modules/00_core.sh)
 
 function core_delete_workspace() {
   if [[ -z "$1" ]]; then
@@ -509,36 +516,36 @@ function core_delete_workspace() {
     return 1
   fi
 
-  # 1. Переключаемся в контекст, который будем удалять, для уничтожения ресурсов
+  # 1. Switch to the context to be deleted to destroy the resources
   set_cluster_context "$workspace_name"
 
-  # 2. Уничтожаем все ресурсы
+  # 2. Destroy all resources
   log_step "Destroying all resources in workspace '$workspace_name'..."
   if ! cpc_tofu deploy destroy; then
     log_error "Failed to destroy resources for workspace '$workspace_name'."
     log_error "Workspace deletion aborted. Please destroy resources manually before trying again."
-    set_cluster_context "$original_context" # Возвращаем исходный контекст в случае ошибки
+    set_cluster_context "$original_context" # Return to the original context in case of an error
     return 1
   fi
   log_success "All resources for '$workspace_name' have been destroyed."
 
-  # 3. Переключаемся в БЕЗОПАСНЫЙ контекст ПЕРЕД удалением.
-  #    Если мы удаляем не тот контекст, в котором были, возвращаемся в него.
-  #    Иначе - переключаемся в 'ubuntu' (или 'default', если 'ubuntu' нет).
-  local safe_context="ubuntu" # 'ubuntu' - хороший кандидат по умолчанию
+  # 3. Switch to a SAFE context BEFORE deletion.
+  #    If we are deleting a different context than the one we were in, return to it.
+  #    Otherwise - switch to 'ubuntu' (or 'default', if 'ubuntu' is not present).
+  local safe_context="ubuntu" # 'ubuntu' is a good default candidate
   if [[ "$original_context" != "$workspace_name" ]]; then
     safe_context="$original_context"
   fi
 
   log_step "Switching to safe context ('$safe_context') to perform deletion..."
-  # Используем твою же функцию для переключения
+  # Use your own function to switch
   if ! core_ctx "$safe_context"; then
     log_error "Could not switch to a safe workspace ('$safe_context'). Aborting workspace deletion."
     log_warning "Resources were destroyed, but the empty workspace '$workspace_name' remains."
     return 1
   fi
 
-  # 4. Теперь, находясь в безопасном воркспейсе, удаляем целевой
+  # 4. Now, being in a safe workspace, delete the target
   log_step "Deleting Terraform workspace '$workspace_name' from the backend..."
   if ! cpc_tofu workspace delete "$workspace_name"; then
     log_error "Failed to delete the Terraform workspace '$workspace_name' from backend."
@@ -546,8 +553,8 @@ function core_delete_workspace() {
     log_success "Terraform workspace '$workspace_name' has been deleted."
   fi
 
-  # 5. Подчищаем локальные файлы конфигурации
-  log_step "Removing local configuration for '$workspace_name'..."
+  # 5. Clean up local configuration files
+  log_step "Removing local configuration for '$workspace_name'...
   if [[ -f "$env_file" ]]; then
     rm -f "$env_file"
     log_info "Removed environment file: $env_file."
@@ -616,7 +623,7 @@ _get_terraform_outputs_json() {
     log_error "Failed to extract JSON from 'cpc deploy output'. Please check for errors."
     return 1
   fi
-  # Выводим JSON для захвата
+  # Output JSON for capture
   echo "$tofu_outputs_json"
   return 0
 }
@@ -636,7 +643,7 @@ _get_hostname_by_ip() {
     return 1
   fi
 
-  # Извлекаем строку с инвентарем из полного JSON
+  # Extract the inventory line from the full JSON
   local ansible_inventory_string
   ansible_inventory_string=$(echo "$tofu_outputs_json" | jq -r '.ansible_inventory.value')
 
@@ -668,7 +675,7 @@ function ansible_create_temp_inventory() {
   fi
 
   local dynamic_inventory_json
-  # Сначала извлекаем JSON-строку, а затем парсим ее как JSON (fromjson)
+  # First, extract the JSON string, and then parse it as JSON (fromjson)
   dynamic_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
   if [[ -z "$dynamic_inventory_json" || "$dynamic_inventory_json" == "null" ]]; then
     log_error "Ansible inventory data is empty or invalid in Terraform outputs."
@@ -678,7 +685,7 @@ function ansible_create_temp_inventory() {
   local temp_inventory_file
   temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
 
-  # Преобразуем динамический JSON в статический, который Ansible поймет
+  # Convert dynamic JSON to a static one that Ansible will understand
   jq '
       . as $inv |
       {

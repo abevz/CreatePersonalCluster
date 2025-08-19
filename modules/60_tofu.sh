@@ -204,7 +204,7 @@ function tofu_deploy() {
         --arg secondary "$SECONDARY_DNS_SERVER" \
         '[ $primary, $secondary | select(. != null and . != "") ]')
     fi
-    # Добавляем переменную в массив команд tofu
+    # Add the variable to the tofu command array
     final_tofu_cmd_array+=("-var" "dns_servers=${dns_servers_list}")
     ;;
   esac
