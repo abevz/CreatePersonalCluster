@@ -84,6 +84,11 @@ load_secrets() {
   export AWS_ACCESS_KEY_ID
   export AWS_SECRET_ACCESS_KEY
   export AWS_DEFAULT_REGION
+  export DOCKER_HUB_USERNAME
+  export DOCKER_HUB_PASSWORD
+  export HARBOR_HOSTNAME
+  export HARBOR_ROBOT_USERNAME
+  export HARBOR_ROBOT_TOKEN
 
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
@@ -101,6 +106,13 @@ load_secrets() {
   VM_USERNAME=$(echo "$secrets_json" | jq -r '.vm_username')
   VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
   VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
+
+  DOCKER_HUB_USERNAME=$(echo "$secrets_json" | jq -r '.docker_hub_username')
+  DOCKER_HUB_PASSWORD=$(echo "$secrets_json" | jq -r '.docker_hub_password')
+
+  HARBOR_HOSTNAME=$(echo "$secrets_json" | jq -r '.harbor_hostname')
+  HARBOR_ROBOT_USERNAME=$(echo "$secrets_json" | jq -r '.harbor_robot_username')
+  HARBOR_ROBOT_TOKEN=$(echo "$secrets_json" | jq -r '.harbor_robot_token')
 
   # Parse MinIO/S3 credentials for Terraform backend
   AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
