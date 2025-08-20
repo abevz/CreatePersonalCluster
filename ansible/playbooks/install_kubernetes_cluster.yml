@@ -135,37 +135,13 @@
 
 # ... после задачи "Enable and start containerd service"
 
-    - name: Generate default containerd configuration
-      ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
-      args:
-        creates: /etc/containerd/config.toml
-      changed_when: true
-
-    - name: Enable SystemdCgroup in containerd config
-      ansible.builtin.lineinfile:
-        path: /etc/containerd/config.toml
-        regexp: '(\s*SystemdCgroup\s*=\s*)false'
-        line: '\1true'
-        backrefs: yes
-      notify: Restart containerd
-
-    - name: Configure Harbor registry mirrors in containerd
-      ansible.builtin.lineinfile:
-        path: /etc/containerd/config.toml
-        # Вставляем строку ПОСЛЕ заголовка секции зеркал
-        insertafter: '\[plugins."io.containerd.grpc.v1.cri".registry.mirrors\]'
-        line: "{{ item }}"
-      loop:
-        - '  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]'
-        - '    endpoint = ["https://{{ harbor_hostname }}/dockerhub-proxy"]'
-        - '  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."quay.io"]'
-        - '    endpoint = ["https://{{ harbor_hostname }}/quay-proxy"]'
-        - '  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."gcr.io"]'
-        - '    endpoint = ["https://{{ harbor_hostname }}/gcr-proxy"]'
-        - '  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]'
-        - '    endpoint = ["https://{{ harbor_hostname }}/k8s-proxy"]'
-        - '  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."k8s.gcr.io"]'
-        - '    endpoint = ["https://{{ harbor_hostname }}/k8s-proxy"]'
+    - name: Create containerd configuration from final template
+      ansible.builtin.template:
+        src: ../templates/containerd-config.toml.j2
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
       notify: Restart containerd
 
     # ... дальше идут задачи по установке Kubernetes

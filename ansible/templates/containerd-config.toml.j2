@@ -1,0 +1,30 @@
+# ansible/templates/containerd-config.toml.j2
+# Минимально необходимая и правильная конфигурация containerd для Kubernetes
+version = 2
+
+[plugins]
+  [plugins."io.containerd.grpc.v1.cri"]
+    sandbox_image = "registry.k8s.io/pause:3.9"
+    [plugins."io.containerd.grpc.v1.cri".containerd]
+      default_runtime_name = "runc"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+          runtime_type = "io.containerd.runc.v2"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+            # Включаем SystemdCgroup, как того требует Kubernetes
+            SystemdCgroup = true
+
+    # Наша конфигурация зеркал в правильном месте
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = ""
+      [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+          endpoint = ["https://{{ harbor_hostname }}/dockerhub-proxy"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."quay.io"]
+          endpoint = ["https://{{ harbor_hostname }}/quay-proxy"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."gcr.io"]
+          endpoint = ["https://{{ harbor_hostname }}/gcr-proxy"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]
+          endpoint = ["https://{{ harbor_hostname }}/k8s-proxy"]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."k8s.gcr.io"]
+          endpoint = ["https://{{ harbor_hostname }}/k8s-proxy"]
