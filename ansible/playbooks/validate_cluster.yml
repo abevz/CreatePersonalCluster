@@ -15,7 +15,7 @@
 
     - name: Display cluster nodes
       debug:
-        msg: "Node: {{ item.metadata.name }} - Status: {{ item.status.conditions | selectattr('type', 'equalto', 'Ready') | list | first | default({}) | json_query('status') }}"
+        msg: "Node: {{ item.metadata.name }} - Status: {{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | first).status }}"
       loop: "{{ cluster_nodes.resources }}"
 
     - name: Check system pods status

@@ -143,60 +143,92 @@ ansible_show_run_command_help() {
 }
 
 # Execute Ansible playbooks with proper context and inventory
+
+# modules/20_ansible.sh
+
 function ansible_run_playbook() {
   local playbook_name=$1
   shift
   local repo_root
   repo_root=$(get_repo_path)
   local ansible_dir="$repo_root/ansible"
-
   local temp_inventory_file
-  temp_inventory_file=$(ansible_create_temp_inventory)
-  if [[ $? -ne 0 ]]; then
-    return 1
+
+  # --- ИЗМЕНЕНИЕ 1: Мы создаем инвентарь только один раз, если он нужен ---
+  # Если в аргументах нет инвентаря (-i), создаем временный
+  if ! [[ "$*" =~ -i ]]; then
+    temp_inventory_file=$(ansible_create_temp_inventory)
+    if [[ $? -ne 0 || -z "$temp_inventory_file" ]]; then
+      log_error "Failed to create temporary Ansible inventory."
+      return 1
+    fi
+    # Добавляем временный инвентарь в аргументы
+    set -- "$@" -i "$temp_inventory_file"
   fi
 
-  local ansible_cmd_array=('ansible-playbook' '-i' "$temp_inventory_file" "playbooks/$playbook_name" '--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null')
+  local ansible_cmd_array=("ansible-playbook" "playbooks/$playbook_name" "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
 
-  # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
-  # Получаем текущий контекст и путь к его .env файлу
   local current_ctx
   current_ctx=$(get_current_cluster_context)
-  local env_file="$repo_root/envs/${current_ctx}.env"
+  local env_file="$repo_root/envs/$current_ctx.env"
 
   if [[ -f "$env_file" ]]; then
     log_debug "Loading variables from $env_file for Ansible..."
-    # Считываем все переменные из файла и добавляем их через -e
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      # Пропускаем пустые строки и комментарии
-      if [[ -n "$line" && ! "$line" =~ ^\s*# ]]; then
-        ansible_cmd_array+=("-e" "$line")
-      fi
+    while IFS= read -r line; do
+      [[ -n "$line" && ! "$line" =~ ^\s*# ]] && ansible_cmd_array+=("-e" "$line")
     done <"$env_file"
   fi
-  # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+  # --- ИЗМЕНЕНИЕ 2: Вот ОНО! Универсальный блок для передачи секретов ---
+  # Список секретов, которые будут автоматически переданы в Ansible, если они существуют в окружении.
+  # Они загружаются функцией load_secrets из 00_core.sh
+  local secret_vars_to_pass=(
+    "HARBOR_HOSTNAME"
+    "HARBOR_ROBOT_USERNAME"
+    "HARBOR_ROBOT_TOKEN"
+    "DOCKER_HUB_USERNAME"
+    "DOCKER_HUB_PASSWORD"
+    # Сюда можно добавлять другие секреты, если они понадобятся в Ansible
+  )
+
+  log_debug "Adding secrets from environment to Ansible command..."
+  for var_name in "${secret_vars_to_pass[@]}"; do
+    # Конструкция ${!var_name} - это косвенная ссылка на значение переменной.
+    if [[ -n "${!var_name}" ]]; then
+      # Передаем переменную в Ansible. Ansible предпочитает переменные в нижнем регистре.
+      local ansible_var_name
+      ansible_var_name=$(echo "$var_name" | tr '[:upper:]' '[:lower:]')
+      ansible_cmd_array+=("-e" "$ansible_var_name=${!var_name}")
+      log_debug "  -> Passing secret: $ansible_var_name"
+    fi
+  done
+  # --- КОНЕЦ БЛОКА ИЗМЕНЕНИЙ ---
 
   local ansible_user
   ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")
   ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
 
+  # Добавляем все остальные аргументы, переданные в функцию (например, -i /path/to/inventory)
   if [[ $# -gt 0 ]]; then
     ansible_cmd_array+=("$@")
   fi
 
   log_info "Running: ${ansible_cmd_array[*]}"
+
   pushd "$ansible_dir" >/dev/null
   "${ansible_cmd_array[@]}"
   local exit_code=$?
   popd >/dev/null
-  rm "$temp_inventory_file"
+
+  # --- ИЗМЕНЕНИЕ 3: Удаляем временный инвентарь, если он был создан ---
+  if [[ -n "$temp_inventory_file" ]]; then
+    rm "$temp_inventory_file"
+  fi
 
   if [[ $exit_code -ne 0 ]]; then
     log_error "Ansible playbook $playbook_name failed with exit code $exit_code."
     return 1
   fi
-
-  log_success "Ansible playbook $playbook_name completed successfully."
   return 0
 }
 

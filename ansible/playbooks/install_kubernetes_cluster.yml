@@ -9,9 +9,16 @@
 
   vars:
     kubernetes_version: "{{ KUBERNETES_SHORT_VERSION | default('1.29') }}"
-    harbor_hostname: "harbor.bevz.net" # Переменная для твоего хоста Harbor
+    harbor_hostname: "{{ HARBOR_HOSTNAME }}" 
+    harbor_robot_username: "{{ HARBOR_ROBOT_USER | default('k8s-puller') }}"
+    harbor_robot_token: "{{ HARBOR_ROBOT_TOKEN | default('') }}"
 
   pre_tasks:
+
+    - name: Кодируем данные для авторизации в Harbor
+      ansible.builtin.set_fact:
+        harbor_auth: "{{ [harbor_robot_username,harbor_robot_token] | join(':') | b64encode }}"    
+
     # ... (все pre_tasks остаются без изменений) ...
     - name: Update package cache (Debian/Ubuntu)
       ansible.builtin.apt:
@@ -119,13 +126,14 @@
         state: directory
         mode: '0755'
 
-    - name: Generate default containerd configuration and enable SystemdCgroup
-      ansible.builtin.shell: |
-        containerd config default > /etc/containerd/config.toml
-        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        sed -i 's/disabled_plugins = \[\"cri\"\]/disabled_plugins = []/g' /etc/containerd/config.toml
-      changed_when: true
-      notify: Restart containerd
+    - name: Create containerd configuration from template
+      ansible.builtin.template:
+        src: ../templates/containerd-config.toml.j2
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart containerd        
 
     - name: Enable and start containerd service
       ansible.builtin.systemd:
@@ -135,14 +143,92 @@
 
 # ... после задачи "Enable and start containerd service"
 
-    - name: Create containerd configuration from final template
+    - name: Ensure containerd certs directory exists
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "docker.io"
+        - "quay.io"
+        - "gcr.io"
+        - "registry.k8s.io"
+        - "k8s.gcr.io"
+        - "{{ harbor_hostname }}"  
+
+    - name: Configure Harbor proxy for docker.io
       ansible.builtin.template:
-        src: ../templates/containerd-config.toml.j2
-        dest: /etc/containerd/config.toml
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/docker.io/hosts.toml
         owner: root
         group: root
         mode: '0644'
+      vars:
+        upstream_server: "https://docker.io"
+        proxy_project: "dockerhub-proxy"
       notify: Restart containerd
+
+    - name: Configure Harbor proxy for quay.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/quay.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://quay.io"
+        proxy_project: "quay-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for gcr.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/gcr.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://gcr.io"
+        proxy_project: "gcr-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for registry.k8s.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/registry.k8s.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://registry.k8s.io"
+        proxy_project: "k8s-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for k8s.gcr.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/k8s.gcr.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://k8s.gcr.io"
+        proxy_project: "k8s-proxy"
+      notify: Restart containerd        
+
+    - name: Configure Harbor proxy for Harbor
+      ansible.builtin.template:
+        src: ../templates/hosts_harbor.toml.j2
+        dest: /etc/containerd/certs.d/{{ harbor_hostname }}/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://{{ harbor_hostname }}"
+        proxy_project: "k8s-proxy"
+      notify: Restart containerd        
 
     # ... дальше идут задачи по установке Kubernetes
     # ... (остальные задачи по установк``е kubelet, kubeadm и т.д. без изменений) ...

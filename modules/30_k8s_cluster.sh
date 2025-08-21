@@ -204,6 +204,7 @@ k8s_bootstrap() {
   fi
 
   # Step 3: Validate cluster
+  #
   log_info "Step 3: Validating cluster installation..."
   if ! ansible_run_playbook "validate_cluster.yml" -l control_plane "${ansible_extra_args[@]}"; then
     log_warning "Cluster validation failed, but continuing..."

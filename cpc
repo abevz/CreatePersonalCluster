@@ -95,7 +95,7 @@ export -f get_current_cluster_context
 
 # Check if secrets are already loaded
 check_secrets_loaded() {
-  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$VM_USERNAME" ]; then
+  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$VM_USERNAME" ] || [ -z "$HARBOR_HOSTNAME" ]; then
     echo -e "${RED}Error: Secrets not loaded. This command requires SOPS secrets to be loaded.${ENDCOLOR}" >&2
     echo -e "${BLUE}Please run 'cpc load_secrets' first or ensure cpc.env is properly configured.${ENDCOLOR}" >&2
     exit 1

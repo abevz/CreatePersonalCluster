@@ -307,6 +307,11 @@
   hosts: control_plane
   become: yes
   gather_facts: no
+  vars:
+    # Эти переменные, включая target_namespaces, видны только здесь
+    target_namespaces:
+      - default
+      - kube-system
 
   tasks:
     - name: Check if Harbor robot token is provided
