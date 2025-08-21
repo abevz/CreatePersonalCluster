@@ -15,8 +15,8 @@
 
     - name: Display cluster nodes
       debug:
-        msg: "Node: {{ item.metadata.name }} - Status: {{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | first).status }}"
-      loop: "{{ cluster_nodes.resources }}"
+        msg: "Node: {{ item.name }} | Status: {{ item.status }} | Internal IP: {{ item.internal_ip }}"
+      loop: "{{ cluster_nodes.resources | json_query('[].{name: metadata.name, status: status.conditions[?type==`Ready`].status | [0], internal_ip: status.addresses[?type==`InternalIP`].address | [0]}') }}"
 
     - name: Check system pods status
       kubernetes.core.k8s_info:
@@ -26,11 +26,27 @@
         namespace: kube-system
       register: system_pods
 
-    - name: Verify all system pods are running
-      debug:
-        msg: "Pod: {{ item.metadata.name }} - Status: {{ item.status.phase }}"
+    - name: Check status of system pods silently
+      ansible.builtin.assert:
+        that:
+          - "item.status.phase == 'Running'"
+        fail_msg: "Pod {{ item.metadata.name }} is not running, current state is '{{ item.status.phase }}'"
+        success_msg: "Pod {{ item.metadata.name }} is Running"
       loop: "{{ system_pods.resources }}"
-      when: item.status.phase != "Running"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+      when: system_pods.resources is defined and system_pods.resources | length > 0
+      no_log: true  # <--- Вот ключ! Скрываем все "полотно"
+      register: pod_check_results
+      ignore_errors: true
+
+    - name: Display system pod status
+      ansible.builtin.debug:
+        msg: "{{ item.msg }} ✅"
+      loop: "{{ pod_check_results.results }}"
+      when: not item.failed
+      loop_control:
+        label: "{{ item.item.metadata.name }}"
 
     - name: Check Calico pods status
       kubernetes.core.k8s_info:
@@ -39,12 +55,25 @@
         kind: Pod
         namespace: calico-system
       register: calico_pods
-
-    - name: Verify Calico pods are running
-      debug:
-        msg: "Calico Pod: {{ item.metadata.name }} - Status: {{ item.status.phase }}"
+      
+    - name: Check status of Calico pods silently
+      ansible.builtin.assert:
+        that:
+          - "item.status.phase == 'Running'"
       loop: "{{ calico_pods.resources }}"
-      when: item.status.phase != "Running"
+      when: calico_pods.resources is defined and calico_pods.resources | length > 0
+      no_log: true
+      register: calico_pod_check_results
+      ignore_errors: true
+
+    - name: Display Calico pod status report
+      ansible.builtin.debug:
+        msg: "Pod {{ item.item.metadata.name }} is {{ item.item.status.phase }} {{ '✅' if not item.failed else '❌' }}"
+      loop: "{{ calico_pod_check_results.results }}"
+      # Эта проверка - ключ к исправлению. Задача запустится, только если есть результаты.
+      when: calico_pod_check_results.results is defined
+      loop_control:
+        label: "{{ item.item.metadata.name }}"
 
     - name: Create test deployment for networking validation
       kubernetes.core.k8s:
@@ -97,8 +126,8 @@
 
     - name: Display test pod placement
       debug:
-        msg: "Pod {{ item.metadata.name }} running on {{ item.spec.nodeName }} with IP {{ item.status.podIP }}"
-      loop: "{{ test_pods.resources }}"
+        msg: "Pod: {{ item.name }} | Node: {{ item.node }} | IP: {{ item.ip }}"
+      loop: "{{ test_pods.resources | json_query('[].{name: metadata.name, node: spec.nodeName, ip: status.podIP}') }}"
 
     - name: Create test service
       kubernetes.core.k8s:
