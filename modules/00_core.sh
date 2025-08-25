@@ -89,6 +89,7 @@ load_secrets() {
   export HARBOR_HOSTNAME
   export HARBOR_ROBOT_USERNAME
   export HARBOR_ROBOT_TOKEN
+  export CLOUDFLARE_DNS_API_TOKEN
 
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
@@ -114,6 +115,8 @@ load_secrets() {
   HARBOR_ROBOT_USERNAME=$(echo "$secrets_json" | jq -r '.harbor_robot_username')
   HARBOR_ROBOT_TOKEN=$(echo "$secrets_json" | jq -r '.harbor_robot_token')
 
+  CLOUDFLARE_DNS_API_TOKEN=$(echo "$secrets_json" | jq -r '.cloudflare_dns_api_token')
+  CLOUDFLARE_EMAIL=$(echo "$secrets_json" | jq -r '.cloudflare_email')
   # Parse MinIO/S3 credentials for Terraform backend
   AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
   AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
