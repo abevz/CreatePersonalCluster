@@ -90,6 +90,7 @@ load_secrets() {
   export HARBOR_ROBOT_USERNAME
   export HARBOR_ROBOT_TOKEN
   export CLOUDFLARE_DNS_API_TOKEN
+  export CLOUDFLARE_EMAIL
 
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
