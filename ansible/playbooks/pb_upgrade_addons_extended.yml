@@ -278,27 +278,63 @@
 
     - name: Install/Upgrade cert-manager
       block:
-        - name: Apply cert-manager CRDs
-          shell: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_target_version }}/cert-manager.crds.yaml
+        # Шаг 1: Добавляем репозиторий Helm, если его нет
+        - name: Add cert-manager Helm repository
+          shell: helm repo add jetstack https://charts.jetstack.io && helm repo update
+          changed_when: false
+          run_once: true
 
-        - name: Apply cert-manager
-          shell: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_target_version }}/cert-manager.yaml
+        # Шаг 2: Устанавливаем или обновляем cert-manager с нужным флагом
+        - name: Apply cert-manager with Gateway API support
+          shell: |
+            helm upgrade --install cert-manager jetstack/cert-manager \
+              --namespace cert-manager \
+              --create-namespace \
+              --version {{ cert_manager_target_version | d('v1.16.2') }} \
+              --set installCRDs=true \
+              --set extraArgs[0]="--enable-gateway-api"
+          register: helm_install_cert_manager
+          changed_when: "'already exists' not in helm_install_cert_manager.stderr"
 
+        # Шаг 3: Ждем, пока все поды будут готовы
         - name: Wait for cert-manager pods to be ready
           shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=300s
 
-        - name: Verify cert-manager installation
-          shell: kubectl get deployment -n cert-manager cert-manager -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
-          register: new_cert_manager_version
-
-        - name: Display cert-manager installation result
-          debug:
-            msg:
-              - "cert-manager installation completed"
-              - "Previous version: {{ current_cert_manager_version.stdout | default('not installed') }}"
-              - "Current version: {{ new_cert_manager_version.stdout }}"
-
       when: addon_name in ['cert-manager', 'all']
+
+      # Cloudflare ClusterIssuer for cert-manager
+    - name: Configure Cloudflare ClusterIssuer
+      block:
+        - name: Create Cloudflare API token secret
+          shell: |
+            kubectl create secret generic cloudflare-api-token \
+              --from-literal=api-token={{ lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') }} \
+              -n cert-manager --dry-run=client -o yaml | kubectl apply -f -
+          when: lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') is defined and lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') != ''
+
+        - name: Create Cloudflare ClusterIssuer
+          shell: |
+            kubectl apply -f - <<EOF
+            apiVersion: cert-manager.io/v1
+            kind: ClusterIssuer
+            metadata:
+              name: letsencrypt-cloudflare
+            spec:
+              acme:
+                email: {{ cloudflare_email }}
+                server: "{{ letsencrypt_server }}"
+                privateKeySecretRef:
+                  name: letsencrypt-private-key
+                solvers:
+                - dns01:
+                    cloudflare:
+                      email: {{ cloudflare_email }}
+                      apiTokenSecretRef:
+                        name: cloudflare-api-token
+                        key: api-token
+            EOF
+
+      when: addon_name in ['cert-manager', 'all'] and lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') is defined and lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') != ''
 
     # Kubelet Serving Cert Approver
     - name: Check current kubelet-serving-cert-approver version
@@ -425,12 +461,11 @@
 
         - name: Install/Upgrade Traefik
           shell: |
-            helm upgrade --install traefik traefik/traefik \
+            echo "{{ lookup('file', 'traefik-values.yaml') }}" | helm upgrade --install traefik traefik/traefik \
               --namespace traefik \
               --create-namespace \
               --version {{ traefik_gateway_target_version }} \
-              --set=experimental.kubernetesGateway=true \
-              --set=providers.kubernetesGateway.enabled=true
+              -f -
           register: helm_install_result
           changed_when: "'already exists' not in helm_install_result.stderr"
 
@@ -449,39 +484,6 @@
 
       when: addon_name in ['traefik-gateway', 'all']
 
-    # Cloudflare ClusterIssuer for cert-manager
-    - name: Configure Cloudflare ClusterIssuer
-      block:
-        - name: Create Cloudflare API token secret
-          shell: |
-            kubectl create secret generic cloudflare-api-token \
-              --from-literal=api-token={{ lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') }} \
-              -n cert-manager --dry-run=client -o yaml | kubectl apply -f -
-          when: lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') is defined and lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') != ''
-
-        - name: Create Cloudflare ClusterIssuer
-          shell: |
-            kubectl apply -f - <<EOF
-            apiVersion: cert-manager.io/v1
-            kind: ClusterIssuer
-            metadata:
-              name: letsencrypt-cloudflare
-            spec:
-              acme:
-                email: {{ cloudflare_email }}
-                server: "{{ letsencrypt_server }}"
-                privateKeySecretRef:
-                  name: letsencrypt-private-key
-                solvers:
-                - dns01:
-                    cloudflare:
-                      email: {{ cloudflare_email }}
-                      apiTokenSecretRef:
-                        name: cloudflare-api-token
-                        key: api-token
-            EOF
-
-      when: addon_name in ['traefik-gateway', 'all'] and lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') is defined and lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') != ''
 
     # Metrics Server
     - name: Check current Metrics Server version

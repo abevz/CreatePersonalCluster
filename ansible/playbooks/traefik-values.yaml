@@ -1,0 +1,43 @@
+# ansible/playbooks/traefik-values.yaml
+
+# 1. Явно включаем нужные нам провайдеры
+providers:
+  kubernetesGateway:
+    enabled: true
+  kubernetesCRD:
+    enabled: true
+  kubernetesIngress:
+    enabled: true
+
+# 2. Включаем DEBUG логи для диагностики
+log:
+  level: INFO
+
+# 3. Включаем Dashboard
+dashboard:
+  enabled: true
+
+# 4. Настраиваем Gateway API
+experimental:
+  kubernetesGateway:
+    enable: true
+    crds: true
+    gateway:
+      service:
+        type: LoadBalancer
+
+
+# 5. Настраиваем точки входа (порты)
+entryPoints:
+  websecure:
+    address: ":8443/tcp"
+    # Говорим Traefik, что ждем PROXY protocol от Nginx
+    proxyProtocol:
+      insecure: true
+
+# 6. Настраиваем сервис Kubernetes
+service:
+  ports:
+    websecure:
+      port: 443
+      targetPort: 8443
