@@ -20,8 +20,7 @@ dashboard:
 # 4. Настраиваем Gateway API
 experimental:
   kubernetesGateway:
-    enable: true
-    crds: true
+    enabled: true
     gateway:
       service:
         type: LoadBalancer
@@ -37,7 +36,15 @@ entryPoints:
 
 # 6. Настраиваем сервис Kubernetes
 service:
+  annotations:
+    # This will tell DigitalOcean to enable the proxy protocol so we can get the client real IP.
+    service.beta.kubernetes.io/linode-loadbalancer-enable-proxy-protocol: "true"
   ports:
     websecure:
       port: 443
       targetPort: 8443
+
+additionalArguments:
+  - --entryPoints.web.proxyProtocol.insecure=true
+  - --entryPoints.websecure.proxyProtocol.insecure=true
+
