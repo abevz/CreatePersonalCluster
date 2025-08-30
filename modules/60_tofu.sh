@@ -470,4 +470,16 @@ function tofu_update_node_info() {
 }
 export -f tofu_update_node_info
 
+function tofu_generate_hostnames() {
+  # This is a wrapper for the generate_node_hostnames.sh script
+  log_info "Preparing to generate hostnames for workspace '$CPC_WORKSPACE'..."
+  # Execute the script that generates and copies snippets
+  if ! "$REPO_PATH/scripts/generate_node_hostnames.sh"; then
+    log_error "Hostname configuration generation failed."
+    return 1
+  fi
+  log_success "Hostname configurations generated successfully."
+}
+export -f tofu_generate_hostnames
+
 log_debug "Module 60_tofu.sh loaded successfully"

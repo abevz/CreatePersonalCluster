@@ -220,6 +220,9 @@ k8s_bootstrap() {
   log_info "  3. Verify cluster: kubectl get nodes -o wide"
 }
 
+#
+# Version: 9.0 (Final - with robust cleanup)
+#
 # Retrieve and merge Kubernetes cluster config into local kubeconfig
 k8s_get_kubeconfig() {
   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -236,82 +239,88 @@ k8s_get_kubeconfig() {
     return 1
   fi
 
-  # --- НАЧАЛО ИСПРАВЛЕНИЯ: Логика получения данных как в k8s_bootstrap ---
-  log_info "Getting all infrastructure data..."
+  # --- Get control plane IP address ---
+  log_info "Getting infrastructure data from Terraform..."
   local raw_output
-  # Вызываем 'cpc deploy output' для получения полного вывода
-  raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null)
+  raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null | sed -n '/^{$/,/^}$/p')
 
-  # Вырезаем чистый JSON из всего текста
-  local all_tofu_outputs_json
-  all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
-
-  if [[ -z "$all_tofu_outputs_json" ]]; then
-    log_error "Failed to extract JSON from 'cpc deploy output'. Please check for errors."
+  if [[ -z "$raw_output" ]]; then
+    log_error "Failed to get Terraform outputs. Please ensure the cluster is deployed."
     return 1
   fi
 
-  # Извлекаем IP control-plane ноды из 'cluster_summary'
   local control_plane_ip
-  control_plane_ip=$(echo "$all_tofu_outputs_json" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.IP | select(. != null)' | head -n 1)
-  # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+  control_plane_ip=$(echo "$raw_output" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.IP | select(. != null)' | head -n 1)
 
   if [[ -z "$control_plane_ip" ]]; then
     log_error "Could not determine the control plane IP address from Terraform outputs."
-    log_info "Ensure the cluster is deployed ('cpc deploy apply') and outputs are available."
     return 1
   fi
 
   log_info "Control plane IP found: ${control_plane_ip}"
 
+  # --- Download and process kubeconfig ---
   local temp_kubeconfig
   temp_kubeconfig=$(mktemp)
+  trap 'rm -f -- "$temp_kubeconfig"' EXIT
 
   log_info "Fetching kubeconfig from ${control_plane_ip}..."
-  if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     "${ANSIBLE_REMOTE_USER:-$VM_USERNAME}@${control_plane_ip}" \
     "sudo cat /etc/kubernetes/admin.conf" >"${temp_kubeconfig}"; then
-
-    # Check if the fetched file is not empty
-    if [[ ! -s "${temp_kubeconfig}" ]]; then
-      log_error "Fetched kubeconfig file is empty. Check sudo permissions for user ${ANSIBLE_REMOTE_USER:-$VM_USERNAME} on the control plane node."
-      rm "${temp_kubeconfig}"
-      return 1
-    fi
-
-    log_success "Kubeconfig file fetched successfully."
-
-    sed -i "s/server: https:\/\/.*:6443/server: https:\/\/${control_plane_ip}:6443/" "${temp_kubeconfig}"
-
-    local kubeconfig_path="${KUBECONFIG:-$HOME/.kube/config}"
-    local backup_path="${kubeconfig_path}.bak"
-
-    log_info "Merging into ${kubeconfig_path}"
-
-    mkdir -p "$(dirname "${kubeconfig_path}")"
-
-    if [[ -f "$kubeconfig_path" ]]; then
-      cp "${kubeconfig_path}" "${backup_path}"
-      log_info "Backup of existing kubeconfig created at ${backup_path}"
-    fi
-
-    KUBECONFIG="${kubeconfig_path}:${temp_kubeconfig}" kubectl config view --flatten >"${kubeconfig_path}.merged"
-    mv "${kubeconfig_path}.merged" "${kubeconfig_path}"
-
-    local context_name="cluster-${current_ctx}"
-    # Переименовываем контекст, если он существует, подавляя ошибки
-    kubectl config get-contexts "kubernetes-admin@kubernetes" &>/dev/null && kubectl config rename-context "kubernetes-admin@kubernetes" "${context_name}"
-    kubectl config use-context "${context_name}"
-
-    log_success "Kubeconfig has been updated successfully."
-    log_info "Current context is now set to '${context_name}'."
-
-    rm "${temp_kubeconfig}"
-  else
     log_error "Failed to fetch kubeconfig file from the control plane node."
-    rm "${temp_kubeconfig}"
     return 1
   fi
+
+  if [[ ! -s "${temp_kubeconfig}" ]]; then
+    log_error "Fetched kubeconfig file is empty. Check sudo permissions on the control plane node."
+    return 1
+  fi
+
+  log_success "Kubeconfig file fetched successfully."
+
+  # --- Modify the temporary kubeconfig ---
+  local cluster_name="$current_ctx"
+  local user_name="${current_ctx}-admin"
+  local context_name="$current_ctx"
+
+  sed -i \
+    -e "s/name: kubernetes-admin@kubernetes/name: ${context_name}/g" \
+    -e "s/name: kubernetes-admin/name: ${user_name}/g" \
+    -e "s/user: kubernetes-admin/user: ${user_name}/g" \
+    -e "s/name: kubernetes/name: ${cluster_name}/g" \
+    -e "s/cluster: kubernetes/cluster: ${cluster_name}/g" \
+    -e "s|server: https://.*:6443|server: https://${control_plane_ip}:6443|g" \
+    -e "s/current-context: .*/current-context: ${context_name}/g" \
+    "${temp_kubeconfig}"
+
+  # --- Cleanup and Merge ---
+  local kubeconfig_path="${KUBECONFIG:-$HOME/.kube/config}"
+
+  log_info "Cleaning up any stale entries for '${context_name}' using yq..."
+  if [[ -f "$kubeconfig_path" ]] && command -v yq &>/dev/null; then
+    # Using yq is much safer for parsing and editing YAML
+    yq -i "del(.clusters[] | select(.name == \"${cluster_name}\"))" "$kubeconfig_path"
+    yq -i "del(.contexts[] | select(.name == \"${context_name}\"))" "$kubeconfig_path"
+    yq -i "del(.users[] | select(.name == \"${user_name}\"))" "$kubeconfig_path"
+  fi
+
+  log_info "Merging into ${kubeconfig_path}"
+  mkdir -p "$(dirname "${kubeconfig_path}")"
+
+  # Create a backup just in case
+  if [[ -f "$kubeconfig_path" ]]; then
+    cp "${kubeconfig_path}" "${kubeconfig_path}.bak.$(date +%s)"
+  fi
+
+  KUBECONFIG="${kubeconfig_path}:${temp_kubeconfig}" kubectl config view --flatten >"${kubeconfig_path}.merged"
+  mv "${kubeconfig_path}.merged" "${kubeconfig_path}"
+  chmod 600 "${kubeconfig_path}"
+
+  kubectl config use-context "${context_name}"
+
+  log_success "Kubeconfig has been updated successfully."
+  log_info "Current context is now set to '${context_name}'."
 }
 
 # Upgrade Kubernetes control plane components
