@@ -63,6 +63,45 @@
       when: inventory_hostname != control_plane_node
 
     # ===========================
+    # METRICS SERVER
+    # ===========================
+    - name: Check current Metrics Server version
+      shell: kubectl get deployment -n kube-system metrics-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_metrics_server_version
+      when: addon_name in ['metrics-server', 'all']
+      ignore_errors: yes
+
+    - name: Upgrade Metrics Server
+      block:
+        - name: Download Metrics Server manifests
+          get_url:
+            url: "https://github.com/kubernetes-sigs/metrics-server/releases/download/{{ metrics_server_target_version }}/components.yaml"
+            dest: "/tmp/metrics-server-{{ metrics_server_target_version }}.yaml"
+
+        - name: Patch Metrics Server for self-hosted clusters
+          shell: |
+            sed -i '/--metric-resolution=15s/a\        - --kubelet-insecure-tls' /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+
+        - name: Apply Metrics Server manifests
+          shell: kubectl apply -f /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+
+        - name: Wait for Metrics Server to be ready
+          shell: kubectl wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=300s
+
+        - name: Verify Metrics Server upgrade
+          shell: kubectl get deployment -n kube-system metrics-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_metrics_server_version
+
+        - name: Display Metrics Server upgrade result
+          debug:
+            msg:
+              - "Metrics Server upgrade completed"
+              - "Previous version: {{ current_metrics_server_version.stdout | default('unknown') }}"
+              - "Current version: {{ new_metrics_server_version.stdout }}"
+
+      when: addon_name in ['metrics-server', 'all'] and current_metrics_server_version is not failed
+
+    # ===========================
     # CALICO CNI
     # ===========================
     - name: Check current Calico version
