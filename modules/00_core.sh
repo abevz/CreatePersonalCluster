@@ -57,12 +57,6 @@ get_repo_path() {
 
 # Load secrets from SOPS
 load_secrets() {
-  local verbose="${1:-false}"
-  
-  if [[ "$verbose" == "true" ]]; then
-    echo "=== STARTING load_secrets function ===" >&2
-  fi
-
   # Create temporary file for environment variables
   local env_file="/tmp/cpc_env_vars.sh"
   rm -f "$env_file"
@@ -95,9 +89,7 @@ load_secrets() {
     return 1
   fi
 
-  if [[ "$verbose" == "true" ]]; then
-    log_debug "Loading secrets from secrets.sops.yaml..."
-  fi
+  log_debug "Loading secrets from secrets.sops.yaml..."
 
   # Try to decrypt and validate secrets with error handling
   if ! retry_execute \
@@ -134,21 +126,10 @@ load_secrets() {
       printf "export %s='%s'\n" "$env_var" "$value" >> /tmp/cpc_env_vars.sh
       export "$env_var=$value"
       declare -g "$env_var=$value"
-      if [[ "$verbose" == "true" ]]; then
-        echo "DEBUG: Loaded secret: $env_var = $value" >&2
-        log_debug "Loaded secret: $env_var = $value"
-      fi
+      echo "DEBUG: Loaded secret: $env_var = $value" >&2
+      log_debug "Loaded secret: $env_var = $value"
     fi
   done
-
-  # Special handling for SSH_USERNAME alias
-  if [[ -n "${PROXMOX_SSH_USERNAME:-}" ]]; then
-    export SSH_USERNAME="$PROXMOX_SSH_USERNAME"
-    declare -g SSH_USERNAME="$PROXMOX_SSH_USERNAME"
-    if [[ "$verbose" == "true" ]]; then
-      log_debug "Set SSH_USERNAME alias to PROXMOX_SSH_USERNAME value"
-    fi
-  fi
 
   # Check for optional variables
   local optional_vars_map=(
@@ -165,50 +146,23 @@ load_secrets() {
     "CLOUDFLARE_EMAIL:cloudflare_email"
   )
 
-  if [[ "$verbose" == "true" ]]; then
-    log_debug "Starting to process optional variables..."
-  fi
-
   for mapping in "${optional_vars_map[@]}"; do
     IFS=':' read -r env_var secret_key <<< "$mapping"
     local value
     value=$(sops -d "$secrets_file" | yq -r ".${secret_key} // \"\"" 2>/dev/null)
-    if [[ "$verbose" == "true" ]]; then
-      echo "DEBUG: Checking optional var: $env_var from key $secret_key, value: '$value'" >&2
-    fi
     if [[ -n "$value" && "$value" != "null" ]]; then
       export "$env_var=$value"
       declare -g "$env_var=$value"
-      if [[ "$verbose" == "true" ]]; then
-        echo "DEBUG: Exported $env_var=$value" >&2
-        log_debug "Loaded optional secret: $env_var"
-      fi
-    else
-      if [[ "$verbose" == "true" ]]; then
-        log_debug "Skipped optional var: $env_var (empty or null)"
-      fi
+      log_debug "Loaded optional secret: $env_var"
     fi
   done
-
-  if [[ "$verbose" == "true" ]]; then
-    log_debug "Finished processing optional variables"
-  fi
 
   if [[ ${#missing_vars[@]} -gt 0 ]]; then
     error_handle "$ERROR_CONFIG" "Missing required secrets: ${missing_vars[*]}" "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
 
-  if [[ "$verbose" == "true" ]]; then
-    log_success "Secrets loaded successfully"
-  fi
-  
-  # Source the environment variables to make them available
-  if [ -f "/tmp/cpc_env_vars.sh" ]; then
-    source "/tmp/cpc_env_vars.sh"
-    rm -f "/tmp/cpc_env_vars.sh"
-  fi
-  
+  log_success "Secrets loaded successfully"
   return 0
 }
 
@@ -217,8 +171,8 @@ load_env_vars() {
   local repo_root
   repo_root=$(get_repo_path)
 
-  # Load secrets first (quiet mode)
-  load_secrets false
+  # Load secrets first
+  load_secrets
 
   if [ -f "$repo_root/$CPC_ENV_FILE" ]; then
     set -a # Automatically export all variables
@@ -365,13 +319,9 @@ cpc_ctx() {
   local context="$1"
 
   if [ -z "$context" ]; then
-    local current_ctx
-    current_ctx=$(get_current_cluster_context)
-    echo "Current cluster context: $current_ctx"
-    echo "Available Tofu workspaces:"
-    (cd "$REPO_PATH/terraform" && tofu workspace list)
-    # Set CPC_WORKSPACE for current context
-    export CPC_WORKSPACE="$current_ctx"
+    local current_context
+    current_context=$(get_current_cluster_context)
+    log_info "Current cluster context: $current_context"
     return 0
   fi
 
@@ -409,9 +359,6 @@ cpc_ctx() {
 
   # Set template variables for the new context
   set_workspace_template_vars "$context"
-  
-  # Set CPC_WORKSPACE environment variable for other modules
-  export CPC_WORKSPACE="$context"
 }
 
 #----------------------------------------------------------------------
@@ -445,8 +392,6 @@ core_ctx() {
     echo "Current cluster context: $current_ctx"
     echo "Available Tofu workspaces:"
     (cd "$REPO_PATH/terraform" && tofu workspace list)
-    # Set CPC_WORKSPACE for current context
-    export CPC_WORKSPACE="$current_ctx"
     return 0
   elif [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: cpc ctx [<cluster_name>]"
@@ -472,9 +417,6 @@ core_ctx() {
 
   # Update template variables for the new workspace context
   set_workspace_template_vars "$cluster_name"
-  
-  # Set CPC_WORKSPACE environment variable for other modules
-  export CPC_WORKSPACE="$cluster_name"
 }
 
 # Clone a workspace environment to create a new one
@@ -696,35 +638,14 @@ function core_delete_workspace() {
 
 # Command wrapper for load_secrets function
 core_load_secrets_command() {
-  echo "=== ENTERING core_load_secrets_command ===" >&2
   log_step "Loading secrets from SOPS..."
-  log_debug "About to call load_secrets function"
-  load_secrets true
-  echo "=== load_secrets completed ===" >&2
-  log_debug "load_secrets function completed"
+  load_secrets
   log_success "Secrets loaded successfully!"
   log_info "Available variables:"
   log_info "  PROXMOX_HOST: $PROXMOX_HOST"
   log_info "  PROXMOX_USERNAME: $PROXMOX_USERNAME"
   log_info "  VM_USERNAME: $VM_USERNAME"
   log_info "  VM_SSH_KEY: ${VM_SSH_KEY:0:20}..."
-  log_debug "Final AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-NOT_SET}"
-  log_debug "Final AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-NOT_SET}"
-  
-  # Output export commands for eval - only the essential ones
-  echo "export AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID'"
-  echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY'"
-  echo "export PROXMOX_PASSWORD='$PROXMOX_PASSWORD'"
-  echo "export VM_PASSWORD='$VM_PASSWORD'"
-  echo "export DOCKER_HUB_USERNAME='$DOCKER_HUB_USERNAME'"
-  echo "export DOCKER_HUB_PASSWORD='$DOCKER_HUB_PASSWORD'"
-  echo "export HARBOR_HOSTNAME='$HARBOR_HOSTNAME'"
-  echo "export HARBOR_ROBOT_USERNAME='$HARBOR_ROBOT_USERNAME'"
-  echo "export HARBOR_ROBOT_TOKEN='$HARBOR_ROBOT_TOKEN'"
-  echo "export CLOUDFLARE_DNS_API_TOKEN='$CLOUDFLARE_DNS_API_TOKEN'"
-  echo "export CLOUDFLARE_EMAIL='$CLOUDFLARE_EMAIL'"
-  
-  echo "=== EXITING core_load_secrets_command ===" >&2
 }
 
 # Setup CPC project
@@ -846,6 +767,6 @@ function ansible_create_temp_inventory() {
 # Export core functions
 export -f get_repo_path load_secrets load_env_vars set_workspace_template_vars
 export -f get_current_cluster_context set_cluster_context validate_workspace_name
-export -f cpc_setup cpc_core cpc_ctx
+export -f cpc_setup cpc_core
 export -f core_setup_cpc core_ctx core_clone_workspace core_delete_workspace core_load_secrets_command
 export -f _get_terraform_outputs_json _get_hostname_by_ip ansible_create_temp_inventory

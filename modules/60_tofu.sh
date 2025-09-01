@@ -89,7 +89,8 @@ function tofu_deploy() {
     echo ""
     echo "Examples:"
     echo "  cpc deploy plan"
-    echo "  cpc deploy apply -auto-approve"
+    echo "  cpc deploy apply                    # Auto-approve mode"
+    echo "  cpc deploy apply -auto-approve      # Explicit auto-approve"
     echo "  cpc deploy destroy -auto-approve"
     echo "  cpc deploy output k8s_node_ips"
     echo ""
@@ -260,12 +261,6 @@ function tofu_deploy() {
     fi
     # Add variable to tofu command array
     final_tofu_cmd_array+=("-var" "dns_servers=${dns_servers_list}")
-    
-    # Add release_letter variable if it's set
-    if [ -n "$RELEASE_LETTER" ]; then
-      final_tofu_cmd_array+=("-var" "release_letter=$RELEASE_LETTER")
-      log_info "Using release_letter='$RELEASE_LETTER' for hostname generation"
-    fi
     ;;
   esac
 
@@ -277,36 +272,43 @@ function tofu_deploy() {
   log_info "Executing: ${final_tofu_cmd_array[*]}"
 
   # Execute tofu command with retry logic
-  local max_retries=2
+  local max_retries=0  # Disable retries to prevent multiple runs
   local retry_count=0
   local cmd_exit_code=1
-  local user_cancelled=false
-  local cmd_timeout=300  # 5 minutes timeout for interactive commands
+  local cmd_timeout=300 # 5 minutes timeout
 
   while [ $retry_count -le $max_retries ]; do
     if [ $retry_count -gt 0 ]; then
-      log_info "Retrying tofu command (attempt $((retry_count + 1))/$((max_retries + 1)))..."
       sleep 2
     fi
 
     # Execute command with timeout to prevent hanging
-    local cmd_output
-    if ! cmd_output=$(timeout "$cmd_timeout" "${final_tofu_cmd_array[@]}" 2>&1); then
-      cmd_exit_code=$?
-      # Check if command was killed by timeout
-      if [ $cmd_exit_code -eq 124 ]; then
-        log_warning "Tofu command timed out after ${cmd_timeout} seconds"
-        user_cancelled=true
-        break
+    # For apply and destroy commands, we need to handle interactive input
+    if [ "$tofu_subcommand" = "apply" ] || [ "$tofu_subcommand" = "destroy" ]; then
+      # Check if stdin is connected to a terminal
+      if [ -t 0 ]; then
+        # Interactive mode - let user input confirmation manually without timeout
+        # Use exec to replace current process and avoid signal issues
+        exec "${final_tofu_cmd_array[@]}"
+      else
+        # Non-interactive mode - auto-approve changes
+        printf "yes\n" | timeout "$cmd_timeout" "${final_tofu_cmd_array[@]}"
+        cmd_exit_code=$?
       fi
     else
+      timeout "$cmd_timeout" "${final_tofu_cmd_array[@]}"
       cmd_exit_code=$?
     fi
 
-    # Check if user cancelled the operation (only if command completed normally)
-    if [ $cmd_exit_code -ne 124 ] && echo "$cmd_output" | grep -q "Apply cancelled\|cancelled\|no.*accepted\|Enter a value.*no" || [ $cmd_exit_code -eq 130 ]; then
-      user_cancelled=true
-      log_info "User cancelled the operation. Not retrying."
+    # Check if command was killed by timeout
+    if [ $cmd_exit_code -eq 124 ]; then
+      log_warning "Tofu command timed out after ${cmd_timeout} seconds"
+      break
+    fi
+
+    # Check if user cancelled the operation (Ctrl+C)
+    if [ $cmd_exit_code -eq 130 ]; then
+      log_info "User cancelled the operation."
       break
     fi
 
@@ -314,17 +316,7 @@ function tofu_deploy() {
       break
     fi
 
-    # Special handling for 'plan' command - don't retry on exit code 1
-    if [ "$tofu_subcommand" = "plan" ] && [ $cmd_exit_code -eq 1 ]; then
-      log_info "Tofu plan completed with exit code 1 (this may be normal for plan operations)"
-      break
-    fi
-
     retry_count=$((retry_count + 1))
-
-    if [ $retry_count -le $max_retries ] && [ "$user_cancelled" = false ]; then
-      error_handle "$ERROR_EXECUTION" "Tofu command failed (attempt $retry_count), will retry" "$SEVERITY_MEDIUM" "retry"
-    fi
   done
 
   # Return to original directory with error handling
@@ -333,11 +325,8 @@ function tofu_deploy() {
     return 1
   fi
 
-  if [ $cmd_exit_code -ne 0 ] && [ "$user_cancelled" = false ] && ! ([ "$tofu_subcommand" = "plan" ] && [ $cmd_exit_code -eq 1 ]); then
+  if [ $cmd_exit_code -ne 0 ]; then
     error_handle "$ERROR_EXECUTION" "Tofu command '${final_tofu_cmd_array[*]}' failed after $((retry_count)) attempts" "$SEVERITY_HIGH" "abort"
-    return 1
-  elif [ "$user_cancelled" = true ]; then
-    log_info "Operation cancelled by user or timed out."
     return 1
   fi
 
@@ -670,6 +659,12 @@ export -f tofu_update_node_info
 function tofu_generate_hostnames() {
   # Initialize recovery for this operation
   recovery_checkpoint "tofu_generate_hostnames_start" "Starting hostname generation operation"
+
+  # Load secrets first (required for hostname generation)
+  if ! load_secrets; then
+    error_handle "$ERROR_AUTH" "Failed to load secrets required for hostname generation" "$SEVERITY_CRITICAL" "abort"
+    return 1
+  fi
 
   # Validate workspace is set
   if [[ -z "$CPC_WORKSPACE" ]]; then

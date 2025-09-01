@@ -4,26 +4,7 @@
 # This script is meant to be run before applying the Terraform configuration
 
 # Check for necessary environment variables (SOPS secrets should be loaded by cpc)
-if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ]; then
-  echo "Loading secrets automatically..."
-  # Try to load secrets if not already loaded
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  REPO_PATH="$(cd "$SCRIPT_DIR/.." && pwd)"
-  
-  if [ -f "$REPO_PATH/cpc.env" ]; then
-    source "$REPO_PATH/cpc.env"
-  fi
-  
-  # Try to load from secrets if available
-  if command -v sops >/dev/null 2>&1 && [ -f "$REPO_PATH/terraform/secrets.sops.yaml" ]; then
-    export PROXMOX_HOST=$(sops -d "$REPO_PATH/terraform/secrets.sops.yaml" | yq -r '.virtual_environment_endpoint // ""')
-    export PROXMOX_USERNAME=$(sops -d "$REPO_PATH/terraform/secrets.sops.yaml" | yq -r '.virtual_environment_username // ""')
-    export PROXMOX_SSH_USERNAME=$(sops -d "$REPO_PATH/terraform/secrets.sops.yaml" | yq -r '.proxmox_username // ""')
-    echo "Secrets loaded from SOPS"
-  fi
-fi
-
-if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$SSH_USERNAME" ]; then
+if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$VM_USERNAME" ]; then
   echo "Error: Required environment variables not set. This script should be called via 'cpc' command."
   echo "Please run: cpc ctx <workspace> && cpc generate-hostnames"
   exit 1
