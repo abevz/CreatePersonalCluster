@@ -1,6 +1,6 @@
 # ansible/playbooks/traefik-values.yaml
 
-# 1. Явно включаем нужные нам провайдеры
+# 1. Explicitly enable the providers we need
 providers:
   kubernetesGateway:
     enabled: true
@@ -9,15 +9,15 @@ providers:
   kubernetesIngress:
     enabled: true
 
-# 2. Включаем DEBUG логи для диагностики
+# 2. Enable DEBUG logs for diagnostics
 log:
   level: INFO
 
-# 3. Включаем Dashboard
+# 3. Enable Dashboard
 dashboard:
   enabled: true
 
-# 4. Настраиваем Gateway API
+# 4. Configure Gateway API
 experimental:
   kubernetesGateway:
     enabled: true
@@ -26,15 +26,15 @@ experimental:
         type: LoadBalancer
 
 
-# 5. Настраиваем точки входа (порты)
+# 5. Configure entry points (ports)
 entryPoints:
   websecure:
     address: ":8443/tcp"
-    # Говорим Traefik, что ждем PROXY protocol от Nginx
+    # Tell Traefik that we expect PROXY protocol from Nginx
     proxyProtocol:
       insecure: true
 
-# 6. Настраиваем сервис Kubernetes
+# 6. Configure Kubernetes service
 service:
   #annotations:
     # This will tell DigitalOcean to enable the proxy protocol so we can get the client real IP.

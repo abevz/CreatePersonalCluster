@@ -15,11 +15,10 @@
 
   pre_tasks:
 
-    - name: Кодируем данные для авторизации в Harbor
+    - name: Encode data for Harbor authorization
       ansible.builtin.set_fact:
         harbor_auth: "{{ [harbor_robot_username,harbor_robot_token] | join(':') | b64encode }}"    
 
-    # ... (все pre_tasks остаются без изменений) ...
     - name: Update package cache (Debian/Ubuntu)
       ansible.builtin.apt:
         update_cache: yes
@@ -48,7 +47,7 @@
       when: ansible_swaptotal_mb > 0
 
   tasks:
-    # ... (задачи по настройке ядра и установке containerd остаются без изменений) ...
+    # ... (kernel configuration and containerd installation tasks remain unchanged) ...
     - name: Load kernel modules for container runtime and networking
       ansible.builtin.modprobe:
         name: "{{ item }}"
@@ -141,7 +140,7 @@
         state: started
         enabled: yes
 
-# ... после задачи "Enable and start containerd service"
+# ... after the "Enable and start containerd service" task
 
     - name: Ensure containerd certs directory exists
       ansible.builtin.file:
@@ -230,8 +229,8 @@
         proxy_project: "k8s-proxy"
       notify: Restart containerd        
 
-    # ... дальше идут задачи по установке Kubernetes
-    # ... (остальные задачи по установк``е kubelet, kubeadm и т.д. без изменений) ...
+    # ... next are Kubernetes installation tasks
+    # ... (other tasks for installing kubelet, kubeadm, etc. remain unchanged) ...
     - name: Add Kubernetes GPG key (Debian/Ubuntu)
       ansible.builtin.get_url:
         url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
@@ -337,7 +336,7 @@
         msg: "Kubernetes components (kubelet, kubeadm, kubectl) and containerd installed on {{ inventory_hostname }} ({{ ansible_os_family }}). Ready for kubeadm init/join."
 
   handlers:
-    # ... (все handlers остаются без изменений) ...
+    # ... (all handlers remain unchanged) ...
     - name: Restart containerd
       ansible.builtin.systemd:
         name: containerd

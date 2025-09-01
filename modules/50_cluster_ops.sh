@@ -6,19 +6,19 @@
 cpc_cluster_ops() {
   local command="${1:-}"
 
-  # Если запрашивается справка для всего модуля, показываем ее и выходим
+  # If help for the entire module is requested, show it and exit
   if [[ "$command" == "-h" || "$command" == "--help" || -z "$command" ]]; then
     _cluster_ops_help
     return 0
   fi
 
-  shift # Убираем основную команду (upgrade-addons/configure-coredns) из списка аргументов
+  shift # Remove the main command (upgrade-addons/configure-coredns) from the argument list
 
   case "$command" in
   upgrade-addons)
-    # Проверяем, не был ли запрошен help для этой конкретной команды
+    # Check if help was requested for this specific command
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-      _cluster_ops_upgrade_addons_help # Показываем справку именно для upgrade-addons
+      _cluster_ops_upgrade_addons_help # Show help specifically for upgrade-addons
       return 0
     fi
     cluster_ops_upgrade_addons "$@"
@@ -26,7 +26,7 @@ cpc_cluster_ops() {
 
   configure-coredns)
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-      _cluster_ops_configure_coredns_help # Показываем справку для configure-coredns
+      _cluster_ops_configure_coredns_help # Show help for configure-coredns
       return 0
     fi
     cluster_configure_coredns "$@"
@@ -42,7 +42,7 @@ cpc_cluster_ops() {
 
 # --- Help Functions ---
 
-# Общая справка по командам
+# General help for commands
 _cluster_ops_help() {
   printf "${BLUE}Usage: cpc <command> [options]${ENDCOLOR}\n"
   printf "\n"
@@ -55,7 +55,7 @@ _cluster_ops_help() {
   printf "${CYAN}Use 'cpc <command> --help' for more information on a specific command.${ENDCOLOR}\n"
 }
 
-# Справка для upgrade-addons
+# Help for upgrade-addons
 _cluster_ops_upgrade_addons_help() {
   printf "${BLUE}Usage: cpc upgrade-addons [addon_name] [version]${ENDCOLOR}\n"
   printf "\n"
@@ -71,7 +71,7 @@ _cluster_ops_upgrade_addons_help() {
   printf "  ${ORANGE}%-15s${ENDCOLOR} %s\n" "[version]" "(Optional) A specific version for the addon (e.g., v1.2.3)."
 }
 
-# Справка для configure-coredns
+# Help for configure-coredns
 _cluster_ops_configure_coredns_help() {
   printf "${BLUE}Usage: cpc configure-coredns <domain> <ip>${ENDCOLOR}\n"
   printf "\n"
@@ -82,7 +82,7 @@ _cluster_ops_configure_coredns_help() {
   printf "  ${ORANGE}%-15s${ENDCOLOR} %s\n" "<ip>" "The IP address the domain should resolve to."
 }
 
-# --- Command Implementations (остаются без изменений) ---
+# --- Command Implementations (remain unchanged) ---
 
 cluster_ops_upgrade_addons() {
   local addon_name="${1:-}"
@@ -198,13 +198,13 @@ cluster_configure_coredns() {
     log_step "Getting DNS server from Terraform variables..."
     local repo_path
     repo_path=$(get_repo_path) || return 1
-    # Предполагаем, что скрипт get_dns_server.sh существует и работает
+    # We assume that the get_dns_server.sh script exists and works
     dns_server=$("$repo_path/scripts/get_dns_server.sh")
 
     if [ -n "$dns_server" ] && [ "$dns_server" != "null" ]; then
       log_success "Found DNS server in Terraform: $dns_server"
     else
-      # Устанавливаем запасной вариант, если не удалось получить из Terraform
+      # Set a fallback if not able to get from Terraform
       dns_server="10.10.10.100"
       log_warning "Could not extract DNS server from Terraform. Using fallback: $dns_server"
     fi
@@ -229,7 +229,7 @@ cluster_configure_coredns() {
   # Run the Ansible playbook
   log_step "Running CoreDNS configuration playbook..."
 
-  # Передаем переменные в плейбук
+  # Pass variables to the playbook
   local extra_vars="pihole_dns_server=$dns_server local_domains='[\"$(echo "$domains" | sed 's/,/","/g')\"]'"
 
   if ! cpc_ansible run-ansible "configure_coredns_local_domains.yml" --extra-vars "$extra_vars"; then

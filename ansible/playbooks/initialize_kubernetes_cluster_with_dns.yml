@@ -270,11 +270,11 @@
         - bootstrap
       block:
         - name: Wait until all worker CSRs are created
-          # Используем jsonpath, чтобы kubectl сам отфильтровал и вернул только имена нужных CSR
+          # Use jsonpath so kubectl filters and returns only the names of the required CSRs
           command: >
             kubectl get csr -o jsonpath='{.items[?(@.spec.signerName=="kubernetes.io/kubelet-serving")].metadata.name}'
           register: pending_csr_names
-          # Условие стало очень простым: считаем количество слов в выводе
+          # The condition became very simple: count the number of words in the output
           until: "pending_csr_names.stdout.split(' ') | length >= (groups['workers'] | length)"
           retries: 30
           delay: 10
@@ -308,7 +308,7 @@
   become: yes
   gather_facts: no
   vars:
-    # Эти переменные, включая target_namespaces, видны только здесь
+    # These variables, including target_namespaces, are visible only here
     target_namespaces:
       - default
       - kube-system
@@ -342,4 +342,4 @@
                   }
                 } | to_json | b64encode
               }}
-      loop: "{{ target_namespaces }}"          
+      loop: "{{ target_namespaces }}"

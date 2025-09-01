@@ -60,7 +60,7 @@ function _execute_node_playbook() {
   local node_type="worker" # Default node type
   local extra_ansible_args=()
 
-  # Улучшенный парсер, который "понимает" все нужные аргументы
+  # Enhanced parser that understands all the necessary arguments
   while [[ $# -gt 0 ]]; do
     case "$1" in
     --target-hosts=*)
@@ -120,7 +120,7 @@ function _execute_node_playbook() {
 
   log_info "Found host '$target_hostname' for IP '$target_hosts'. Proceeding..."
 
-  # Передаем node_type как переменную в Ansible, а не как аргумент
+  # Pass node_type as a variable to Ansible, not as an argument
   ansible_run_playbook "$playbook_name" -l "$target_hostname" -e "node_type=$node_type" "${extra_ansible_args[@]}"
 }
 

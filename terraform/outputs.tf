@@ -3,11 +3,11 @@
 output "cluster_summary" {
   description = "A summary of the cluster nodes with their VM_ID, hostname, and IP address."
   value = {
-    # Итерируемся по local.final_nodes_map, а не по ресурсу
+    # Iterate over local.final_nodes_map, not the resource
     for key, node_data in local.final_nodes_map : key => {
       VM_ID    = node_data.vm_id
       hostname = node_data.hostname
-      IP       = node_data.static_ip_address # Теперь это поле доступно
+      IP       = node_data.static_ip_address # This field is now available
     }
   }
 }

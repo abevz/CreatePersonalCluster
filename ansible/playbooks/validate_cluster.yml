@@ -36,7 +36,7 @@
       loop_control:
         label: "{{ item.metadata.name }}"
       when: system_pods.resources is defined and system_pods.resources | length > 0
-      no_log: true  # <--- Вот ключ! Скрываем все "полотно"
+      no_log: true  # <--- This is the key! Hide all the "canvas"
       register: pod_check_results
       ignore_errors: true
 
@@ -70,7 +70,7 @@
       ansible.builtin.debug:
         msg: "Pod {{ item.item.metadata.name }} is {{ item.item.status.phase }} {{ '✅' if not item.failed else '❌' }}"
       loop: "{{ calico_pod_check_results.results }}"
-      # Эта проверка - ключ к исправлению. Задача запустится, только если есть результаты.
+      # This check is the key to the fix. The task will run only if there are results.
       when: calico_pod_check_results.results is defined
       loop_control:
         label: "{{ item.item.metadata.name }}"

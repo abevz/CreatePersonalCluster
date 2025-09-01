@@ -154,15 +154,15 @@ function ansible_run_playbook() {
   local ansible_dir="$repo_root/ansible"
   local temp_inventory_file
 
-  # --- ИЗМЕНЕНИЕ 1: Мы создаем инвентарь только один раз, если он нужен ---
-  # Если в аргументах нет инвентаря (-i), создаем временный
+  # --- CHANGE 1: We create inventory only once if needed ---
+  # If there is no inventory (-i) in arguments, create temporary
   if ! [[ "$*" =~ -i ]]; then
     temp_inventory_file=$(ansible_create_temp_inventory)
     if [[ $? -ne 0 || -z "$temp_inventory_file" ]]; then
       log_error "Failed to create temporary Ansible inventory."
       return 1
     fi
-    # Добавляем временный инвентарь в аргументы
+    # Add temporary inventory to arguments
     set -- "$@" -i "$temp_inventory_file"
   fi
 
@@ -179,36 +179,36 @@ function ansible_run_playbook() {
     done <"$env_file"
   fi
 
-  # --- ИЗМЕНЕНИЕ 2: Вот ОНО! Универсальный блок для передачи секретов ---
-  # Список секретов, которые будут автоматически переданы в Ansible, если они существуют в окружении.
-  # Они загружаются функцией load_secrets из 00_core.sh
+  # --- CHANGE 2: Here IT IS! Universal block for passing secrets ---
+  # List of secrets that will be automatically passed to Ansible if they exist in the environment.
+  # They are loaded by the load_secrets function from 00_core.sh
   local secret_vars_to_pass=(
     "HARBOR_HOSTNAME"
     "HARBOR_ROBOT_USERNAME"
     "HARBOR_ROBOT_TOKEN"
     "DOCKER_HUB_USERNAME"
     "DOCKER_HUB_PASSWORD"
-    # Сюда можно добавлять другие секреты, если они понадобятся в Ansible
+    # Add other secrets here if needed in Ansible
   )
 
   log_debug "Adding secrets from environment to Ansible command..."
   for var_name in "${secret_vars_to_pass[@]}"; do
-    # Конструкция ${!var_name} - это косвенная ссылка на значение переменной.
+    # The construction ${!var_name} is an indirect reference to the variable's value.
     if [[ -n "${!var_name}" ]]; then
-      # Передаем переменную в Ansible. Ansible предпочитает переменные в нижнем регистре.
+      # Pass the variable to Ansible. Ansible prefers lowercase variables.
       local ansible_var_name
       ansible_var_name=$(echo "$var_name" | tr '[:upper:]' '[:lower:]')
       ansible_cmd_array+=("-e" "$ansible_var_name=${!var_name}")
       log_debug "  -> Passing secret: $ansible_var_name"
     fi
   done
-  # --- КОНЕЦ БЛОКА ИЗМЕНЕНИЙ ---
+  # --- END OF CHANGES BLOCK ---
 
   local ansible_user
   ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")
   ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
 
-  # Добавляем все остальные аргументы, переданные в функцию (например, -i /path/to/inventory)
+  # Add all other arguments passed to the function (e.g., -i /path/to/inventory)
   if [[ $# -gt 0 ]]; then
     ansible_cmd_array+=("$@")
   fi
@@ -220,7 +220,7 @@ function ansible_run_playbook() {
   local exit_code=$?
   popd >/dev/null
 
-  # --- ИЗМЕНЕНИЕ 3: Удаляем временный инвентарь, если он был создан ---
+  # --- CHANGE 3: Remove temporary inventory if it was created ---
   if [[ -n "$temp_inventory_file" ]]; then
     rm "$temp_inventory_file"
   fi

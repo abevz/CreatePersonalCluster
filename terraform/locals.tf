@@ -107,8 +107,8 @@ locals {
       index             = definition.original_index
       role              = definition.role
 
-      # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-      # Заменяем старую, ошибочную строку на восстановленную формулу
+      # --- CHANGE HERE ---
+      # Replace the old, incorrect string with the restored formula
       vm_id             = 300 + (local.workspace_ip_index * 100) + (definition.role == "c" ? 0 : 20) + definition.original_index
 
       # IP offset for static IP assignment using workspace block system

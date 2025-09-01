@@ -59,7 +59,7 @@ cpc_k8s_cluster() {
 
 # Bootstrap a complete Kubernetes cluster on deployed VMs
 #
-# В файле: modules/30_k8s_cluster.sh
+# In file: modules/30_k8s_cluster.sh
 
 k8s_bootstrap() {
   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -98,12 +98,12 @@ k8s_bootstrap() {
 
   log_info "Starting Kubernetes bootstrap for context '$current_ctx'..."
 
-  # ШАГ 1: Получаем ВЕСЬ вывод (логи + JSON) от рабочей команды
+  # STEP 1: Get ALL output (logs + JSON) from the working command
   log_info "Getting all infrastructure data from Tofu..."
   local raw_output
   raw_output=$("$repo_root/cpc" deploy output -json 2>/dev/null)
 
-  # ШАГ 2: С помощью 'sed' вырезаем чистый JSON из всего текста
+  # STEP 2: Using 'sed' to extract clean JSON from all text
   local all_tofu_outputs_json
   all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
 
@@ -112,7 +112,7 @@ k8s_bootstrap() {
     return 1
   fi
 
-  # ШАГ 3: Извлекаем 'cluster_summary' для проверки VM
+  # STEP 3: Extract 'cluster_summary' for VM verification
   local cluster_summary_json
   cluster_summary_json=$(echo "$all_tofu_outputs_json" | jq '.cluster_summary.value')
 
@@ -125,7 +125,7 @@ k8s_bootstrap() {
     log_success "VM check passed. Found ${#TOFU_NODE_NAMES[@]} nodes."
   fi
 
-  # ШАГ 4: Извлекаем 'ansible_inventory' и КОНВЕРТИРУЕМ его в СТАТИЧЕСКИЙ JSON
+  # STEP 4: Extract 'ansible_inventory' and CONVERT it to STATIC JSON
   log_info "Generating temporary static JSON inventory for Ansible..."
   local dynamic_inventory_json
   dynamic_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
@@ -133,7 +133,7 @@ k8s_bootstrap() {
   local temp_inventory_file
   temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
 
-  # С помощью jq преобразуем динамический JSON в статический, который Ansible поймет
+  # Using jq to transform dynamic JSON to static, which Ansible will understand
   jq '
     . as $inv |
     {
@@ -178,7 +178,7 @@ k8s_bootstrap() {
 
   local ansible_extra_args=("-i" "$temp_inventory_file")
 
-  # ПРОВЕРКА СВЯЗИ
+  # CONNECTION CHECK
   log_info "Testing Ansible connectivity to all nodes..."
   if ! ansible all "${ansible_extra_args[@]}" -m ping --ssh-extra-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"; then
     log_error "Failed to connect to all nodes via Ansible"
@@ -210,7 +210,7 @@ k8s_bootstrap() {
     log_warning "Cluster validation failed, but continuing..."
   fi
 
-  # Удаляем временный файл
+  # Remove temporary file
   rm -f "$temp_inventory_file"
 
   log_success "Kubernetes cluster bootstrap completed successfully!"

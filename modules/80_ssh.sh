@@ -116,10 +116,11 @@ ssh_clear_hosts() {
       fi
     done
   else
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+
     log_info "Collecting VM info from Terraform output for context: $current_ctx"
 
-    # 1. Получаем ВСЮ информацию одним вызовом
+    # --- START OF FIX ---
+    # 1. Get ALL information in one call
     local all_tf_outputs
     all_tf_outputs=$(_get_terraform_outputs_json)
 
@@ -129,13 +130,13 @@ ssh_clear_hosts() {
       return 0
     fi
 
-    # 2. Используем правильные, более точные jq запросы
+    # 2. Use correct, more precise jq queries
     readarray -t vm_ips_to_clear < <(echo "$all_tf_outputs" | jq -r '.cluster_summary.value | .[].IP')
     readarray -t vm_hostnames_to_clear < <(echo "$all_tf_outputs" | jq -r '.cluster_summary.value | .[].hostname')
 
     log_info "  Found IPs: ${vm_ips_to_clear[*]}"
     log_info "  Found Hostnames: ${vm_hostnames_to_clear[*]}"
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
   fi
 
   # Add short hostnames (without domain suffix)
@@ -369,23 +370,23 @@ ssh_get_vm_ips_from_context() {
   local original_workspace
   original_workspace=$(tofu workspace show)
 
-  # Убедимся, что мы в правильном воркспейсе
+  # Make sure we are in the correct workspace
   if [[ "$original_workspace" != "$context" ]]; then
     tofu workspace select "$context" >/dev/null
   fi
 
-  # ПРАВИЛЬНЫЙ ВЫЗОВ: используем cluster_summary и jq для извлечения IP
+  # CORRECT CALL: use cluster_summary and jq to extract IP
   local vm_ips
   vm_ips=$(tofu output -json cluster_summary | jq -r '.[].IP')
 
-  # Возвращаемся в исходный воркспейс, если мы его меняли
+  # Return to the original workspace if we changed it
   if [[ "$original_workspace" != "$context" ]]; then
     tofu workspace select "$original_workspace" >/dev/null
   fi
 
   popd >/dev/null || return 1
 
-  # Проверка, что мы что-то получили
+  # Check if we got any results
   if [[ -z "$vm_ips" ]]; then
     return 1
   fi

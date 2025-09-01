@@ -21,7 +21,7 @@ function cpc_tofu() {
     tofu_deploy "$@"
     ;;
   workspace)
-    # Прямая обработка команд workspace
+    # Direct processing of workspace commands
     local tf_dir
     tf_dir="$(get_repo_path)/$TERRAFORM_DIR"
     pushd "$tf_dir" >/dev/null || return 1
@@ -195,16 +195,17 @@ function tofu_deploy() {
       log_validation "Warning: No specific tfvars file found for context '$current_ctx' at $tfvars_file. Using defaults if applicable."
     fi
 
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Переменные DNS добавляются только для нужных команд ---
+
+    # --- CHANGE HERE: DNS variables are added only for necessary commands ---
     local dns_servers_list="[]"
     if [[ -n "$PRIMARY_DNS_SERVER" ]]; then
-      # Создаём JSON-массив из переменных DNS
+      # Create JSON array from DNS variables
       dns_servers_list=$(jq -n \
         --arg primary "$PRIMARY_DNS_SERVER" \
         --arg secondary "$SECONDARY_DNS_SERVER" \
         '[ $primary, $secondary | select(. != null and . != "") ]')
     fi
-    # Добавляем переменную в массив команд tofu
+    # Добавить переменную в массив команды tofu
     final_tofu_cmd_array+=("-var" "dns_servers=${dns_servers_list}")
     ;;
   esac
@@ -455,7 +456,7 @@ function tofu_update_node_info() {
     return 1
   fi
 
-  # Разбираем JSON и экспортируем переменные
+  # Parse JSON and export variables
   TOFU_NODE_NAMES=($(echo "$summary_json" | jq -r 'keys_unsorted[]'))
   TOFU_NODE_IPS=($(echo "$summary_json" | jq -r '.[].IP'))
   TOFU_NODE_HOSTNAMES=($(echo "$summary_json" | jq -r '.[].hostname'))

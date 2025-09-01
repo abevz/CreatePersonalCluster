@@ -1,27 +1,27 @@
-# Настройка статических IP адресов для кластера
+# Static IP Configuration for the Cluster
 
-Данная документация описывает как настроить статические IP адреса для узлов Kubernetes кластера в проекте CPC с учетом разных рабочих пространств (workspaces).
+This documentation describes how to configure static IP addresses for Kubernetes cluster nodes in the CPC project, taking into account different workspaces.
 
-## Зачем нужны статические IP адреса
+## Why Static IP Addresses Are Needed
 
-Статические IP адреса необходимы для обеспечения стабильной работы Kubernetes кластера. Без статических IP адресов:
+Static IP addresses are necessary to ensure stable operation of the Kubernetes cluster. Without static IP addresses:
 
-1. При перезапуске виртуальных машин они могут получить новые IP адреса через DHCP
-2. Это приводит к сбоям в работе кластера, так как узлы теряют связь друг с другом
-3. Требуется повторная настройка или восстановление кластера
+1. When virtual machines are restarted, they may receive new IP addresses via DHCP
+2. This leads to cluster failures as nodes lose connection with each other
+3. Reconfiguration or cluster recovery is required
 
-## Автоматическое распределение IP по рабочим пространствам
+## Automatic IP Distribution by Workspaces
 
-CPC использует умную систему распределения IP-адресов, которая:
+CPC uses a smart IP address distribution system that:
 
-1. Автоматически выделяет блоки IP-адресов для каждого workspace (ubuntu, debian, k8s133 и т.д.)
-2. Учитывает роль узла (control plane или worker) при назначении адресов
-3. Предотвращает конфликты с существующими статическими устройствами в вашей сети
-4. **Автоматически управляет индексами workspace** при создании или удалении рабочих пространств
+1. Automatically allocates IP address blocks for each workspace (ubuntu, debian, k8s133, etc.)
+2. Takes into account the node role (control plane or worker) when assigning addresses
+3. Prevents conflicts with existing static devices on your network
+4. **Automatically manages workspace indexes** when creating or deleting workspaces
 
-## Настройка глобальных параметров сети
+## Global Network Parameters Configuration
 
-Глобальные сетевые настройки задаются в файле `cpc.env` и применяются ко всем рабочим пространствам:
+Global network settings are specified in the `cpc.env` file and apply to all workspaces:
 
 ```bash
 # Network addressing and IP allocation
@@ -35,101 +35,101 @@ PRIMARY_DNS_SERVER="10.10.10.100"       # Primary DNS server (e.g. Pi-hole)
 SECONDARY_DNS_SERVER="8.8.8.8"          # Secondary DNS server
 ```
 
-Эти глобальные настройки автоматически экспортируются как переменные Terraform при выполнении любой команды `cpc`.
+These global settings are automatically exported as Terraform variables when executing any `cpc` command.
 
-## Переопределение настроек для конкретного workspace
+## Overriding Settings for a Specific Workspace
 
-При необходимости вы можете переопределить глобальные настройки для конкретного workspace в его файле окружения:
+If necessary, you can override global settings for a specific workspace in its environment file:
 
 ```bash
-# Переопределение глобальных сетевых настроек
-export TF_VAR_network_cidr="192.168.1.0/24"     # Другая подсеть для этого workspace
-export TF_VAR_network_gateway="192.168.1.1"     # Другой шлюз
-export TF_VAR_ip_range_start=200                # Начинать с IP .200
-export TF_VAR_dns_servers='["192.168.1.10"]'    # Свой DNS-сервер
+# Override global network settings
+export TF_VAR_network_cidr="192.168.1.0/24"     # Different subnet for this workspace
+export TF_VAR_network_gateway="192.168.1.1"     # Different gateway
+export TF_VAR_ip_range_start=200                # Start with IP .200
+export TF_VAR_dns_servers='["192.168.1.10"]'    # Custom DNS server
 ```
 
-## Схема распределения IP-адресов
+## IP Address Distribution Scheme
 
-Система автоматически назначает IP-адреса по следующей формуле:
+The system automatically assigns IP addresses using the following formula:
 
 ```
-IP = базовый_IP + (индекс_workspace * размер_блока) + смещение_узла
+IP = base_IP + (workspace_index * block_size) + node_offset
 ```
 
-Где:
-- `базовый_IP` - значение переменной `STATIC_IP_START` из `cpc.env` (по умолчанию 110)
-- `индекс_workspace` - позиция текущего workspace в карте (`ubuntu`=1, `debian`=2, ...)
-- `размер_блока` - значение переменной `WORKSPACE_IP_BLOCK_SIZE` (по умолчанию 10)
-- `смещение_узла` - зависит от роли и индекса узла (control plane: 0-4, worker: 5-9)
+Where:
+- `base_IP` - value of the `STATIC_IP_START` variable from `cpc.env` (default 110)
+- `workspace_index` - position of the current workspace in the map (`ubuntu`=1, `debian`=2, ...)
+- `block_size` - value of the `WORKSPACE_IP_BLOCK_SIZE` variable (default 10)
+- `node_offset` - depends on the role and node index (control plane: 0-4, worker: 5-9)
 
-### Примеры распределения IP (при ip_range_start=110, block_size=10)
+### IP Distribution Examples (with ip_range_start=110, block_size=10)
 
-1. **Ubuntu workspace (индекс 1)**:
+1. **Ubuntu workspace (index 1)**:
    - Control Plane 1: `10.10.10.110`
    - Worker 1: `10.10.10.115`
    - Worker 2: `10.10.10.116`
 
-2. **Debian workspace (индекс 2)**:
+2. **Debian workspace (index 2)**:
    - Control Plane 1: `10.10.10.120`
    - Worker 1: `10.10.10.125`
    - Worker 2: `10.10.10.126`
 
-3. **k8s129-test workspace (индекс 3)**:
+3. **k8s129-test workspace (index 3)**:
    - Control Plane 1: `10.10.10.130`
    - Worker 1: `10.10.10.135`
-   - и т.д.
+   - etc.
 
-## Автоматическое управление индексами workspace
+## Automatic Workspace Index Management
 
-При создании и удалении workspace через команды `cpc clone-workspace` и `cpc delete-workspace` система автоматически:
+When creating and deleting workspaces through the `cpc clone-workspace` and `cpc delete-workspace` commands, the system automatically:
 
-1. **При клонировании workspace**:
-   - Находит следующий свободный индекс в карте `workspace_ip_map`
-   - Добавляет новый workspace с этим индексом
-   - Вычисляет и выводит диапазон IP адресов для нового workspace
+1. **When cloning a workspace**:
+   - Finds the next available index in the `workspace_ip_map`
+   - Adds a new workspace with this index
+   - Calculates and displays the IP address range for the new workspace
 
-2. **При удалении workspace**:
-   - Удаляет запись из карты `workspace_ip_map`
-   - Освобождает индекс для повторного использования
-   - Индексы других workspace остаются неизменными
+2. **When deleting a workspace**:
+   - Removes the entry from the `workspace_ip_map`
+   - Frees the index for reuse
+   - Other workspace indexes remain unchanged
 
-**Важно**: Индексы workspace не перенумеровываются при удалении workspace из середины списка, чтобы сохранить стабильность IP-адресов для существующих кластеров.
+**Important**: Workspace indexes are not renumbered when deleting a workspace from the middle of the list to maintain IP address stability for existing clusters.
 
-## Учет существующих устройств
+## Accounting for Existing Devices
 
-Система спроектирована так, чтобы избегать конфликтов с существующими устройствами в вашей сети:
+The system is designed to avoid conflicts with existing devices on your network:
 
-1. Задайте значение `STATIC_IP_START` в `cpc.env` так, чтобы выделяемые диапазоны не пересекались с:
-   - Диапазоном DHCP (обычно 10.10.10.2 - 10.10.10.99)
-   - Существующими устройствами со статическим IP (например, DNS, Proxmox и другие)
+1. Set the `STATIC_IP_START` value in `cpc.env` so that allocated ranges do not overlap with:
+   - DHCP range (usually 10.10.10.2 - 10.10.10.99)
+   - Existing devices with static IP (e.g., DNS, Proxmox, and others)
 
-2. Рекомендуемая стратегия:
-   - DHCP диапазон: 10.10.10.2 - 10.10.10.99
-   - Инфраструктурные устройства: 10.10.10.100 - 10.10.10.109 
-   - Kubernetes кластеры: начиная с 10.10.10.110
+2. Recommended strategy:
+   - DHCP range: 10.10.10.2 - 10.10.10.99
+   - Infrastructure devices: 10.10.10.100 - 10.10.10.109
+   - Kubernetes clusters: starting from 10.10.10.110
 
-## Пример использования
+## Usage Example
 
-1. **Создание нового workspace с автоматическим выделением IP диапазона**:
+1. **Creating a new workspace with automatic IP range allocation**:
    ```bash
    ./cpc clone-workspace ubuntu my-cluster m
    ```
 
-2. **Проверка выделенного диапазона**:
+2. **Checking the allocated range**:
    ```bash
    grep "my-cluster" ./terraform/variables.tf
-   # Вывод примера: "my-cluster" = 7 // IP-блок #7: 10.10.10.170-179
+   # Example output: "my-cluster" = 7 // IP-block #7: 10.10.10.170-179
    ```
 
-3. **Удаление workspace**:
+3. **Deleting a workspace**:
    ```bash
    ./cpc delete-workspace my-cluster
    ```
 
-## Предостережения и рекомендации
+## Precautions and Recommendations
 
-1. Не редактируйте карту `workspace_ip_map` вручную - используйте команды `cpc clone-workspace` и `cpc delete-workspace`
-2. Убедитесь, что выбранные IP адреса не конфликтуют с другими устройствами в вашей сети
-3. Если в сети используется DHCP, настройте исключения для статических IP диапазонов
-4. При изменении IP адресов существующих узлов кластера может потребоваться повторная настройка кластера
+1. Do not edit the `workspace_ip_map` manually - use the `cpc clone-workspace` and `cpc delete-workspace` commands
+2. Make sure the selected IP addresses do not conflict with other devices on your network
+3. If DHCP is used on the network, configure exceptions for static IP ranges
+4. Changing IP addresses of existing cluster nodes may require cluster reconfiguration
