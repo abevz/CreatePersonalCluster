@@ -18,6 +18,12 @@
 # - Ansible installation and proper ansible.cfg configuration
 # - Terraform/OpenTofu state for inventory generation
 
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
 #----------------------------------------------------------------------
 # Ansible Playbook Management Functions
 #----------------------------------------------------------------------

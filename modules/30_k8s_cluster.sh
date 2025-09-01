@@ -9,18 +9,14 @@
 # - cpc_k8s_cluster()          - Main entry point for K8s cluster commands
 # - k8s_bootstrap()            - Bootstrap complete Kubernetes cluster
 # - k8s_get_kubeconfig()       - Retrieve and merge cluster kubeconfig
+# - k8s_status()               - Check cluster status and health
 # - k8s_upgrade()              - Upgrade Kubernetes control plane
-# - k8s_reset_all_nodes()      - Reset all nodes in cluster
-# - k8s_show_bootstrap_help()  - Display bootstrap help
-# - k8s_show_kubeconfig_help() - Display get-kubeconfig help
-# - k8s_show_upgrade_help()    - Display upgrade-k8s help
-#
-# Dependencies:
-# - lib/logging.sh for logging functions
-# - modules/00_core.sh for core utilities like get_repo_path, get_current_cluster_context
-# - modules/20_ansible.sh for ansible_run_playbook function
-# - Kubernetes cluster infrastructure (deployed VMs)
-# - Ansible playbooks for cluster operations
+
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
 
 #----------------------------------------------------------------------
 # Kubernetes Cluster Lifecycle Management Functions

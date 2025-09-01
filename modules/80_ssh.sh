@@ -19,6 +19,12 @@
 # - modules/00_core.sh for core utilities like get_repo_path, get_current_cluster_context
 # - Terraform/OpenTofu state for VM IP discovery
 
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
 #----------------------------------------------------------------------
 # SSH Management Functions
 #----------------------------------------------------------------------

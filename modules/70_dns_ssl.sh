@@ -22,6 +22,12 @@
 
 # DNS/SSL Module implementation
 
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
 # Main DNS/SSL command dispatcher
 cpc_dns_ssl() {
     local command="$1"
