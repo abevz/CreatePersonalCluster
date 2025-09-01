@@ -6,6 +6,9 @@ set -e
 echo "🚀 Starting CPC Test Suite"
 echo "=========================="
 
+# Add pipx bin directory to PATH
+export PATH="$HOME/.local/bin:$PATH"
+
 # Check if we're in virtual environment
 if [[ "$VIRTUAL_ENV" != "" ]]; then
     echo "✅ Using virtual environment: $VIRTUAL_ENV"
