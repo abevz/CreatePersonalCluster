@@ -73,7 +73,7 @@ dns_ssl_regenerate_certificates() {
         echo "2) All control plane nodes"
         echo "3) Specific node"
         echo
-        read -p "Enter your choice (1-3): " choice
+        read -r -p "Enter your choice (1-3): " choice
         
         case "$choice" in
             1)
@@ -89,7 +89,7 @@ dns_ssl_regenerate_certificates() {
                     kubectl get nodes -o wide 2>/dev/null || echo "Kubectl not available or cluster not accessible"
                 fi
                 echo
-                read -p "Enter target node name: " target_node
+                read -r -p "Enter target node name: " target_node
                 if [[ -z "$target_node" ]]; then
                     echo "Error: No target node specified."
                     return 1
@@ -106,7 +106,7 @@ dns_ssl_regenerate_certificates() {
     echo "⚠️  WARNING: This operation will cause temporary API server downtime!"
     echo "Target: $target_node"
     echo
-    read -p "Are you sure you want to proceed? (yes/no): " confirm
+    read -r -p "Are you sure you want to proceed? (yes/no): " confirm
     
     if [[ "$confirm" != "yes" ]]; then
         echo "Certificate regeneration cancelled."
@@ -165,7 +165,7 @@ dns_ssl_test_resolution() {
     echo
     
     if [[ -z "$domain" ]]; then
-        read -p "Enter domain to test (e.g., google.com, bevz.net): " domain
+        read -r -p "Enter domain to test (e.g., google.com, bevz.net): " domain
         if [[ -z "$domain" ]]; then
             echo "Error: No domain specified."
             return 1
@@ -485,7 +485,7 @@ dns_ssl_inspect_certificate() {
         echo "- /etc/kubernetes/pki/ca.crt (Cluster CA)"
         echo "- /etc/kubernetes/pki/etcd/ca.crt (ETCD CA)"
         echo
-        read -p "Enter certificate path to inspect: " cert_path
+        read -r -p "Enter certificate path to inspect: " cert_path
         
         if [[ -z "$cert_path" ]]; then
             echo "Error: No certificate path specified."

@@ -100,9 +100,7 @@ load_secrets() {
 
   # Load secrets using sops, convert to JSON, then parse with jq
   local secrets_json
-  secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)")
-
-  if [ $? -ne 0 ]; then
+  if ! secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)"); then
     log_error "Failed to decrypt secrets.sops.yaml. Check your SOPS configuration."
     return 1
   fi
@@ -676,8 +674,7 @@ function ansible_create_temp_inventory() {
   log_debug "Creating temporary static Ansible inventory from Terraform output..."
 
   local raw_output
-  raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null)
-  if [[ $? -ne 0 || -z "$raw_output" ]]; then
+  if ! raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null) || [[ -z "$raw_output" ]]; then
     log_error "Command 'cpc deploy output -json' failed or returned empty."
     return 1
   fi
@@ -701,23 +698,7 @@ function ansible_create_temp_inventory() {
   temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
 
   # Transform the dynamic JSON into a static one that Ansible will understand
-  jq '
-      . as $inv |
-      {
-        "all": {
-          "children": {
-            "control_plane": {
-              "hosts": ($inv.control_plane.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
-            },
-            "workers": {
-              "hosts": ($inv.workers.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
-            }
-          }
-        }
-      }
-    ' <<<"$dynamic_inventory_json" >"$temp_inventory_file"
-
-  if [[ $? -ne 0 ]]; then
+  if ! jq -r 'to_entries[] | select(.value != null) | "\(.key) ansible_host=\(.value.IP) \(.value.labels // empty | to_entries[] | \"\(.key)=\(.value)\" )"' <<<"$dynamic_inventory_json" >"$temp_inventory_file"; then
     log_error "Failed to create static inventory file using jq."
     rm -f "$temp_inventory_file"
     return 1

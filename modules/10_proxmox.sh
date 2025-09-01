@@ -66,7 +66,7 @@ function proxmox_add_vm() {
     echo "1) Worker node"
     echo "2) Control plane node"
     echo ""
-    read -p "Enter your choice (1-2): " node_type_choice
+    read -r -p "Enter your choice (1-2): " node_type_choice
     
     case $node_type_choice in
         1)
@@ -127,7 +127,7 @@ function proxmox_add_vm() {
     echo ""
     log_info "New node will be: $new_node_name (type: $node_type)"
     echo ""
-    read -p "Continue? (y/N): " confirm
+    read -r -p "Continue? (y/N): " confirm
     
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo "Cancelled."
@@ -308,7 +308,7 @@ function proxmox_remove_vm() {
     done
     
     echo
-    read -p "Enter the number of the node to remove: " choice
+    read -r -p "Enter the number of the node to remove: " choice
     
     if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#all_nodes[@]} ]; then
         log_error "Invalid choice."
@@ -326,7 +326,7 @@ function proxmox_remove_vm() {
     log_error "This will remove node: $node_name (type: $node_type)"
     log_error "The VM will be destroyed and cannot be recovered!"
     echo ""
-    read -p "Are you sure? (y/N): " confirm
+    read -r -p "Are you sure? (y/N): " confirm
     
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo "Cancelled."
@@ -351,7 +351,7 @@ function proxmox_remove_vm() {
         
         if [ -n "$current_additional_workers" ]; then
             IFS=',' read -ra worker_array <<< "$current_additional_workers"
-            log_debug "worker_array=(${worker_array[@]})"
+            log_debug "worker_array=(${worker_array[*]})"
             
             new_workers=()
             for worker in "${worker_array[@]}"; do
@@ -378,7 +378,7 @@ function proxmox_remove_vm() {
                 fi
             done
             
-            log_debug "new_workers=(${new_workers[@]})"
+            log_debug "new_workers=(${new_workers[*]})"
             log_debug "new_workers length=${#new_workers[@]}"
             
             # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
@@ -406,7 +406,7 @@ function proxmox_remove_vm() {
         
         if [ -n "$current_additional_controlplanes" ]; then
             IFS=',' read -ra cp_array <<< "$current_additional_controlplanes"
-            log_debug "cp_array=(${cp_array[@]})"
+            log_debug "cp_array=(${cp_array[*]})"
             
             new_cps=()
             for cp in "${cp_array[@]}"; do

@@ -43,7 +43,7 @@ lint-shell:
 
 lint-ansible:
 	@echo "Running Ansible linting..."
-	ansible-lint ansible/playbooks/ --exclude-rules yaml[line-length]
+	ansible-lint ansible/playbooks/
 
 # Cleanup
 clean:

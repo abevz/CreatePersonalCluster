@@ -154,9 +154,9 @@ function tofu_deploy() {
     log_validation "Warning: Current Tofu workspace ('$selected_workspace') does not match cpc context ('$current_ctx')."
     log_validation "Attempting to select workspace '$current_ctx'..."
     tofu workspace select "$current_ctx"
-    if [ $? -ne 0 ]; then
+    if ! tofu workspace select "$current_ctx"; then
       log_error "Error selecting Tofu workspace '$current_ctx'. Please check your Tofu setup."
-      popd >/dev/null
+      popd >/dev/null || exit 1
       exit 1
     fi
   fi
@@ -170,7 +170,7 @@ function tofu_deploy() {
   if [ "$tofu_subcommand" = "apply" ] || [ "$tofu_subcommand" = "plan" ]; then
     log_info "Generating node hostname configurations..."
     if [ -x "$REPO_PATH/scripts/generate_node_hostnames.sh" ]; then
-      pushd "$REPO_PATH/scripts" >/dev/null
+      pushd "$REPO_PATH/scripts" >/dev/null || return 1
       ./generate_node_hostnames.sh
       HOSTNAME_SCRIPT_STATUS=$?
       popd >/dev/null
@@ -246,8 +246,7 @@ function tofu_start_vms() {
   log_info "Starting VMs for context '$current_ctx'..."
 
   # Call the deploy command internally to start VMs
-  tofu_deploy apply -var="vm_started=true" -auto-approve
-  if [ $? -ne 0 ]; then
+  if ! tofu_deploy apply -var="vm_started=true" -auto-approve; then
     log_error "Error starting VMs for context '$current_ctx'."
     exit 1
   fi
@@ -279,8 +278,7 @@ function tofu_stop_vms() {
   fi
 
   # Call the deploy command internally to stop VMs
-  tofu_deploy apply -var="vm_started=false" -auto-approve
-  if [ $? -ne 0 ]; then
+  if ! tofu_deploy apply -var="vm_started=false" -auto-approve; then
     log_error "Error stopping VMs for context '$current_ctx'."
     exit 1
   fi
@@ -344,8 +342,7 @@ function tofu_show_cluster_info() {
 
   # Get the simplified cluster summary
   local cluster_summary
-  cluster_summary=$(tofu output -json cluster_summary 2>/dev/null)
-  if [ $? -eq 0 ] && [ "$cluster_summary" != "null" ]; then
+  if cluster_summary=$(tofu output -json cluster_summary 2>/dev/null) && [ "$cluster_summary" != "null" ]; then
     if [ "$format" = "json" ]; then
       # Output raw JSON - check if it has .value or is direct
       if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then

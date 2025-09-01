@@ -221,7 +221,7 @@ function ansible_run_playbook() {
 
   log_info "Running: ${ansible_cmd_array[*]}"
 
-  pushd "$ansible_dir" >/dev/null
+  pushd "$ansible_dir" >/dev/null || return 1
   "${ansible_cmd_array[@]}"
   local exit_code=$?
   popd >/dev/null
