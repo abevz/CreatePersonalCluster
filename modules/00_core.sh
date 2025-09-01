@@ -4,6 +4,12 @@
 # =============================================================================
 # Core functionality: context management, secrets, workspaces, setup
 
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
 #----------------------------------------------------------------------
 # Core CPC Functions
 #----------------------------------------------------------------------

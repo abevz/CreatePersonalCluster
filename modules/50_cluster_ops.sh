@@ -3,6 +3,12 @@
 # CPC Cluster Operations Module (50_cluster_ops.sh)
 # =============================================================================
 
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
 cpc_cluster_ops() {
   local command="${1:-}"
 
