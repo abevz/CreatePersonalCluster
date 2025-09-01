@@ -31,6 +31,9 @@ fi
 
 # Main entry point for CPC SSH functionality
 cpc_ssh() {
+  # Initialize recovery for SSH operations
+  recovery_checkpoint "ssh_start" "Starting SSH operation: ${1:-}"
+
   case "${1:-}" in
   clear-ssh-hosts)
     shift
@@ -41,7 +44,7 @@ cpc_ssh() {
     ssh_clear_maps "$@"
     ;;
   *)
-    log_error "Unknown SSH command: ${1:-}"
+    error_handle "$ERROR_INPUT" "Unknown SSH command: ${1:-}" "$SEVERITY_LOW" "abort"
     log_info "Available commands: clear-ssh-hosts, clear-ssh-maps"
     return 1
     ;;
@@ -54,6 +57,9 @@ ssh_clear_hosts() {
     ssh_show_hosts_help
     return 0
   fi
+
+  # Initialize recovery for SSH hosts clearing
+  recovery_checkpoint "ssh_clear_hosts_start" "Starting SSH known_hosts cleanup"
 
   # Parse command line arguments
   local clear_all=false
@@ -70,7 +76,7 @@ ssh_clear_hosts() {
       shift
       ;;
     *)
-      log_error "Unknown option: $1"
+      error_handle "$ERROR_INPUT" "Unknown option: $1" "$SEVERITY_LOW" "abort"
       log_info "Use 'cpc clear-ssh-hosts --help' for usage information."
       return 1
       ;;
@@ -84,9 +90,16 @@ ssh_clear_hosts() {
   fi
 
   local current_ctx
-  current_ctx=$(get_current_cluster_context) || return 1
+  if ! current_ctx=$(get_current_cluster_context); then
+    error_handle "$ERROR_CONFIG" "Failed to get current cluster context" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
+
   local repo_root
-  repo_root=$(get_repo_path) || return 1
+  if ! repo_root=$(get_repo_path); then
+    error_handle "$ERROR_CONFIG" "Failed to get repository path" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
 
   log_info "Clearing SSH known_hosts entries for VM IP addresses..."
 
@@ -98,18 +111,25 @@ ssh_clear_hosts() {
     log_info "Collecting VM IPs from all contexts..."
 
     # Get all available workspaces
-    pushd "$repo_root/terraform" >/dev/null || {
-      log_error "Failed to access terraform directory"
+    if ! pushd "$repo_root/terraform" >/dev/null; then
+      error_handle "$ERROR_EXECUTION" "Failed to access terraform directory" "$SEVERITY_HIGH" "abort"
       return 1
-    }
+    fi
+
     local workspaces
-    workspaces=$(tofu workspace list | grep -v '^\*' | sed 's/^[ *]*//' | grep -v '^default$')
-    popd >/dev/null
+    workspaces=$(tofu workspace list 2>/dev/null | grep -v '^\*' | sed 's/^[ *]*//' | grep -v '^default$' || echo "")
+    if ! popd >/dev/null; then
+      error_handle "$ERROR_EXECUTION" "Failed to return to original directory" "$SEVERITY_HIGH" "abort"
+      return 1
+    fi
 
     for workspace in $workspaces; do
       log_info "  Checking context: $workspace"
       local ips
-      ips=$(ssh_get_vm_ips_from_context "$workspace")
+      if ! ips=$(ssh_get_vm_ips_from_context "$workspace"); then
+        error_handle "$ERROR_EXECUTION" "Failed to get VM IPs from context: $workspace" "$SEVERITY_MEDIUM" "continue"
+        continue
+      fi
       if [ -n "$ips" ]; then
         while IFS= read -r ip; do
           if [ -n "$ip" ]; then
@@ -122,35 +142,45 @@ ssh_clear_hosts() {
       fi
     done
   else
-
     log_info "Collecting VM info from Terraform output for context: $current_ctx"
 
     # --- START OF FIX ---
     # 1. Get ALL information in one call
     local all_tf_outputs
-    all_tf_outputs=$(_get_terraform_outputs_json)
-
-    if [[ -z "$all_tf_outputs" || "$all_tf_outputs" == "null" ]]; then
+    if ! all_tf_outputs=$(_get_terraform_outputs_json 2>/dev/null); then
+      error_handle "$ERROR_EXECUTION" "Failed to get Terraform outputs for context: $current_ctx" "$SEVERITY_HIGH" "abort"
       log_warning "No VM info found in Terraform output for context '${current_ctx}'"
       log_info "Make sure VMs are deployed with 'cpc deploy apply'"
-      return 0
+      return 1
+    fi
+
+    if [[ -z "$all_tf_outputs" || "$all_tf_outputs" == "null" ]]; then
+      error_handle "$ERROR_EXECUTION" "No VM info found in Terraform output for context '${current_ctx}'" "$SEVERITY_MEDIUM" "abort"
+      log_warning "No VM info found in Terraform output for context '${current_ctx}'"
+      log_info "Make sure VMs are deployed with 'cpc deploy apply'"
+      return 1
     fi
 
     # 2. Use correct, more precise jq queries
-    readarray -t vm_ips_to_clear < <(echo "$all_tf_outputs" | jq -r '.cluster_summary.value | .[].IP')
-    readarray -t vm_hostnames_to_clear < <(echo "$all_tf_outputs" | jq -r '.cluster_summary.value | .[].hostname')
+    if ! readarray -t vm_ips_to_clear < <(echo "$all_tf_outputs" | jq -r '.cluster_summary.value | .[].IP' 2>/dev/null); then
+      error_handle "$ERROR_EXECUTION" "Failed to parse VM IPs from Terraform output" "$SEVERITY_MEDIUM" "abort"
+      return 1
+    fi
+
+    if ! readarray -t vm_hostnames_to_clear < <(echo "$all_tf_outputs" | jq -r '.cluster_summary.value | .[].hostname' 2>/dev/null); then
+      error_handle "$ERROR_EXECUTION" "Failed to parse VM hostnames from Terraform output" "$SEVERITY_MEDIUM" "continue"
+    fi
 
     log_info "  Found IPs: ${vm_ips_to_clear[*]}"
     log_info "  Found Hostnames: ${vm_hostnames_to_clear[*]}"
-
   fi
 
   # Add short hostnames (without domain suffix)
   local short_hostnames=()
   for hostname in "${vm_hostnames_to_clear[@]}"; do
     local short_name
-    short_name=$(echo "$hostname" | cut -d. -f1)
-    if [[ "$short_name" != "$hostname" ]]; then
+    short_name=$(echo "$hostname" | cut -d. -f1 2>/dev/null || echo "")
+    if [[ "$short_name" != "$hostname" && -n "$short_name" ]]; then
       short_hostnames+=("$short_name")
     fi
   done
@@ -161,12 +191,13 @@ ssh_clear_hosts() {
   fi
 
   # Remove duplicates from IPs and hostnames
-  vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u))
-  vm_hostnames_to_clear=($(printf '%s\n' "${vm_hostnames_to_clear[@]}" | sort -u))
+  vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u 2>/dev/null || echo ""))
+  vm_hostnames_to_clear=($(printf '%s\n' "${vm_hostnames_to_clear[@]}" | sort -u 2>/dev/null || echo ""))
 
   if [ ${#vm_ips_to_clear[@]} -eq 0 ]; then
+    error_handle "$ERROR_EXECUTION" "No VM IP addresses found to clear" "$SEVERITY_MEDIUM" "abort"
     log_warning "No VM IP addresses found to clear."
-    return 0
+    return 1
   fi
 
   log_info "VM entries to clear from ~/.ssh/known_hosts:"
@@ -198,8 +229,11 @@ ssh_clear_hosts() {
 
   # Create backup of known_hosts
   local backup_file=~/.ssh/known_hosts.backup.$(date +%Y%m%d_%H%M%S)
-  cp ~/.ssh/known_hosts "$backup_file"
-  log_info "Created backup: $backup_file"
+  if ! cp ~/.ssh/known_hosts "$backup_file" 2>/dev/null; then
+    error_handle "$ERROR_EXECUTION" "Failed to create backup of known_hosts file" "$SEVERITY_MEDIUM" "continue"
+  else
+    log_info "Created backup: $backup_file"
+  fi
 
   # Remove entries using ssh-keygen -R for reliable removal
   local removed_count=0
@@ -209,6 +243,8 @@ ssh_clear_hosts() {
     if ssh-keygen -R "$ip" &>/dev/null; then
       log_success "  Removed entries for IP $ip"
       removed_count=$((removed_count + 1))
+    else
+      error_handle "$ERROR_EXECUTION" "Failed to remove SSH known_hosts entries for IP: $ip" "$SEVERITY_LOW" "continue"
     fi
   done
 
@@ -222,6 +258,8 @@ ssh_clear_hosts() {
     if [ $? -eq 0 ] || [[ "$output" == *"Host $hostname found:"* ]]; then
       log_success "  Removed entries for hostname $hostname"
       removed_count=$((removed_count + 1))
+    else
+      error_handle "$ERROR_EXECUTION" "Failed to remove SSH known_hosts entries for hostname: $hostname" "$SEVERITY_LOW" "continue"
     fi
   done
 
@@ -231,7 +269,7 @@ ssh_clear_hosts() {
   else
     log_warning "No SSH known_hosts entries were removed."
     # Remove backup if nothing was changed
-    rm -f "$backup_file"
+    rm -f "$backup_file" 2>/dev/null || true
   fi
 
   log_success "SSH known_hosts cleanup completed."
@@ -243,6 +281,9 @@ ssh_clear_maps() {
     ssh_show_maps_help
     return 0
   fi
+
+  # Initialize recovery for SSH maps clearing
+  recovery_checkpoint "ssh_clear_maps_start" "Starting SSH connections cleanup"
 
   # Parse command line arguments
   local clear_all=false
@@ -259,7 +300,7 @@ ssh_clear_maps() {
       shift
       ;;
     *)
-      log_error "Unknown option: $1"
+      error_handle "$ERROR_INPUT" "Unknown option: $1" "$SEVERITY_LOW" "abort"
       log_info "Use 'cpc clear-ssh-maps --help' for usage information."
       return 1
       ;;
@@ -267,9 +308,16 @@ ssh_clear_maps() {
   done
 
   local current_ctx
-  current_ctx=$(get_current_cluster_context) || return 1
+  if ! current_ctx=$(get_current_cluster_context); then
+    error_handle "$ERROR_CONFIG" "Failed to get current cluster context" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
+
   local repo_root
-  repo_root=$(get_repo_path) || return 1
+  if ! repo_root=$(get_repo_path); then
+    error_handle "$ERROR_CONFIG" "Failed to get repository path" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
 
   log_info "Clearing SSH control sockets and connections..."
 
@@ -280,18 +328,25 @@ ssh_clear_maps() {
     log_info "Collecting VM IPs from all contexts..."
 
     # Get all available workspaces
-    pushd "$repo_root/terraform" >/dev/null || {
-      log_error "Failed to access terraform directory"
+    if ! pushd "$repo_root/terraform" >/dev/null; then
+      error_handle "$ERROR_EXECUTION" "Failed to access terraform directory" "$SEVERITY_HIGH" "abort"
       return 1
-    }
+    fi
+
     local workspaces
-    workspaces=$(tofu workspace list | grep -v '^\*' | sed 's/^[ *]*//' | grep -v '^default$')
-    popd >/dev/null
+    workspaces=$(tofu workspace list 2>/dev/null | grep -v '^\*' | sed 's/^[ *]*//' | grep -v '^default$' || echo "")
+    if ! popd >/dev/null; then
+      error_handle "$ERROR_EXECUTION" "Failed to return to original directory" "$SEVERITY_HIGH" "abort"
+      return 1
+    fi
 
     for workspace in $workspaces; do
       log_info "  Checking context: $workspace"
       local ips
-      ips=$(ssh_get_vm_ips_from_context "$workspace")
+      if ! ips=$(ssh_get_vm_ips_from_context "$workspace"); then
+        error_handle "$ERROR_EXECUTION" "Failed to get VM IPs from context: $workspace" "$SEVERITY_MEDIUM" "continue"
+        continue
+      fi
       if [ -n "$ips" ]; then
         while IFS= read -r ip; do
           if [ -n "$ip" ]; then
@@ -306,7 +361,12 @@ ssh_clear_maps() {
   else
     log_info "Collecting VM IPs from current context: $current_ctx"
     local ips
-    ips=$(ssh_get_vm_ips_from_context "$current_ctx")
+    if ! ips=$(ssh_get_vm_ips_from_context "$current_ctx"); then
+      error_handle "$ERROR_EXECUTION" "Failed to get VM IPs from current context: $current_ctx" "$SEVERITY_HIGH" "abort"
+      log_warning "No VMs found in current context '$current_ctx'"
+      log_info "Make sure VMs are deployed with 'cpc deploy apply'"
+      return 1
+    fi
     if [ -n "$ips" ]; then
       while IFS= read -r ip; do
         if [ -n "$ip" ]; then
@@ -315,18 +375,20 @@ ssh_clear_maps() {
       done <<<"$ips"
       log_info "  Found IPs: $(echo "$ips" | tr '\n' ' ')"
     else
+      error_handle "$ERROR_EXECUTION" "No VMs found in current context '$current_ctx'" "$SEVERITY_MEDIUM" "abort"
       log_warning "No VMs found in current context '$current_ctx'"
       log_info "Make sure VMs are deployed with 'cpc deploy apply'"
-      return 0
+      return 1
     fi
   fi
 
   # Remove duplicates from IPs
-  vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u))
+  vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u 2>/dev/null || echo ""))
 
   if [ ${#vm_ips_to_clear[@]} -eq 0 ]; then
+    error_handle "$ERROR_EXECUTION" "No VM IP addresses found to clear connections for" "$SEVERITY_MEDIUM" "abort"
     log_warning "No VM IP addresses found to clear connections for."
-    return 0
+    return 1
   fi
 
   log_info "VM IPs to clear SSH connections for:"
@@ -337,7 +399,9 @@ ssh_clear_maps() {
   if [ "$dry_run" = true ]; then
     log_warning "Dry run mode - showing what would be cleared:"
     for ip in "${vm_ips_to_clear[@]}"; do
-      ssh_check_connections_for_ip "$ip" true
+      if ! ssh_check_connections_for_ip "$ip" true; then
+        error_handle "$ERROR_EXECUTION" "Failed to check connections for IP: $ip" "$SEVERITY_LOW" "continue"
+      fi
     done
     log_info "Run without --dry-run to actually clear connections."
     return 0
@@ -349,11 +413,15 @@ ssh_clear_maps() {
   for ip in "${vm_ips_to_clear[@]}"; do
     if ssh_kill_connections "$ip"; then
       cleared_count=$((cleared_count + 1))
+    else
+      error_handle "$ERROR_EXECUTION" "Failed to clear SSH connections for IP: $ip" "$SEVERITY_LOW" "continue"
     fi
   done
 
   # Clear SSH control sockets
-  ssh_clear_control_sockets_all
+  if ! ssh_clear_control_sockets_all; then
+    error_handle "$ERROR_EXECUTION" "Failed to clear SSH control sockets" "$SEVERITY_MEDIUM" "continue"
+  fi
 
   if [ $cleared_count -gt 0 ]; then
     log_success "Successfully cleared SSH connections for $cleared_count VMs."
@@ -368,32 +436,61 @@ ssh_clear_maps() {
 ssh_get_vm_ips_from_context() {
   local context="$1"
   local repo_root
-  repo_root=$(get_repo_path)
+  if ! repo_root=$(get_repo_path); then
+    error_handle "$ERROR_CONFIG" "Failed to get repository path" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
+
   local terraform_dir="${repo_root}/terraform"
 
-  pushd "$terraform_dir" >/dev/null || return 1
+  if ! pushd "$terraform_dir" >/dev/null; then
+    error_handle "$ERROR_EXECUTION" "Failed to access terraform directory: $terraform_dir" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
 
   local original_workspace
-  original_workspace=$(tofu workspace show)
+  if ! original_workspace=$(tofu workspace show 2>/dev/null); then
+    error_handle "$ERROR_EXECUTION" "Failed to get current tofu workspace" "$SEVERITY_HIGH" "abort"
+    popd >/dev/null || true
+    return 1
+  fi
 
   # Make sure we are in the correct workspace
   if [[ "$original_workspace" != "$context" ]]; then
-    tofu workspace select "$context" >/dev/null
+    if ! tofu workspace select "$context" >/dev/null; then
+      error_handle "$ERROR_EXECUTION" "Failed to select tofu workspace: $context" "$SEVERITY_HIGH" "abort"
+      popd >/dev/null || true
+      return 1
+    fi
   fi
 
   # CORRECT CALL: use cluster_summary and jq to extract IP
   local vm_ips
-  vm_ips=$(tofu output -json cluster_summary | jq -r '.[].IP')
+  if ! vm_ips=$(tofu output -json cluster_summary 2>/dev/null | jq -r '.[].IP' 2>/dev/null); then
+    error_handle "$ERROR_EXECUTION" "Failed to get VM IPs from tofu output for context: $context" "$SEVERITY_MEDIUM" "abort"
+    # Return to the original workspace if we changed it
+    if [[ "$original_workspace" != "$context" ]]; then
+      tofu workspace select "$original_workspace" >/dev/null || true
+    fi
+    popd >/dev/null || true
+    return 1
+  fi
 
   # Return to the original workspace if we changed it
   if [[ "$original_workspace" != "$context" ]]; then
-    tofu workspace select "$original_workspace" >/dev/null
+    if ! tofu workspace select "$original_workspace" >/dev/null; then
+      error_handle "$ERROR_EXECUTION" "Failed to return to original workspace: $original_workspace" "$SEVERITY_MEDIUM" "continue"
+    fi
   fi
 
-  popd >/dev/null || return 1
+  if ! popd >/dev/null; then
+    error_handle "$ERROR_EXECUTION" "Failed to return to original directory" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
 
   # Check if we got any results
   if [[ -z "$vm_ips" ]]; then
+    error_handle "$ERROR_EXECUTION" "No VM IPs found in tofu output for context: $context" "$SEVERITY_MEDIUM" "abort"
     return 1
   fi
 
@@ -427,18 +524,23 @@ ssh_check_connections_for_ip() {
 ssh_kill_connections() {
   local ip="$1"
 
+  if [[ -z "$ip" ]]; then
+    error_handle "$ERROR_INPUT" "No IP address provided to ssh_kill_connections" "$SEVERITY_LOW" "abort"
+    return 1
+  fi
+
   log_info "Clearing SSH connections for $ip..."
 
   # Check for active SSH connections first
   local active_connections
-  active_connections=$(ps aux | grep -E "ssh.*$ip" | grep -v grep | grep -v "clear-ssh-maps" || true)
+  active_connections=$(ps aux 2>/dev/null | grep -E "ssh.*$ip" | grep -v grep | grep -v "clear-ssh-maps" || true)
 
   if [ -n "$active_connections" ]; then
     log_info "  Found active SSH connections for $ip"
 
     # Get SSH process IDs for this IP
     local ssh_pids
-    ssh_pids=$(ps aux | grep -E "ssh.*$ip" | grep -v grep | grep -v "clear-ssh-maps" | awk '{print $2}' || true)
+    ssh_pids=$(ps aux 2>/dev/null | grep -E "ssh.*$ip" | grep -v grep | grep -v "clear-ssh-maps" | awk '{print $2}' || true)
 
     if [ -n "$ssh_pids" ]; then
       # Kill SSH processes
@@ -447,6 +549,7 @@ ssh_kill_connections() {
           if kill "$pid" 2>/dev/null; then
             log_success "    Killed SSH process $pid for $ip"
           else
+            error_handle "$ERROR_EXECUTION" "Could not kill SSH process $pid for $ip" "$SEVERITY_LOW" "continue"
             log_warning "    Could not kill SSH process $pid for $ip"
           fi
         fi
@@ -480,12 +583,17 @@ ssh_clear_control_sockets_all() {
       if [ -n "$sockets" ]; then
         while IFS= read -r socket; do
           if [ -S "$socket" ]; then
-            rm -f "$socket"
-            log_success "  Removed control socket: $socket"
-            cleared_count=$((cleared_count + 1))
+            if rm -f "$socket" 2>/dev/null; then
+              log_success "  Removed control socket: $socket"
+              cleared_count=$((cleared_count + 1))
+            else
+              error_handle "$ERROR_EXECUTION" "Failed to remove control socket: $socket" "$SEVERITY_LOW" "continue"
+            fi
           fi
         done <<<"$sockets"
       fi
+    else
+      log_debug "Control socket directory does not exist: $dir"
     fi
   done
 
@@ -494,6 +602,8 @@ ssh_clear_control_sockets_all() {
   else
     log_info "No SSH control sockets found to clear"
   fi
+
+  return 0
 }
 
 # Display help for clear-ssh-hosts command

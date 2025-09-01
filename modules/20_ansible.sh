@@ -221,9 +221,18 @@ function ansible_run_playbook() {
 
   log_info "Running: ${ansible_cmd_array[*]}"
 
-  pushd "$ansible_dir" >/dev/null || return 1
-  "${ansible_cmd_array[@]}"
-  local exit_code=$?
+  pushd "$ansible_dir" >/dev/null || {
+    error_handle "$ERROR_EXECUTION" "Failed to change to ansible directory: $ansible_dir" "$SEVERITY_HIGH"
+    return 1
+  }
+
+  # Use recovery system for Ansible operations
+  local ansible_command="${ansible_cmd_array[*]}"
+  local recovery_result
+
+  recovery_ansible_operation "$ansible_command" "$playbook_name"
+  recovery_result=$?
+
   popd >/dev/null
 
   # --- CHANGE 3: Remove temporary inventory if it was created ---
@@ -231,11 +240,7 @@ function ansible_run_playbook() {
     rm "$temp_inventory_file"
   fi
 
-  if [[ $exit_code -ne 0 ]]; then
-    log_error "Ansible playbook $playbook_name failed with exit code $exit_code."
-    return 1
-  fi
-  return 0
+  return $recovery_result
 }
 
 # Update Ansible inventory cache from Terraform state

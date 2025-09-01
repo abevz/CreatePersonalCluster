@@ -57,84 +57,159 @@ get_repo_path() {
 
 # Load secrets from SOPS
 load_secrets() {
+  local verbose="${1:-false}"
+  
+  if [[ "$verbose" == "true" ]]; then
+    echo "=== STARTING load_secrets function ===" >&2
+  fi
+
+  # Create temporary file for environment variables
+  local env_file="/tmp/cpc_env_vars.sh"
+  rm -f "$env_file"
+  touch "$env_file"
+
   local repo_root
-  repo_root=$(get_repo_path)
+  if ! repo_root=$(get_repo_path); then
+    error_handle "$ERROR_CONFIG" "Failed to determine repository path" "$SEVERITY_CRITICAL" "abort"
+    return 1
+  fi
+
   local secrets_file="$repo_root/terraform/secrets.sops.yaml"
 
-  if [ ! -f "$secrets_file" ]; then
-    log_error "secrets.sops.yaml not found at $secrets_file"
+  if ! error_validate_file "$secrets_file" "secrets.sops.yaml not found at $secrets_file"; then
     return 1
   fi
 
   # Check if sops is installed
-  if ! command -v sops &>/dev/null; then
-    log_error "'sops' is required but not installed. Please install it before proceeding."
+  if ! error_validate_command_exists "sops" "Please install SOPS: https://github.com/mozilla/sops"; then
     return 1
   fi
 
   # Check if jq is installed
-  if ! command -v jq &>/dev/null; then
-    log_error "'jq' is required but not installed. Please install it before proceeding."
+  if ! error_validate_command_exists "jq" "Please install jq: apt install jq or brew install jq"; then
     return 1
   fi
 
-  log_debug "Loading secrets from secrets.sops.yaml..."
-
-  # Export sensitive variables from SOPS
-  export PROXMOX_HOST
-  export PROXMOX_USERNAME
-  export PROXMOX_PASSWORD
-  export VM_USERNAME
-  export VM_PASSWORD
-  export VM_SSH_KEY
-  export AWS_ACCESS_KEY_ID
-  export AWS_SECRET_ACCESS_KEY
-  export AWS_DEFAULT_REGION
-  export DOCKER_HUB_USERNAME
-  export DOCKER_HUB_PASSWORD
-  export HARBOR_HOSTNAME
-  export HARBOR_ROBOT_USERNAME
-  export HARBOR_ROBOT_TOKEN
-  export CLOUDFLARE_DNS_API_TOKEN
-  export CLOUDFLARE_EMAIL
-
-  # Load secrets using sops, convert to JSON, then parse with jq
-  local secrets_json
-  if ! secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)"); then
-    log_error "Failed to decrypt secrets.sops.yaml. Check your SOPS configuration."
+  # Check if yq is installed
+  if ! error_validate_command_exists "yq" "Please install yq: https://github.com/mikefarah/yq/#install"; then
     return 1
   fi
 
-  # Parse secrets from JSON
-  PROXMOX_HOST=$(echo "$secrets_json" | jq -r '.virtual_environment_endpoint' | sed 's|https://||' | sed 's|:8006/api2/json||')
-  PROXMOX_USERNAME=$(echo "$secrets_json" | jq -r '.proxmox_username')
-  PROXMOX_PASSWORD=$(echo "$secrets_json" | jq -r '.virtual_environment_password')
-  VM_USERNAME=$(echo "$secrets_json" | jq -r '.vm_username')
-  VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
-  VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
+  if [[ "$verbose" == "true" ]]; then
+    log_debug "Loading secrets from secrets.sops.yaml..."
+  fi
 
-  DOCKER_HUB_USERNAME=$(echo "$secrets_json" | jq -r '.docker_hub_username')
-  DOCKER_HUB_PASSWORD=$(echo "$secrets_json" | jq -r '.docker_hub_password')
-
-  HARBOR_HOSTNAME=$(echo "$secrets_json" | jq -r '.harbor_hostname')
-  HARBOR_ROBOT_USERNAME=$(echo "$secrets_json" | jq -r '.harbor_robot_username')
-  HARBOR_ROBOT_TOKEN=$(echo "$secrets_json" | jq -r '.harbor_robot_token')
-
-  CLOUDFLARE_DNS_API_TOKEN=$(echo "$secrets_json" | jq -r '.cloudflare_dns_api_token')
-  CLOUDFLARE_EMAIL=$(echo "$secrets_json" | jq -r '.cloudflare_email')
-  # Parse MinIO/S3 credentials for Terraform backend
-  AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
-  AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
-  AWS_DEFAULT_REGION="us-east-1" # Set default region for MinIO
-
-  # Verify that all required secrets were loaded
-  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-    log_error "Failed to load one or more required secrets from secrets.sops.yaml"
-    log_info "Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+  # Try to decrypt and validate secrets with error handling
+  if ! retry_execute \
+       "sops -d '$secrets_file' > /dev/null" \
+       2 \
+       1 \
+       10 \
+       "" \
+       "Decrypt secrets file"; then
+    error_handle "$ERROR_AUTH" "Failed to decrypt secrets.sops.yaml. Check your SOPS configuration and GPG keys." "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
 
-  log_debug "Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_USERNAME: $VM_USERNAME)"
+  # Export sensitive variables from SOPS with validation
+  local required_vars=("PROXMOX_HOST" "PROXMOX_USERNAME" "VM_USERNAME" "VM_SSH_KEY")
+  local missing_vars=()
+
+  # Map secrets file keys to expected environment variable names
+  local secrets_map=(
+    "PROXMOX_HOST:virtual_environment_endpoint"
+    "PROXMOX_USERNAME:virtual_environment_username"
+    "PROXMOX_SSH_USERNAME:proxmox_username"
+    "VM_USERNAME:vm_username"
+    "VM_SSH_KEY:vm_ssh_keys[0]"  # Take first SSH key from array
+  )
+
+  for mapping in "${secrets_map[@]}"; do
+    IFS=':' read -r env_var secret_key <<< "$mapping"
+    local value
+    value=$(sops -d "$secrets_file" | yq -r ".${secret_key} // \"\"" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+      missing_vars+=("$env_var")
+    else
+      printf "export %s='%s'\n" "$env_var" "$value" >> /tmp/cpc_env_vars.sh
+      export "$env_var=$value"
+      declare -g "$env_var=$value"
+      if [[ "$verbose" == "true" ]]; then
+        echo "DEBUG: Loaded secret: $env_var = $value" >&2
+        log_debug "Loaded secret: $env_var = $value"
+      fi
+    fi
+  done
+
+  # Special handling for SSH_USERNAME alias
+  if [[ -n "${PROXMOX_SSH_USERNAME:-}" ]]; then
+    export SSH_USERNAME="$PROXMOX_SSH_USERNAME"
+    declare -g SSH_USERNAME="$PROXMOX_SSH_USERNAME"
+    if [[ "$verbose" == "true" ]]; then
+      log_debug "Set SSH_USERNAME alias to PROXMOX_SSH_USERNAME value"
+    fi
+  fi
+
+  # Check for optional variables
+  local optional_vars_map=(
+    "PROXMOX_PASSWORD:virtual_environment_password"
+    "VM_PASSWORD:vm_password"
+    "AWS_ACCESS_KEY_ID:minio_access_key"
+    "AWS_SECRET_ACCESS_KEY:minio_secret_key"
+    "DOCKER_HUB_USERNAME:docker_hub_username"
+    "DOCKER_HUB_PASSWORD:docker_hub_password"
+    "HARBOR_HOSTNAME:harbor_hostname"
+    "HARBOR_ROBOT_USERNAME:harbor_robot_username"
+    "HARBOR_ROBOT_TOKEN:harbor_robot_token"
+    "CLOUDFLARE_DNS_API_TOKEN:cloudflare_dns_api_token"
+    "CLOUDFLARE_EMAIL:cloudflare_email"
+  )
+
+  if [[ "$verbose" == "true" ]]; then
+    log_debug "Starting to process optional variables..."
+  fi
+
+  for mapping in "${optional_vars_map[@]}"; do
+    IFS=':' read -r env_var secret_key <<< "$mapping"
+    local value
+    value=$(sops -d "$secrets_file" | yq -r ".${secret_key} // \"\"" 2>/dev/null)
+    if [[ "$verbose" == "true" ]]; then
+      echo "DEBUG: Checking optional var: $env_var from key $secret_key, value: '$value'" >&2
+    fi
+    if [[ -n "$value" && "$value" != "null" ]]; then
+      export "$env_var=$value"
+      declare -g "$env_var=$value"
+      if [[ "$verbose" == "true" ]]; then
+        echo "DEBUG: Exported $env_var=$value" >&2
+        log_debug "Loaded optional secret: $env_var"
+      fi
+    else
+      if [[ "$verbose" == "true" ]]; then
+        log_debug "Skipped optional var: $env_var (empty or null)"
+      fi
+    fi
+  done
+
+  if [[ "$verbose" == "true" ]]; then
+    log_debug "Finished processing optional variables"
+  fi
+
+  if [[ ${#missing_vars[@]} -gt 0 ]]; then
+    error_handle "$ERROR_CONFIG" "Missing required secrets: ${missing_vars[*]}" "$SEVERITY_CRITICAL" "abort"
+    return 1
+  fi
+
+  if [[ "$verbose" == "true" ]]; then
+    log_success "Secrets loaded successfully"
+  fi
+  
+  # Source the environment variables to make them available
+  if [ -f "/tmp/cpc_env_vars.sh" ]; then
+    source "/tmp/cpc_env_vars.sh"
+    rm -f "/tmp/cpc_env_vars.sh"
+  fi
+  
+  return 0
 }
 
 # Load environment variables
@@ -142,8 +217,8 @@ load_env_vars() {
   local repo_root
   repo_root=$(get_repo_path)
 
-  # Load secrets first
-  load_secrets
+  # Load secrets first (quiet mode)
+  load_secrets false
 
   if [ -f "$repo_root/$CPC_ENV_FILE" ]; then
     set -a # Automatically export all variables
@@ -224,8 +299,16 @@ set_workspace_template_vars() {
 # Get current cluster context
 get_current_cluster_context() {
   if [ -f "$CPC_CONTEXT_FILE" ]; then
-    cat "$CPC_CONTEXT_FILE"
+    local context
+    context=$(cat "$CPC_CONTEXT_FILE" 2>/dev/null)
+    if [[ $? -eq 0 && -n "$context" ]]; then
+      echo "$context"
+    else
+      log_warning "Failed to read cluster context file: $CPC_CONTEXT_FILE"
+      echo "default"
+    fi
   else
+    log_debug "Cluster context file not found, using default"
     echo "default"
   fi
 }
@@ -235,11 +318,29 @@ set_cluster_context() {
   local context="$1"
 
   if [ -z "$context" ]; then
-    log_error "Usage: set_cluster_context <context_name>"
+    error_handle "$ERROR_VALIDATION" "Usage: set_cluster_context <context_name>" "$SEVERITY_HIGH"
     return 1
   fi
 
-  echo "$context" >"$CPC_CONTEXT_FILE"
+  # Validate workspace name
+  if ! validate_workspace_name "$context"; then
+    return 1
+  fi
+
+  # Create directory if it doesn't exist
+  local context_dir
+  context_dir=$(dirname "$CPC_CONTEXT_FILE")
+  if ! mkdir -p "$context_dir" 2>/dev/null; then
+    error_handle "$ERROR_EXECUTION" "Failed to create context directory: $context_dir" "$SEVERITY_HIGH"
+    return 1
+  fi
+
+  # Write context with error handling
+  if ! echo "$context" >"$CPC_CONTEXT_FILE" 2>/dev/null; then
+    error_handle "$ERROR_EXECUTION" "Failed to write cluster context to file: $CPC_CONTEXT_FILE" "$SEVERITY_HIGH"
+    return 1
+  fi
+
   log_success "Cluster context set to: $context"
 }
 
@@ -264,9 +365,13 @@ cpc_ctx() {
   local context="$1"
 
   if [ -z "$context" ]; then
-    local current_context
-    current_context=$(get_current_cluster_context)
-    log_info "Current cluster context: $current_context"
+    local current_ctx
+    current_ctx=$(get_current_cluster_context)
+    echo "Current cluster context: $current_ctx"
+    echo "Available Tofu workspaces:"
+    (cd "$REPO_PATH/terraform" && tofu workspace list)
+    # Set CPC_WORKSPACE for current context
+    export CPC_WORKSPACE="$current_ctx"
     return 0
   fi
 
@@ -304,6 +409,9 @@ cpc_ctx() {
 
   # Set template variables for the new context
   set_workspace_template_vars "$context"
+  
+  # Set CPC_WORKSPACE environment variable for other modules
+  export CPC_WORKSPACE="$context"
 }
 
 #----------------------------------------------------------------------
@@ -337,6 +445,8 @@ core_ctx() {
     echo "Current cluster context: $current_ctx"
     echo "Available Tofu workspaces:"
     (cd "$REPO_PATH/terraform" && tofu workspace list)
+    # Set CPC_WORKSPACE for current context
+    export CPC_WORKSPACE="$current_ctx"
     return 0
   elif [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: cpc ctx [<cluster_name>]"
@@ -362,6 +472,9 @@ core_ctx() {
 
   # Update template variables for the new workspace context
   set_workspace_template_vars "$cluster_name"
+  
+  # Set CPC_WORKSPACE environment variable for other modules
+  export CPC_WORKSPACE="$cluster_name"
 }
 
 # Clone a workspace environment to create a new one
@@ -583,14 +696,35 @@ function core_delete_workspace() {
 
 # Command wrapper for load_secrets function
 core_load_secrets_command() {
+  echo "=== ENTERING core_load_secrets_command ===" >&2
   log_step "Loading secrets from SOPS..."
-  load_secrets
+  log_debug "About to call load_secrets function"
+  load_secrets true
+  echo "=== load_secrets completed ===" >&2
+  log_debug "load_secrets function completed"
   log_success "Secrets loaded successfully!"
   log_info "Available variables:"
   log_info "  PROXMOX_HOST: $PROXMOX_HOST"
   log_info "  PROXMOX_USERNAME: $PROXMOX_USERNAME"
   log_info "  VM_USERNAME: $VM_USERNAME"
   log_info "  VM_SSH_KEY: ${VM_SSH_KEY:0:20}..."
+  log_debug "Final AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-NOT_SET}"
+  log_debug "Final AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-NOT_SET}"
+  
+  # Output export commands for eval - only the essential ones
+  echo "export AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID'"
+  echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY'"
+  echo "export PROXMOX_PASSWORD='$PROXMOX_PASSWORD'"
+  echo "export VM_PASSWORD='$VM_PASSWORD'"
+  echo "export DOCKER_HUB_USERNAME='$DOCKER_HUB_USERNAME'"
+  echo "export DOCKER_HUB_PASSWORD='$DOCKER_HUB_PASSWORD'"
+  echo "export HARBOR_HOSTNAME='$HARBOR_HOSTNAME'"
+  echo "export HARBOR_ROBOT_USERNAME='$HARBOR_ROBOT_USERNAME'"
+  echo "export HARBOR_ROBOT_TOKEN='$HARBOR_ROBOT_TOKEN'"
+  echo "export CLOUDFLARE_DNS_API_TOKEN='$CLOUDFLARE_DNS_API_TOKEN'"
+  echo "export CLOUDFLARE_EMAIL='$CLOUDFLARE_EMAIL'"
+  
+  echo "=== EXITING core_load_secrets_command ===" >&2
 }
 
 # Setup CPC project
@@ -712,6 +846,6 @@ function ansible_create_temp_inventory() {
 # Export core functions
 export -f get_repo_path load_secrets load_env_vars set_workspace_template_vars
 export -f get_current_cluster_context set_cluster_context validate_workspace_name
-export -f cpc_setup cpc_core
+export -f cpc_setup cpc_core cpc_ctx
 export -f core_setup_cpc core_ctx core_clone_workspace core_delete_workspace core_load_secrets_command
 export -f _get_terraform_outputs_json _get_hostname_by_ip ansible_create_temp_inventory

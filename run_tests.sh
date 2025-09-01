@@ -71,7 +71,7 @@ fi
 # Linting
 run_linting "ShellCheck on main script" "shellcheck cpc"
 run_linting "Bashate on main script" "bashate cpc"
-run_linting "Ansible-lint on playbooks" "ansible-lint ansible/playbooks/ --exclude-rules yaml[line-length]"
+run_linting "Ansible-lint on playbooks" "ansible-lint ansible/playbooks/"
 
 echo ""
 echo "=========================="

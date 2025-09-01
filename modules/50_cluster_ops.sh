@@ -136,12 +136,14 @@ cluster_ops_upgrade_addons() {
   fi
 
   log_step "Preparing environment and loading secrets..."
-  load_secrets
-  if [[ $? -ne 0 ]]; then
-    log_error "Failed to load secrets. Aborting addon upgrade."
+
+  # Load secrets with error handling
+  if ! load_secrets; then
+    error_handle "$ERROR_CONFIG" "Failed to load secrets. Aborting addon upgrade." "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
 
+  # Validate Cloudflare token if needed
   if [[ "$addon_name" == "traefik-gateway" || "$addon_name" == "all" ]]; then
     if [[ -z "${CLOUDFLARE_DNS_API_TOKEN}" ]]; then
       log_warning "CLOUDFLARE_DNS_API_TOKEN is not set in your environment or secrets file."
@@ -161,15 +163,13 @@ cluster_ops_upgrade_addons() {
     log_info "Using default version for the addon."
   fi
 
-  if ! cpc_ansible run-ansible "pb_upgrade_addons_extended.yml" --extra-vars "$extra_vars"; then
-    log_error "Ansible playbook execution failed for addon '$addon_name'."
-    return 1
-  fi
-
-  local playbook_exit_code=$?
-
-  if [[ $playbook_exit_code -ne 0 ]]; then
-    log_error "Ansible playbook execution failed for addon '$addon_name'."
+  # Execute Ansible playbook with recovery
+  if ! recovery_execute \
+       "cpc_ansible run-ansible 'pb_upgrade_addons_extended.yml' --extra-vars '$extra_vars'" \
+       "upgrade_addon_$addon_name" \
+       "log_warning 'Addon upgrade failed, manual cleanup may be needed'" \
+       "validate_addon_installation '$addon_name'"; then
+    error_handle "$ERROR_EXECUTION" "Ansible playbook execution failed for addon '$addon_name'" "$SEVERITY_HIGH"
     return 1
   fi
 
@@ -177,22 +177,35 @@ cluster_ops_upgrade_addons() {
 }
 
 cluster_configure_coredns() {
-  # Parse command line arguments
+  # Initialize recovery for CoreDNS configuration
+  recovery_checkpoint "coredns_config_start" "Starting CoreDNS configuration"
+
+  # Parse command line arguments with error handling
   local dns_server=""
   local domains=""
 
   while [[ $# -gt 0 ]]; do
     case $1 in
     --dns-server)
-      dns_server="$2"
-      shift 2
+      if [[ -n "$2" && "$2" != --* ]]; then
+        dns_server="$2"
+        shift 2
+      else
+        error_handle "$ERROR_VALIDATION" "Missing argument for --dns-server" "$SEVERITY_HIGH"
+        return 1
+      fi
       ;;
     --domains)
-      domains="$2"
-      shift 2
+      if [[ -n "$2" && "$2" != --* ]]; then
+        domains="$2"
+        shift 2
+      else
+        error_handle "$ERROR_VALIDATION" "Missing argument for --domains" "$SEVERITY_HIGH"
+        return 1
+      fi
       ;;
     *)
-      log_error "Unknown option for configure-coredns: $1"
+      error_handle "$ERROR_VALIDATION" "Unknown option for configure-coredns: $1" "$SEVERITY_HIGH"
       _cluster_ops_configure_coredns_help
       return 1
       ;;
@@ -202,17 +215,23 @@ cluster_configure_coredns() {
   # Get DNS server from Terraform if not specified
   if [ -z "$dns_server" ]; then
     log_step "Getting DNS server from Terraform variables..."
-    local repo_path
-    repo_path=$(get_repo_path) || return 1
-    # We assume that the get_dns_server.sh script exists and works
-    dns_server=$("$repo_path/scripts/get_dns_server.sh")
 
-    if [ -n "$dns_server" ] && [ "$dns_server" != "null" ]; then
-      log_success "Found DNS server in Terraform: $dns_server"
-    else
-      # Set a fallback if not able to get from Terraform
+    local repo_path
+    if ! repo_path=$(get_repo_path); then
+      error_handle "$ERROR_CONFIG" "Failed to determine repository path" "$SEVERITY_HIGH"
+      return 1
+    fi
+
+    # Execute DNS server script with error handling
+    if ! dns_server=$("$repo_path/scripts/get_dns_server.sh" 2>/dev/null); then
+      log_warning "Could not extract DNS server from Terraform script"
       dns_server="10.10.10.100"
-      log_warning "Could not extract DNS server from Terraform. Using fallback: $dns_server"
+      log_warning "Using fallback DNS server: $dns_server"
+    elif [ -z "$dns_server" ] || [ "$dns_server" = "null" ]; then
+      dns_server="10.10.10.100"
+      log_warning "DNS server not found in Terraform. Using fallback: $dns_server"
+    else
+      log_success "Found DNS server in Terraform: $dns_server"
     fi
   fi
 
@@ -225,26 +244,131 @@ cluster_configure_coredns() {
   log_info "  DNS Server: $dns_server"
   log_info "  Domains: $domains"
 
-  # Confirmation
-  read -r -p "Continue with CoreDNS configuration? [y/N] " response
-  if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-    log_info "Operation cancelled."
+  # Confirmation with timeout
+  if ! timeout_execute \
+       "read -r -t 30 -p 'Continue with CoreDNS configuration? [y/N] ' response && [[ \"\$response\" =~ ^([yY][eE][sS]|[yY])\$ ]]" \
+       35 \
+       "User confirmation" \
+       ""; then
+    log_info "Operation cancelled or timed out."
     return 0
   fi
 
-  # Run the Ansible playbook
+  # Run the Ansible playbook with recovery
   log_step "Running CoreDNS configuration playbook..."
 
-  # Pass variables to the playbook
-  local extra_vars="pihole_dns_server=$dns_server local_domains='[\"$(echo "$domains" | sed 's/,/","/g')\"]'"
-
-  if ! cpc_ansible run-ansible "configure_coredns_local_domains.yml" --extra-vars "$extra_vars"; then
-    log_error "Error configuring CoreDNS"
+  # Validate domains format
+  if ! [[ "$domains" =~ ^[a-zA-Z0-9.-]+(,[a-zA-Z0-9.-]+)*$ ]]; then
+    error_handle "$ERROR_VALIDATION" "Invalid domains format: $domains" "$SEVERITY_HIGH"
     return 1
   fi
 
+  # Pass variables to the playbook
+  local extra_vars="pihole_dns_server=$dns_server local_domains='[\"$(echo "$domains" | sed 's/,/\",\"/g')\"]'"
+
+  if ! recovery_execute \
+       "cpc_ansible run-ansible 'configure_coredns_local_domains.yml' --extra-vars '$extra_vars'" \
+       "configure_coredns" \
+       "log_warning 'CoreDNS configuration failed, manual cleanup may be needed'" \
+       "validate_coredns_configuration '$dns_server' '$domains'"; then
+    error_handle "$ERROR_EXECUTION" "CoreDNS configuration failed" "$SEVERITY_HIGH"
+    return 1
+  fi
+
+  recovery_checkpoint "coredns_config_complete" "CoreDNS configuration completed successfully"
   log_success "CoreDNS configured successfully!"
   log_info "Local domains ($domains) will now be forwarded to $dns_server"
 }
 
-export -f cpc_cluster_ops
+# Helper function to validate addon installation
+function validate_addon_installation() {
+  local addon_name="$1"
+
+  case "$addon_name" in
+    "calico")
+      # Validate Calico pods are running
+      if timeout_kubectl_operation \
+           "kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | grep -q Running" \
+           "Validate Calico installation" \
+           60; then
+        log_debug "Calico addon validated successfully"
+        return 0
+      fi
+      ;;
+    "metallb")
+      # Validate MetalLB pods are running
+      if timeout_kubectl_operation \
+           "kubectl get pods -n metallb-system -l app=metallb --no-headers | grep -q Running" \
+           "Validate MetalLB installation" \
+           30; then
+        log_debug "MetalLB addon validated successfully"
+        return 0
+      fi
+      ;;
+    "metrics-server")
+      # Validate Metrics Server is accessible
+      if timeout_kubectl_operation \
+           "kubectl top nodes --no-headers >/dev/null 2>&1" \
+           "Validate Metrics Server" \
+           30; then
+        log_debug "Metrics Server addon validated successfully"
+        return 0
+      fi
+      ;;
+    "coredns")
+      # Validate CoreDNS pods are running
+      if timeout_kubectl_operation \
+           "kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | grep -q Running" \
+           "Validate CoreDNS installation" \
+           30; then
+        log_debug "CoreDNS addon validated successfully"
+        return 0
+      fi
+      ;;
+    "cert-manager")
+      # Validate cert-manager pods are running
+      if timeout_kubectl_operation \
+           "kubectl get pods -n cert-manager --no-headers | grep -q Running" \
+           "Validate cert-manager installation" \
+           30; then
+        log_debug "cert-manager addon validated successfully"
+        return 0
+      fi
+      ;;
+    "argocd")
+      # Validate ArgoCD pods are running
+      if timeout_kubectl_operation \
+           "kubectl get pods -n argocd --no-headers | grep -q Running" \
+           "Validate ArgoCD installation" \
+           30; then
+        log_debug "ArgoCD addon validated successfully"
+        return 0
+      fi
+      ;;
+    *)
+      log_debug "No specific validation for addon: $addon_name"
+      return 0
+      ;;
+  esac
+
+  log_warning "Validation failed for addon: $addon_name"
+  return 1
+}
+
+# Helper function to validate CoreDNS configuration
+function validate_coredns_configuration() {
+  local dns_server="$1"
+  local domains="$2"
+
+  # Check if CoreDNS configmap exists and contains our configuration
+  kubectl get configmap coredns -n kube-system >/dev/null 2>&1
+
+  # Check if domains are properly configured
+  local config
+  config=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' 2>/dev/null)
+
+  # Basic validation - check if config contains our DNS server
+  echo "$config" | grep -q "$dns_server"
+}
+
+export -f cpc_cluster_ops validate_addon_installation validate_coredns_configuration

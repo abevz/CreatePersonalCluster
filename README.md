@@ -481,6 +481,8 @@ VM_USERNAME="ubuntu"
 
 ## 🧪 Testing & Validation
 
+> 📖 **Detailed Testing Guide**: See [Testing Documentation](docs/testing_guide.md) for comprehensive testing instructions, examples, and best practices.
+
 ### ✅ Cluster Health Checks
 
 ```bash
@@ -527,6 +529,11 @@ kubectl logs -n kube-system deployment/calico-kube-controllers
 ---
 
 ## 🤝 Contributing
+
+### 📚 Documentation
+- [🧪 Testing Guide](docs/testing_guide.md) - Comprehensive testing documentation with examples
+- [🏗️ Architecture](docs/architecture.md) - System architecture and design
+- [📖 Project Setup](docs/project_setup_guide.md) - Development environment setup
 
 ### 🛠️ Development Setup
 

@@ -174,26 +174,34 @@ k8s_bootstrap() {
 
   local ansible_extra_args=("-i" "$temp_inventory_file")
 
-  # CONNECTION CHECK
+  # CONNECTION CHECK with error handling
   log_info "Testing Ansible connectivity to all nodes..."
-  if ! ansible all "${ansible_extra_args[@]}" -m ping --ssh-extra-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"; then
-    log_error "Failed to connect to all nodes via Ansible"
+  if ! error_validate_command "ansible all \"${ansible_extra_args[@]}\" -m ping --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\"" \
+                            "Failed to connect to all nodes via Ansible"; then
     rm -f "$temp_inventory_file"
     return 1
   fi
   log_success "Ansible connectivity test passed"
 
-  # Step 1: Install Kubernetes components
+  # Step 1: Install Kubernetes components with recovery
   log_info "Step 1: Installing Kubernetes components..."
-  if ! ansible_run_playbook "install_kubernetes_cluster.yml" "${ansible_extra_args[@]}"; then
+  if ! recovery_execute \
+       "ansible_run_playbook \"install_kubernetes_cluster.yml\" \"${ansible_extra_args[@]}\"" \
+       "install_kubernetes" \
+       "log_warning 'Kubernetes installation failed, manual cleanup may be needed'" \
+       "ansible all \"${ansible_extra_args[@]}\" -m shell -a 'which kubelet' --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\""; then
     log_error "Failed to install Kubernetes components"
     rm -f "$temp_inventory_file"
     return 1
   fi
 
-  # Step 2: Initialize cluster
+  # Step 2: Initialize cluster with recovery
   log_info "Step 2: Initializing Kubernetes cluster..."
-  if ! ansible_run_playbook "initialize_kubernetes_cluster_with_dns.yml" "${ansible_extra_args[@]}"; then
+  if ! recovery_execute \
+       "ansible_run_playbook \"initialize_kubernetes_cluster_with_dns.yml\" \"${ansible_extra_args[@]}\"" \
+       "initialize_kubernetes" \
+       "log_warning 'Kubernetes initialization failed, manual cleanup may be needed'" \
+       "ansible all \"${ansible_extra_args[@]}\" -m shell -a 'test -f /etc/kubernetes/admin.conf' --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\""; then
     log_error "Failed to initialize Kubernetes cluster"
     rm -f "$temp_inventory_file"
     return 1

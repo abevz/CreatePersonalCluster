@@ -5,6 +5,25 @@
 
 # Check for necessary environment variables (SOPS secrets should be loaded by cpc)
 if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ]; then
+  echo "Loading secrets automatically..."
+  # Try to load secrets if not already loaded
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_PATH="$(cd "$SCRIPT_DIR/.." && pwd)"
+  
+  if [ -f "$REPO_PATH/cpc.env" ]; then
+    source "$REPO_PATH/cpc.env"
+  fi
+  
+  # Try to load from secrets if available
+  if command -v sops >/dev/null 2>&1 && [ -f "$REPO_PATH/terraform/secrets.sops.yaml" ]; then
+    export PROXMOX_HOST=$(sops -d "$REPO_PATH/terraform/secrets.sops.yaml" | yq -r '.virtual_environment_endpoint // ""')
+    export PROXMOX_USERNAME=$(sops -d "$REPO_PATH/terraform/secrets.sops.yaml" | yq -r '.virtual_environment_username // ""')
+    export PROXMOX_SSH_USERNAME=$(sops -d "$REPO_PATH/terraform/secrets.sops.yaml" | yq -r '.proxmox_username // ""')
+    echo "Secrets loaded from SOPS"
+  fi
+fi
+
+if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$SSH_USERNAME" ]; then
   echo "Error: Required environment variables not set. This script should be called via 'cpc' command."
   echo "Please run: cpc ctx <workspace> && cpc generate-hostnames"
   exit 1
@@ -137,18 +156,22 @@ echo "# Generated on $(date)" >>$REPO_PATH/terraform/snippets/summary.txt
 echo "# Node count: ${#ROLES[@]}" >>$REPO_PATH/terraform/snippets/summary.txt
 
 # Copy snippets to Proxmox host
-echo "Debug: PROXMOX_HOST='$PROXMOX_HOST', PROXMOX_USERNAME='$PROXMOX_USERNAME'"
-if [ -n "$PROXMOX_HOST" ] && [ -n "$PROXMOX_USERNAME" ]; then
+echo "Debug: PROXMOX_HOST='$PROXMOX_HOST', PROXMOX_USERNAME='$PROXMOX_USERNAME', PROXMOX_SSH_USERNAME='$PROXMOX_SSH_USERNAME'"
+if [ -n "$PROXMOX_HOST" ] && [ -n "$PROXMOX_SSH_USERNAME" ]; then
   echo "Copying snippets to Proxmox host..."
+
+  # Extract hostname from PROXMOX_HOST URL (remove protocol and port)
+  PROXMOX_HOSTNAME=$(echo "$PROXMOX_HOST" | sed 's|https://||' | sed 's|/.*||' | sed 's|:.*||')
+  echo "Using Proxmox hostname: $PROXMOX_HOSTNAME"
 
   SNIPPETS_PATH="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
 
   # Ensure the remote directory exists
-  ssh "$PROXMOX_USERNAME@$PROXMOX_HOST" "sudo mkdir -p $SNIPPETS_PATH"
+  ssh "$PROXMOX_SSH_USERNAME@$PROXMOX_HOSTNAME" "sudo mkdir -p $SNIPPETS_PATH"
 
   # Use rsync for efficient copying
-  rsync -avz --progress "$REPO_PATH/terraform/snippets/" "$PROXMOX_USERNAME@$PROXMOX_HOST:/tmp/cpc-snippets"
-  ssh "$PROXMOX_USERNAME@$PROXMOX_HOST" "sudo cp /tmp/cpc-snippets/* $SNIPPETS_PATH/ && sudo chmod 644 $SNIPPETS_PATH/*"
+  rsync -avz --progress "$REPO_PATH/terraform/snippets/" "$PROXMOX_SSH_USERNAME@$PROXMOX_HOSTNAME:/tmp/cpc-snippets"
+  ssh "$PROXMOX_SSH_USERNAME@$PROXMOX_HOSTNAME" "sudo cp /tmp/cpc-snippets/* $SNIPPETS_PATH/ && sudo chmod 644 $SNIPPETS_PATH/*"
 
   echo "Done copying snippets to Proxmox host at $SNIPPETS_PATH/"
 fi

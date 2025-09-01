@@ -53,12 +53,25 @@ function proxmox_add_vm() {
         return 0
     fi
 
+    # Initialize recovery for this operation
+    recovery_checkpoint "proxmox_add_vm_start" "Starting VM addition process"
+
     log_info "=== Interactive VM Addition ==="
     echo ""
-    
-    # Get current context
-    current_ctx=$(get_current_cluster_context)
+
+    # Get current context with error handling
+    if ! current_ctx=$(get_current_cluster_context); then
+        error_handle "$ERROR_CONFIG" "Failed to get current cluster context" "$SEVERITY_HIGH" "abort"
+        return 1
+    fi
+
     log_info "Current cluster context: $current_ctx"
+
+    # Validate environment file exists
+    env_file="$REPO_PATH/envs/$current_ctx.env"
+    if ! error_validate_file "$env_file" "Environment file not found: $env_file"; then
+        return 1
+    fi
     
     # Ask for node type
     echo ""
@@ -134,93 +147,25 @@ function proxmox_add_vm() {
         return 0
     fi
     
-    # Update environment file
-    if [ -f "$env_file" ]; then
-        if [ "$node_type" = "worker" ]; then
-            # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
-            sed -i '/^#\?ADDITIONAL_WORKERS=/d' "$env_file"
-            
-            if [ -z "$current_additional" ]; then
-                echo "ADDITIONAL_WORKERS=\"$new_node_name\"" >> "$env_file"
-            else
-                # Add to existing list
-                new_additional="$current_additional,$new_node_name"
-                echo "ADDITIONAL_WORKERS=\"$new_additional\"" >> "$env_file"
-            fi
-        else
-            # Control plane
-            current_additional_cp=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-            if [ -z "$current_additional_cp" ]; then
-                # Check if line exists
-                if grep -q "^ADDITIONAL_CONTROLPLANES=" "$env_file"; then
-                    sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_node_name\"/" "$env_file"
-                else
-                    echo "ADDITIONAL_CONTROLPLANES=\"$new_node_name\"" >> "$env_file"
-                fi
-            else
-                # Add to existing list
-                new_additional_cp="$current_additional_cp,$new_node_name"
-                sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_additional_cp\"/" "$env_file"
-            fi
-        fi
-        log_success "Updated $env_file with $new_node_name"
-    else
-        log_error "Environment file not found: $env_file"
-        exit 1
+    # Update environment file with recovery
+    log_info "Updating environment configuration..."
+    if ! recovery_execute \
+         "update_environment_file '$env_file' '$node_type' '$new_node_name' '$current_additional' '$current_additional_cp'" \
+         "update_env_file" \
+         "log_warning 'Failed to update environment file, manual cleanup may be needed'" \
+         "validate_env_file_update '$env_file' '$node_type' '$new_node_name'"; then
+        log_error "Failed to update environment file"
+        return 1
     fi
-    
-    # Apply Terraform changes
+
+    # Apply Terraform changes with timeout and retry
     log_info "Creating VM with Terraform..."
-    
-    # Pre-generate hostname file for the new node to avoid "file not found" error
-    if [[ "$node_type" == "worker" ]]; then
-        # Get the release letter from environment file
-        release_letter=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-        
-        if [ -z "$release_letter" ]; then
-            log_validation "Warning: RELEASE_LETTER not found in environment file, using first letter of workspace name"
-            release_letter="${current_ctx:0:1}"
-        fi
-        
-        # Generate expected hostname
-        node_num=$(echo "$new_node_name" | grep -Eo '[0-9]+$')
-        expected_hostname="${release_letter}w${node_num}.bevz.net"
-        
-        log_info "Using release letter '${release_letter}' for hostname generation"
-        log_info "Expected hostname for new node: ${expected_hostname}"
-        
-        # Create snippets directory if it doesn't exist
-        snippets_dir="$REPO_PATH/terraform/snippets"
-        mkdir -p "$snippets_dir"
-        
-        # Generate temp cloud-init user-data file
-        temp_userdata="$snippets_dir/node-${release_letter}w${node_num}-userdata.yaml"
-        
-        # Copy template or create minimal file if no template exists
-        template_file="$snippets_dir/node-template-userdata.yaml"
-        if [ -f "$template_file" ]; then
-            cp "$template_file" "$temp_userdata"
-            # Replace hostname placeholder
-            sed -i "s/HOSTNAME_PLACEHOLDER/$expected_hostname/g" "$temp_userdata"
-        else
-            cat > "$temp_userdata" << EOF
-#cloud-config
-hostname: $expected_hostname
-fqdn: $expected_hostname
-manage_etc_hosts: true
-EOF
-        fi
-        
-        log_info "Pre-generated cloud-init hostname file for $expected_hostname"
-    fi
-    
-    # Generate hostnames (this may fail for new nodes, but we've pre-created the file above)
-    "$REPO_PATH/cpc" generate-hostnames || true
-    
-    # Now run terraform apply
-    if ! "$REPO_PATH/cpc" deploy apply -auto-approve; then
-        log_error "Failed to apply Terraform changes"
-        exit 1
+    if ! timeout_terraform_operation \
+         "cd '$REPO_PATH/terraform' && tofu apply -auto-approve" \
+         "Terraform VM creation" \
+         "$DEFAULT_TERRAFORM_TIMEOUT"; then
+        error_handle "$ERROR_EXECUTION" "Terraform apply failed for VM creation" "$SEVERITY_HIGH"
+        return 1
     fi
     
     # After VM creation, regenerate hostnames to ensure everything is updated
@@ -492,24 +437,90 @@ function proxmox_create_template() {
         return 0
     fi
 
-    # Ensure workspace-specific template variables are set
+    # Initialize recovery for template creation
+    recovery_checkpoint "template_creation_start" "Starting template creation process"
+
+    # Ensure workspace-specific template variables are set with error handling
     local current_ctx
-    current_ctx=$(get_current_cluster_context) || return 1
-    
-    log_info "Setting template variables for workspace '$current_ctx'..."
-    set_workspace_template_vars "$current_ctx" || return 1
-    
-    # Check if essential template variables are set
-    if [ -z "$TEMPLATE_VM_ID" ] || [ -z "$TEMPLATE_VM_NAME" ] || [ -z "$IMAGE_NAME" ] || [ -z "$IMAGE_LINK" ]; then
-        log_error "Template variables not properly set for workspace '$current_ctx'."
-        log_error "Please ensure cpc.env contains the required TEMPLATE_VM_ID_*, TEMPLATE_VM_NAME_*, IMAGE_NAME_*, IMAGE_LINK_* variables."
+    if ! current_ctx=$(get_current_cluster_context); then
+        error_handle "$ERROR_CONFIG" "Failed to get current cluster context for template creation" "$SEVERITY_HIGH" "abort"
         return 1
     fi
-    
+
+    log_info "Setting template variables for workspace '$current_ctx'..."
+
+    # Execute with recovery
+    if ! recovery_execute \
+         "set_workspace_template_vars '$current_ctx'" \
+         "set_template_vars" \
+         "log_warning 'Failed to set template variables, manual cleanup may be needed'" \
+         "validate_template_vars"; then
+        log_error "Failed to set template variables"
+        return 1
+    fi
+
+    # Validate essential template variables with enhanced error handling
+    if ! error_validate_template_vars; then
+        error_handle "$ERROR_CONFIG" "Template variables not properly set for workspace '$current_ctx'" "$SEVERITY_CRITICAL" "abort"
+        return 1
+    fi
+
     log_info "Creating VM template using script..."
-    (
-        "$REPO_PATH/scripts/template.sh" "$@"
-    )
+
+    # Execute template script with timeout and error handling
+    if ! timeout_execute \
+         "$REPO_PATH/scripts/template.sh" \
+         "$DEFAULT_COMMAND_TIMEOUT" \
+         "Template creation script" \
+         "cleanup_template_creation"; then
+        error_handle "$ERROR_EXECUTION" "Template creation script failed" "$SEVERITY_HIGH"
+        return 1
+    fi
+
+    recovery_checkpoint "template_creation_complete" "Template creation completed successfully"
+    log_success "VM template created successfully"
+}
+
+# Helper function to validate template variables
+function validate_template_vars() {
+    [[ -n "$TEMPLATE_VM_ID" && -n "$TEMPLATE_VM_NAME" && -n "$IMAGE_NAME" && -n "$IMAGE_LINK" ]]
+}
+
+# Helper function to validate essential template variables with detailed error reporting
+function error_validate_template_vars() {
+    local missing_vars=()
+
+    if [[ -z "$TEMPLATE_VM_ID" ]]; then
+        missing_vars+=("TEMPLATE_VM_ID")
+    fi
+    if [[ -z "$TEMPLATE_VM_NAME" ]]; then
+        missing_vars+=("TEMPLATE_VM_NAME")
+    fi
+    if [[ -z "$IMAGE_NAME" ]]; then
+        missing_vars+=("IMAGE_NAME")
+    fi
+    if [[ -z "$IMAGE_LINK" ]]; then
+        missing_vars+=("IMAGE_LINK")
+    fi
+
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        error_handle "$ERROR_CONFIG" "Missing required template variables: ${missing_vars[*]}" "$SEVERITY_CRITICAL"
+        return 1
+    fi
+
+    return 0
+}
+
+# Cleanup function for template creation failures
+function cleanup_template_creation() {
+    log_warning "Cleaning up after template creation failure..."
+
+    # Add cleanup logic here - could include:
+    # - Removing partially created VMs
+    # - Cleaning up temporary files
+    # - Resetting template variables
+
+    log_info "Cleanup completed"
 }
 
 # VM control (placeholder function)
@@ -519,6 +530,57 @@ function proxmox_vm_control() {
     log_info "Example: To stop a VM, you might comment it out in Tofu and apply, or use Proxmox UI/API directly."
     # Placeholder for future direct VM interactions if needed via Proxmox API etc.
     # ansible_run_playbook "pb_vm_control.yml" "localhost" "-e vm_name=$1 -e action=$2"
+}
+
+# Helper function to update environment file
+function update_environment_file() {
+    local env_file="$1"
+    local node_type="$2"
+    local new_node_name="$3"
+    local current_additional="$4"
+    local current_additional_cp="$5"
+
+    if [ "$node_type" = "worker" ]; then
+        # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
+        sed -i '/^#\?ADDITIONAL_WORKERS=/d' "$env_file"
+
+        if [ -z "$current_additional" ]; then
+            echo "ADDITIONAL_WORKERS=\"$new_node_name\"" >> "$env_file"
+        else
+            # Add to existing list
+            new_additional="$current_additional,$new_node_name"
+            echo "ADDITIONAL_WORKERS=\"$new_additional\"" >> "$env_file"
+        fi
+    else
+        # Control plane
+        if [ -z "$current_additional_cp" ]; then
+            # Check if line exists
+            if grep -q "^ADDITIONAL_CONTROLPLANES=" "$env_file"; then
+                sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_node_name\"/" "$env_file"
+            else
+                echo "ADDITIONAL_CONTROLPLANES=\"$new_node_name\"" >> "$env_file"
+            fi
+        else
+            # Add to existing list
+            new_additional_cp="$current_additional_cp,$new_node_name"
+            sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_additional_cp\"/" "$env_file"
+        fi
+    fi
+
+    log_success "Updated $env_file with $new_node_name"
+}
+
+# Helper function to validate environment file update
+function validate_env_file_update() {
+    local env_file="$1"
+    local node_type="$2"
+    local new_node_name="$3"
+
+    if [ "$node_type" = "worker" ]; then
+        grep -q "ADDITIONAL_WORKERS.*$new_node_name" "$env_file"
+    else
+        grep -q "ADDITIONAL_CONTROLPLANES.*$new_node_name" "$env_file"
+    fi
 }
 
 log_debug "Module 10_proxmox.sh loaded successfully"

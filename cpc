@@ -39,12 +39,23 @@ REPO_PATH_FILE="$CONFIG_DIR/repo_path"
 CPC_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE and ccr.env
 
+# Read current cluster context and set CPC_WORKSPACE
+if [ -f "$CPC_CONTEXT_FILE" ]; then
+  CPC_WORKSPACE=$(cat "$CPC_CONTEXT_FILE" 2>/dev/null)
+  export CPC_WORKSPACE
+fi
+
+# --- Initialize Error Handling Systems ---
+error_init
+retry_init
+timeout_init
+recovery_init
+
 # --- Helper Functions ---
 check_required_commands() {
   for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
-      echo -e "${RED}Error: '$cmd' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
-      exit 1
+    if ! error_validate_command_exists "$cmd"; then
+      return 1
     fi
   done
 }
@@ -209,6 +220,7 @@ template)
   ;;
 
 load_secrets)
+  # Load secrets and show status
   cpc_core load_secrets "$@"
   ;;
 
@@ -388,10 +400,10 @@ delete-node)
   ;;
 
 *)
-  echo -e "${RED}Unknown command: $COMMAND${ENDCOLOR}" >&2
-  display_usage
-  exit 1
-  ;;
+    echo -e "${RED}Unknown command: $COMMAND${ENDCOLOR}" >&2
+    display_usage
+    exit 1
+    ;;
 esac
 
 exit 0
