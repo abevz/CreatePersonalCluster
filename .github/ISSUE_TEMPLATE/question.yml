@@ -1,0 +1,71 @@
+name: ❓ Question
+description: Ask a question about using CPC
+title: "[Question]: "
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about using CPC? We're here to help!
+        
+        Before asking, please check:
+        - 📖 [Documentation](docs/index.md)
+        - 🔍 [Existing discussions](../../discussions)
+        - 🐛 [Known issues](../../issues)
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: Ask your question here
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What is your question about?
+      options:
+        - Installation and setup
+        - Configuration
+        - Usage and commands
+        - Troubleshooting
+        - Best practices
+        - Architecture and design
+        - Contributing
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide context about your setup or what you're trying to achieve
+      placeholder: |
+        What are you trying to do?
+        What have you tried so far?
+        What's your environment?
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: Any other relevant information
+      placeholder: Screenshots, logs, configuration files, etc.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: I have checked the documentation
+          required: true

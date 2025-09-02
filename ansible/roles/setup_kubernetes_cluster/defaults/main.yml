@@ -2,4 +2,4 @@
 # defaults file for setup_kubernetes_cluster role
 # User can override this in playbooks/main.yml or via --extra-vars
 kubernetes_version: "1.29"  # Default Kubernetes minor version to install
-kubernetes_patch_version: "latest" # Default to latest patch for the minor version. Can be a specific patch like "1.29.1-00" for Debian or "1.29.1-0" for RedHat.
+kubernetes_patch_version: "1.29.0-1.1" # Pinned patch version for Debian (use "1.29.0-0" for RedHat). Avoid "latest" in production for security and consistency.

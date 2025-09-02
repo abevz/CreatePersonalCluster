@@ -1,24 +1,61 @@
 #!/bin/bash
 
-# Color definitions
+# =============================================================================
+# CPC (Cluster Provision & Configure) - Main Script
+# =============================================================================
+# Enhanced with modular architecture for better maintainability
+
+# CPC Version
+export CPC_VERSION="1.1.0"
+
+# Color definitions (kept for backward compatibility)
 export GREEN='\033[32m'
 export RED='\033[0;31m'
 export YELLOW='\033[0;33m'
 export BLUE='\033[1;34m'
+export PURPLE='\033[0;35m'
+export CYAN='\033[0;36m'
+export WHITE='\033[1;37m'
 export ENDCOLOR='\033[0m'
 
-# Configuration
+# --- Load Modular Architecture ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load configuration first
+if [ -f "$SCRIPT_DIR/config.conf" ]; then
+  source "$SCRIPT_DIR/config.conf"
+fi
+
+# Load libraries
+for lib in "$SCRIPT_DIR/lib"/*.sh; do
+  [ -f "$lib" ] && source "$lib"
+done
+
+# Load modules
+for module in "$SCRIPT_DIR/modules"/*.sh; do
+  [ -f "$module" ] && source "$module"
+done
+
+# Set REPO_PATH for modules
+export REPO_PATH="$SCRIPT_DIR"
+
+# Configuration (legacy, will be moved to config.conf)
 CONFIG_DIR="$HOME/.config/cpc" # Updated for CreatePersonalCluster project
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
-CLUSTER_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
+CPC_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE and ccr.env
+
+# --- Initialize Error Handling Systems ---
+error_init
+retry_init
+timeout_init
+recovery_init
 
 # --- Helper Functions ---
 check_required_commands() {
   for cmd in "$@"; do
-    if ! command -v "$cmd" &> /dev/null; then
-      echo -e "${RED}Error: '$cmd' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
-      exit 1
+    if ! error_validate_command_exists "$cmd"; then
+      return 1
     fi
   done
 }
@@ -35,13 +72,13 @@ get_repo_path() {
 export -f get_repo_path
 
 get_current_cluster_context() {
-  if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
-    cat "$CLUSTER_CONTEXT_FILE"
+  if [ -f "$CPC_CONTEXT_FILE" ]; then
+    cat "$CPC_CONTEXT_FILE"
   else
     echo -e "${RED}Error: No cpc context set.${ENDCOLOR}" >&2
     echo -e "${BLUE}The cpc context determines the Tofu workspace and associated configuration (e.g., OS type).${ENDCOLOR}" >&2
     echo -e "${BLUE}Please set a context using 'cpc ctx <workspace_name>'.${ENDCOLOR}" >&2
-    
+
     # Attempt to get repo_path to list workspaces.
     # This relies on REPO_PATH_FILE being set by 'cpc setup-cpc'.
     if [ -f "$REPO_PATH_FILE" ]; then
@@ -50,7 +87,7 @@ get_current_cluster_context() {
       if [ -d "$repo_p_for_listing/terraform" ]; then
         echo -e "${BLUE}Available Tofu workspaces in '$repo_p_for_listing/terraform' (use one of these for <workspace_name>):${ENDCOLOR}" >&2
         # Ensure tofu command is available for listing or provide a message
-        if command -v tofu &> /dev/null; then
+        if command -v tofu &>/dev/null; then
           (cd "$repo_p_for_listing/terraform" && tofu workspace list | sed 's/^*/  /') >&2
         else
           echo -e "${YELLOW}  'tofu' command not found. Cannot list workspaces. Please ensure OpenTofu is installed and in your PATH.${ENDCOLOR}" >&2
@@ -69,7 +106,7 @@ export -f get_current_cluster_context
 
 # Check if secrets are already loaded
 check_secrets_loaded() {
-  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$VM_USERNAME" ]; then
+  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$VM_USERNAME" ] || [ -z "$HARBOR_HOSTNAME" ]; then
     echo -e "${RED}Error: Secrets not loaded. This command requires SOPS secrets to be loaded.${ENDCOLOR}" >&2
     echo -e "${BLUE}Please run 'cpc load_secrets' first or ensure cpc.env is properly configured.${ENDCOLOR}" >&2
     exit 1
@@ -77,301 +114,13 @@ check_secrets_loaded() {
 }
 export -f check_secrets_loaded
 
-# Load sensitive data from secrets.sops.yaml using SOPS
-load_secrets() {
-  local repo_root
-  repo_root=$(get_repo_path)
-  local secrets_file="$repo_root/terraform/secrets.sops.yaml"
-  
-  if [ ! -f "$secrets_file" ]; then
-    echo -e "${RED}Error: secrets.sops.yaml not found at $secrets_file${ENDCOLOR}" >&2
-    exit 1
-  fi
-  
-  # Check if sops is installed
-  if ! command -v sops &> /dev/null; then
-    echo -e "${RED}Error: 'sops' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
-    exit 1
-  fi
-  
-  # Check if jq is installed
-  if ! command -v jq &> /dev/null; then
-    echo -e "${RED}Error: 'jq' is required but not installed. Please install it before proceeding.${ENDCOLOR}" >&2
-    exit 1
-  fi
-  
-  echo -e "${BLUE}Loading secrets from secrets.sops.yaml...${ENDCOLOR}"
-  
-  # Export sensitive variables from SOPS
-  export PROXMOX_HOST
-  export PROXMOX_USERNAME  
-  export PROXMOX_PASSWORD
-  export VM_USERNAME
-  export VM_PASSWORD
-  export VM_SSH_KEY
-  export AWS_ACCESS_KEY_ID
-  export AWS_SECRET_ACCESS_KEY
-  export AWS_DEFAULT_REGION
-  
-  # Load secrets using sops, convert to JSON, then parse with jq
-  local secrets_json
-  secrets_json=$(sops -d "$secrets_file" 2>/dev/null | python3 -c "import sys, yaml, json; json.dump(yaml.safe_load(sys.stdin), sys.stdout)")
-  
-  if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Failed to decrypt secrets.sops.yaml. Check your SOPS configuration.${ENDCOLOR}" >&2
-    exit 1
-  fi
-  
-  # Parse secrets from JSON
-  PROXMOX_HOST=$(echo "$secrets_json" | jq -r '.virtual_environment_endpoint' | sed 's|https://||' | sed 's|:8006/api2/json||')
-  PROXMOX_USERNAME=$(echo "$secrets_json" | jq -r '.proxmox_username')
-  PROXMOX_PASSWORD=$(echo "$secrets_json" | jq -r '.virtual_environment_password')
-  VM_USERNAME=$(echo "$secrets_json" | jq -r '.vm_username')
-  VM_PASSWORD=$(echo "$secrets_json" | jq -r '.vm_password')
-  VM_SSH_KEY=$(echo "$secrets_json" | jq -r '.vm_ssh_keys[0]')
-  
-  # Parse MinIO/S3 credentials for Terraform backend
-  AWS_ACCESS_KEY_ID=$(echo "$secrets_json" | jq -r '.minio_access_key')
-  AWS_SECRET_ACCESS_KEY=$(echo "$secrets_json" | jq -r '.minio_secret_key')
-  AWS_DEFAULT_REGION="us-east-1"  # Set default region for MinIO
-  
-  # Verify that all required secrets were loaded
-  if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$PROXMOX_PASSWORD" ] || [ -z "$VM_USERNAME" ] || [ -z "$VM_PASSWORD" ] || [ -z "$VM_SSH_KEY" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-    echo -e "${RED}Error: Failed to load one or more required secrets from secrets.sops.yaml${ENDCOLOR}" >&2
-    echo -e "${BLUE}Required secrets: PROXMOX_HOST, PROXMOX_USERNAME, PROXMOX_PASSWORD, VM_USERNAME, VM_PASSWORD, VM_SSH_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY${ENDCOLOR}" >&2
-    exit 1
-  fi
-  
-  echo -e "${BLUE}Successfully loaded secrets (PROXMOX_HOST: $PROXMOX_HOST, VM_USERNAME: $VM_USERNAME)${ENDCOLOR}"
-}
-export -f load_secrets
-
-# Source environment variables if cpc.env exists and set workspace-specific variables
-load_env_vars() {
-  local repo_root
-  repo_root=$(get_repo_path)
-  
-  # Load secrets first
-  load_secrets
-  
-  if [ -f "$repo_root/$CPC_ENV_FILE" ]; then # Changed from CCR_ENV_FILE
-    # shellcheck source=cpc.env
-    set -a # Automatically export all variables
-    source "$repo_root/$CPC_ENV_FILE" # Changed from CCR_ENV_FILE
-    set +a # Stop automatically exporting
-    echo -e "${BLUE}Loaded environment variables from $CPC_ENV_FILE${ENDCOLOR}" # Changed from CCR_ENV_FILE
-    
-    # Set workspace-specific template variables based on current context
-    # This function should only be called after REPO_PATH is set
-    if [ -f "$CLUSTER_CONTEXT_FILE" ]; then
-      local current_workspace
-      current_workspace=$(cat "$CLUSTER_CONTEXT_FILE")
-      set_workspace_template_vars "$current_workspace"
-    fi
-  else
-    echo -e "${YELLOW}Warning: $CPC_ENV_FILE not found in repository root. Some default versions might be used by playbooks.${ENDCOLOR}" # Changed from CCR_ENV_FILE
-  fi
-}
-export -f load_env_vars
-
-# Set workspace-specific template variables based on current workspace
-set_workspace_template_vars() {
-  local workspace="$1"
-  
-  if [ -z "$workspace" ]; then
-    echo -e "${YELLOW}Warning: No workspace specified for setting template variables${ENDCOLOR}"
-    return 1
-  fi
-  
-  # Path to the environment file
-  local env_file="$REPO_PATH/envs/$workspace.env"
-  
-  # Check if the environment file exists
-  if [[ ! -f "$env_file" ]]; then
-    echo -e "${YELLOW}Warning: Environment file for workspace '$workspace' not found.${ENDCOLOR}"
-    # Dynamically list available workspaces
-    echo -ne "${BLUE}Available workspaces: ${ENDCOLOR}"
-    ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//' | tr '\n' ', ' | sed 's/,$/\n/'
-    return 1
-  fi
-  
-  # Load variables from environment file
-  source "$env_file"
-  
-  # Set default values for any variables that might be missing
-  : "${TEMPLATE_VM_ID:=900}"
-  : "${TEMPLATE_VM_NAME:=tpl-default-k8s}"
-  : "${IMAGE_NAME:=default-image.img}"
-  : "${IMAGE_LINK:=https://example.com/default-image.img}"
-  : "${KUBERNETES_SHORT_VERSION:=1.29}"
-  : "${KUBERNETES_MEDIUM_VERSION:=v1.29}"
-  : "${KUBERNETES_VERSION:=$KUBERNETES_MEDIUM_VERSION}"
-  : "${KUBERNETES_LONG_VERSION:=1.29.0}"
-  : "${CNI_PLUGINS_VERSION:=v1.4.0}"
-  : "${CALICO_VERSION:=v3.26.0}"
-  : "${METALLB_VERSION:=v0.14.3}"
-  : "${COREDNS_VERSION:=v1.10.1}"
-  : "${METRICS_SERVER_VERSION:=v0.6.4}"
-  : "${ETCD_VERSION:=v3.5.10}"
-  : "${KUBELET_SERVING_CERT_APPROVER_VERSION:=v0.1.8}"
-  : "${LOCAL_PATH_PROVISIONER_VERSION:=v0.0.24}"
-  : "${CERT_MANAGER_VERSION:=v1.15.0}"
-  : "${ARGOCD_VERSION:=v2.12.0}"
-  : "${INGRESS_NGINX_VERSION:=v1.11.0}"
-  
-  echo -e "${BLUE}Set template variables for workspace '$workspace':${ENDCOLOR}"
-  echo -e "${BLUE}  TEMPLATE_VM_ID: $TEMPLATE_VM_ID${ENDCOLOR}"
-  echo -e "${BLUE}  TEMPLATE_VM_NAME: $TEMPLATE_VM_NAME${ENDCOLOR}"
-  echo -e "${BLUE}  IMAGE_NAME: $IMAGE_NAME${ENDCOLOR}"
-  echo -e "${BLUE}  KUBERNETES_VERSION: $KUBERNETES_MEDIUM_VERSION${ENDCOLOR}"
-  echo -e "${BLUE}  CALICO_VERSION: $CALICO_VERSION${ENDCOLOR}"
-  echo -e "${BLUE}  METALLB_VERSION: $METALLB_VERSION${ENDCOLOR}"
-  echo -e "${BLUE}  COREDNS_VERSION: $COREDNS_VERSION${ENDCOLOR}"
-  echo -e "${BLUE}  ETCD_VERSION: $ETCD_VERSION${ENDCOLOR}"
-}
-export -f set_workspace_template_vars
-
-run_ansible_playbook() {
-  local playbook_name="$1"
-  shift # Remove playbook name, rest are ansible options
-
-  local repo_root
-  repo_root=$(get_repo_path)
-  local ansible_dir="$repo_root/ansible"
-  local inventory_file="$ansible_dir/inventory/tofu_inventory.py"
-
-  if [ ! -f "$inventory_file" ]; then
-    echo -e "${RED}Error: Ansible inventory file not found at $inventory_file${ENDCOLOR}" >&2
-    echo -e "${RED}Ensure Tofu has been run and the inventory script is in place.${ENDCOLOR}" >&2
-    return 1
-  fi
-
-  if [ ! -x "$inventory_file" ]; then
-    echo -e "${YELLOW}Warning: Inventory script $inventory_file is not executable. Attempting to chmod +x.${ENDCOLOR}"
-    chmod +x "$inventory_file"
-    if [ ! -x "$inventory_file" ]; then
-        echo -e "${RED}Error: Failed to make inventory script $inventory_file executable.${ENDCOLOR}" >&2
-        return 1
-    fi
-  fi
-
-  local current_cluster
-  current_cluster=$(get_current_cluster_context)
-
-  # Change to ansible directory
-  pushd "$ansible_dir" > /dev/null || { echo -e "${RED}Failed to change directory to $ansible_dir${ENDCOLOR}"; return 1; }
-
-  # Build ansible command array
-  local ansible_cmd_array=(
-    "ansible-playbook"
-    "-i" "$inventory_file"
-    "playbooks/$playbook_name"
-    "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-  )
-
-  # Add common extra vars
-  local ansible_user
-  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' ansible.cfg || echo 'root')
-  ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
-  ansible_cmd_array+=("-e" "current_cluster_context=$current_cluster")
-  
-  # Remove 'v' prefix from kubernetes version if present, default to 1.31
-  local k8s_version="${KUBERNETES_VERSION:-v1.31}"
-  k8s_version="${k8s_version#v}"  # Remove 'v' prefix
-  ansible_cmd_array+=("-e" "kubernetes_version=$k8s_version")
-  ansible_cmd_array+=("-e" "kubernetes_patch_version=${kubernetes_patch_version:-latest}")
-  
-  # Add version variables for addons (pass from workspace environment)
-  ansible_cmd_array+=("-e" "calico_version=${CALICO_VERSION:-v3.28.0}")
-  ansible_cmd_array+=("-e" "metallb_version=${METALLB_VERSION:-v0.14.8}")
-  ansible_cmd_array+=("-e" "coredns_version=${COREDNS_VERSION:-v1.11.3}")
-  ansible_cmd_array+=("-e" "metrics_server_version=${METRICS_SERVER_VERSION:-v0.7.2}")
-  ansible_cmd_array+=("-e" "cert_manager_version=${CERT_MANAGER_VERSION:-v1.16.2}")
-  ansible_cmd_array+=("-e" "argocd_version=${ARGOCD_VERSION:-v2.13.2}")
-  ansible_cmd_array+=("-e" "ingress_nginx_version=${INGRESS_NGINX_VERSION:-v1.12.0}")
-  ansible_cmd_array+=("-e" "kubelet_serving_cert_approver_version=${KUBELET_SERVING_CERT_APPROVER_VERSION:-v0.1.9}")
-  ansible_cmd_array+=("-e" "local_path_provisioner_version=${LOCAL_PATH_PROVISIONER_VERSION:-v0.0.28}")
-  ansible_cmd_array+=("-e" "cni_plugins_version=${CNI_PLUGINS_VERSION:-v1.5.0}")
-  ansible_cmd_array+=("-e" "etcd_version=${ETCD_VERSION:-v3.5.15}")
-
-  # Add all remaining user-provided arguments
-  if [[ $# -gt 0 ]]; then
-    ansible_cmd_array+=("$@")
-  fi
-
-  echo -e "${BLUE}Running: ${ansible_cmd_array[*]}${ENDCOLOR}"
-  
-  # Update inventory cache before running ansible
-  echo -e "${YELLOW}Updating inventory cache...${ENDCOLOR}"
-  local repo_root
-  repo_root=$(get_repo_path)
-  local cache_file="$repo_root/.ansible_inventory_cache.json"
-  local terraform_dir="$repo_root/terraform"
-  
-  if [ -d "$terraform_dir" ]; then
-    pushd "$terraform_dir" > /dev/null || true
-    
-    local cluster_summary
-    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null | jq -r '.value // empty')
-    
-    if [ -n "$cluster_summary" ]; then
-      # Generate inventory from cluster_summary
-      local inventory_json
-      inventory_json=$(echo "$cluster_summary" | jq '{
-        "_meta": {
-          "hostvars": (
-            to_entries | map({
-              key: .value.IP,
-              value: {
-                "ansible_host": .value.IP,
-                "node_name": .key,
-                "hostname": .value.hostname,
-                "vm_id": .value.VM_ID,
-                "k8s_role": (if (.key | contains("controlplane")) then "control-plane" else "worker" end)
-              }
-            }) | from_entries
-          )
-        },
-        "all": {
-          "children": ["control_plane", "workers"]
-        },
-        "control_plane": {
-          "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]]
-        },
-        "workers": {
-          "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]]
-        }
-      }')
-      
-      # Write to cache file
-      echo "$inventory_json" > "$cache_file"
-      echo -e "${GREEN}Inventory cache updated${ENDCOLOR}"
-    else
-      echo -e "${YELLOW}Warning: Could not get cluster_summary from terraform, using existing cache${ENDCOLOR}"
-    fi
-    
-    popd > /dev/null || true
-  fi
-  
-  "${ansible_cmd_array[@]}"
-  local exit_code=$?
-
-  popd > /dev/null || return 1
-
-  if [ $exit_code -ne 0 ]; then
-    echo -e "${RED}Error: Ansible playbook $playbook_name failed with exit code $exit_code.${ENDCOLOR}" >&2
-    return 1
-  fi
-  return 0
-}
-export -f run_ansible_playbook
-
 display_usage() {
   echo "Usage: cpc <command> [options]"
   echo ""
   echo "Commands:"
   echo "  setup-cpc                      Initial setup for cpc command."
   echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)."
+  echo "  list-workspaces                List all available workspaces."
   echo "  clone-workspace <src> <dst>    Clone a workspace environment to create a new one."
   echo "  delete-workspace <n>           Delete a workspace environment."
   echo "  template                       Creates a VM template for Kubernetes"
@@ -380,11 +129,12 @@ display_usage() {
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
   echo "  clear-ssh-maps                 Clear SSH control sockets and connections for VMs"
   echo "  load_secrets                   Load and display secrets from SOPS configuration"
+  echo "  clear-cache                    Clear all cached secrets and status data."
   echo "  dns-pihole <action>            Manage Pi-hole DNS records. Actions: list, add, unregister-dns, interactive-add, interactive-unregister."
   echo "  generate-hostnames             Generate hostname configurations for VMs in Proxmox"
   echo "  scripts/<script_name>          Run any script from the scripts directory"
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
-  echo "  cluster-info                   Show simplified cluster information (VM_ID, hostname, IP)."
+  echo "  cluster-info [--quick|-q]         Show simplified cluster information (VM_ID, hostname, IP). Use --quick for cached data."
   echo ""
   echo "VM Management:"
   echo "  add-vm                         Interactively add a new VM (worker or control plane)."
@@ -407,6 +157,20 @@ display_usage() {
   echo "  upgrade-addons                 Install/upgrade cluster addons with interactive menu (CNI, MetalLB, cert-manager, ArgoCD, etc.)."
   echo "  configure-coredns              Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
   echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
+  echo "  status|cluster-status          Check Kubernetes cluster status and health."
+  echo "  quick-status|qs                Fast status check (K8s only, no VM/SSH checks)."
+  echo ""
+  echo "DNS/SSL Management:"
+  echo "  regenerate-certificates        Regenerate Kubernetes certificates with DNS hostname support"
+  echo "  test-dns <domain>              Test DNS resolution within the cluster"
+  echo "  verify-certificates            Verify SSL certificate validity and SANs"
+  echo "  check-cluster-dns              Comprehensive cluster DNS functionality check"
+  echo "  inspect-cert <cert-path>       Inspect specific certificate file details"
+  echo ""
+  echo "Global Options:"
+  echo "  --debug, -d                   Enable debug output for troubleshooting"
+  echo "  --verbose, -v                Enable verbose output"
+  echo "  --help, -h                   Show this help message"
   echo ""
   echo "Use 'cpc <command> --help' for more details on a specific command."
 }
@@ -419,8 +183,98 @@ mkdir -p "$CONFIG_DIR"
 # Check for essential commands early
 check_required_commands "ansible-playbook" "ansible-inventory" "tofu" "kubectl" "jq"
 
+# Parse global flags first
+DEBUG_FLAG=""
+VERBOSE_FLAG=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --debug|-d)
+      export CPC_DEBUG=true
+      DEBUG_FLAG="--debug"
+      shift
+      ;;
+    --verbose|-v)
+      export CPC_VERBOSE=true
+      VERBOSE_FLAG="--verbose"
+      shift
+      ;;
+    --help|-h)
+      display_usage
+      exit 0
+      ;;
+    --version)
+      echo "CPC (Create Personal Cluster) v${CPC_VERSION}"
+      echo "Infrastructure as Code Kubernetes Cluster Management"
+      echo "Built with Terraform/OpenTofu + Ansible + Proxmox VE"
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 COMMAND="$1"
 shift # Remove command from arguments, rest are options
+
+# Handle quick-status early to avoid secrets loading
+if [[ "$COMMAND" == "quick-status" || "$COMMAND" == "qs" ]]; then
+  echo -e "${CYAN}=== Quick Status (No Secrets) ===${ENDCOLOR}"
+  current_workspace=""
+  if [[ -f "$CPC_CONTEXT_FILE" ]]; then
+    current_workspace=$(cat "$CPC_CONTEXT_FILE")
+    echo "Workspace: ${current_workspace}"
+  else
+    echo "Workspace: Not set"
+  fi
+  
+  # Quick K8s check only
+  if kubectl cluster-info &>/dev/null; then
+    nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
+  else
+    echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
+  fi
+  exit 0
+fi
+
+# Handle cluster-info --quick early to avoid secrets loading
+if [[ "$COMMAND" == "cluster-info" && ("$1" == "--quick" || "$1" == "-q") ]]; then
+  current_ctx=""
+  if [[ -f "$CPC_CONTEXT_FILE" ]]; then
+    current_ctx=$(cat "$CPC_CONTEXT_FILE")
+  else
+    echo "Error: No cluster context set. Use 'cpc ctx <workspace>' first."
+    exit 1
+  fi
+
+  cache_file="/tmp/cpc_status_cache_${current_ctx}"
+  cluster_summary=""
+  
+  if [[ -f "$cache_file" ]]; then
+    cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+    if [[ $cache_age -lt 300 ]]; then  # 5 minute cache for quick mode
+      cluster_summary=$(cat "$cache_file" 2>/dev/null)
+      echo "=== Quick Cluster Information (Cached) ==="
+    fi
+  fi
+  
+  if [[ -z "$cluster_summary" || "$cluster_summary" == "null" ]]; then
+    echo "⚠️  No cached cluster data available. Run 'cpc cluster-info' first or 'cpc status' to populate cache."
+    exit 1
+  fi
+  
+  # Display cached data
+  echo
+  printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
+  printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
+  echo "$cluster_summary" | jq -r 'to_entries[] | [.key, .value.VM_ID, .value.hostname, .value.IP] | @tsv' | \
+    while IFS=$'\t' read -r node vm_id hostname ip; do
+      printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
+    done
+  echo
+  exit 0
+fi
 
 # Load REPO_PATH if not doing setup
 if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$COMMAND" != "--help" && "$COMMAND" != "help" ]]; then # Changed from setup-ccr
@@ -430,2965 +284,231 @@ if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$C
   load_env_vars # Will now use CPC_ENV_FILE
 fi
 
-
 case "$COMMAND" in
-  setup-cpc) # Changed from setup-ccr
-    current_script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    echo "$current_script_path" > "$REPO_PATH_FILE"
-    echo -e "${GREEN}cpc setup complete. Repository path set to: $current_script_path${ENDCOLOR}" # Changed from ccr
-    echo -e "${BLUE}You might want to add this script to your PATH, e.g., by creating a symlink in /usr/local/bin/cpc${ENDCOLOR}" # Changed from ccr
-    echo -e "${BLUE}Example: sudo ln -s "$current_script_path/cpc" /usr/local/bin/cpc${ENDCOLOR}" # Changed from ccr
-    echo -e "${BLUE}Also, create a 'cpc.env' file in '$current_script_path' for version management (see cpc.env.example).${ENDCOLOR}" # Changed from ccr.env and ccr.env.example
-    ;;
-
-  get-kubeconfig)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc get-kubeconfig [--context-name <name>] [--force]"
-      echo ""
-      echo "Retrieves the Kubernetes cluster configuration from the control plane node"
-      echo "and merges it into your local kubeconfig file (~/.kube/config)."
-      echo ""
-      echo "Options:"
-      echo "  --context-name <name>  Set a custom context name (default: cluster-<cpc_context>)"
-      echo "  --force               (Optional) Explicit flag to confirm overwriting existing context"
-      echo ""
-      echo "Note: Existing contexts with the same name will be automatically overwritten."
-      echo ""
-      echo "The command will:"
-      echo "  1. Connect to the control plane node and retrieve /etc/kubernetes/admin.conf"
-      echo "  2. Update server endpoint to use the control plane node's IP"
-      echo "  3. Merge the configuration into your local kubeconfig"
-      echo "  4. Set the new context as the current context"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    custom_context_name=""
-    force_overwrite=false
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --context-name)
-          custom_context_name="$2"
-          shift 2
-          ;;
-        --force)
-          force_overwrite=true
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    # Get current cluster context and repo path
-    current_ctx=$(get_current_cluster_context)
-    repo_root=$(get_repo_path)
-    
-    # Set context name
-    if [ -z "$custom_context_name" ]; then
-      context_name="cluster-${current_ctx}"
-    else
-      context_name="$custom_context_name"
-    fi
-
-    echo -e "${BLUE}Retrieving kubeconfig for cluster context: $current_ctx${ENDCOLOR}"
-    echo -e "${BLUE}Kubernetes context will be named: $context_name${ENDCOLOR}"
-
-    # Warn if context already exists
-    if kubectl config get-contexts -o name | grep -q "^${context_name}$"; then
-      if [ "$force_overwrite" = false ]; then
-        echo -e "${YELLOW}Context '$context_name' already exists and will be overwritten.${ENDCOLOR}"
-        echo -e "${YELLOW}Use --context-name to use a different name if desired.${ENDCOLOR}"
-      else
-        echo -e "${BLUE}Context '$context_name' exists and will be overwritten (--force specified).${ENDCOLOR}"
-      fi
-    fi
-
-    # Get control plane IP from Terraform/Tofu output
-    pushd "$repo_root/terraform" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
-    
-    # Ensure we're in the correct workspace
-    if ! tofu workspace select "$current_ctx" &>/dev/null; then
-      echo -e "${RED}Failed to select Tofu workspace '$current_ctx'${ENDCOLOR}" >&2
-      popd > /dev/null
-      exit 1
-    fi
-
-    # Get control plane node IP and try to resolve hostname
-    control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value')
-    if [ -z "$control_plane_ip" ] || [ "$control_plane_ip" = "null" ]; then
-      echo -e "${RED}Failed to get control plane IP from Tofu output${ENDCOLOR}" >&2
-      echo -e "${RED}Make sure the cluster is deployed and 'tofu output k8s_node_ips' returns valid data${ENDCOLOR}" >&2
-      popd > /dev/null
-      exit 1
-    fi
-
-    # Get hostname information from inventory
-    control_plane_hostname=$(python3 "$repo_root/ansible/inventory/tofu_inventory.py" --list 2>/dev/null | jq -r '._meta.hostvars["'$control_plane_ip'"].hostname // empty')
-    
-    popd > /dev/null
-
-    # Determine the best endpoint to use (prefer DNS hostname if resolvable)
-    api_server_endpoint=""
-    if [ -n "$control_plane_hostname" ]; then
-      echo -e "${BLUE}Found control plane hostname: $control_plane_hostname${ENDCOLOR}"
-      # Test if hostname resolves
-      if nslookup "$control_plane_hostname" >/dev/null 2>&1; then
-        api_server_endpoint="$control_plane_hostname"
-        echo -e "${GREEN}Using DNS hostname: $api_server_endpoint${ENDCOLOR}"
-      else
-        echo -e "${YELLOW}DNS hostname $control_plane_hostname does not resolve, falling back to IP${ENDCOLOR}"
-        api_server_endpoint="$control_plane_ip"
-      fi
-    else
-      echo -e "${YELLOW}No hostname found in inventory, using IP address${ENDCOLOR}"
-      api_server_endpoint="$control_plane_ip"
-    fi
-
-    echo -e "${BLUE}Control plane IP: $control_plane_ip${ENDCOLOR}"
-    echo -e "${BLUE}API server endpoint: $api_server_endpoint:6443${ENDCOLOR}"
-
-    # Create temporary directory for kubeconfig operations
-    temp_dir=$(mktemp -d)
-    temp_kubeconfig="$temp_dir/admin.conf"
-    
-    # Cleanup function
-    cleanup_temp() {
-      rm -rf "$temp_dir"
-    }
-    trap cleanup_temp EXIT
-
-    # Get ansible config to determine remote user
-    ansible_dir="$repo_root/ansible"
-    remote_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'root')
-
-    echo -e "${BLUE}Retrieving kubeconfig from control plane node...${ENDCOLOR}"
-    
-    # Copy kubeconfig from control plane node using sudo
-    if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-         "${remote_user}@${control_plane_ip}" \
-         "sudo cat /etc/kubernetes/admin.conf" > "$temp_kubeconfig" 2>/dev/null; then
-      echo -e "${RED}Failed to retrieve kubeconfig from control plane node${ENDCOLOR}" >&2
-      echo -e "${RED}Make sure you can SSH to $control_plane_ip as user $remote_user and use sudo${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Update server endpoint in the kubeconfig to use the preferred endpoint
-    if ! sed -i "s|server: https://.*:6443|server: https://${api_server_endpoint}:6443|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update server endpoint in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Update context and user names to avoid conflicts
-    if ! sed -i "s|kubernetes-admin@kubernetes|${context_name}|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update context name in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|name: kubernetes-admin|name: ${context_name}-admin|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update user name in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|name: kubernetes|name: ${context_name}-cluster|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update cluster name in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|cluster: kubernetes|cluster: ${context_name}-cluster|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update cluster reference in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    if ! sed -i "s|user: kubernetes-admin|user: ${context_name}-admin|g" "$temp_kubeconfig"; then
-      echo -e "${RED}Failed to update user reference in kubeconfig${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Merge the kubeconfig
-    echo -e "${BLUE}Merging kubeconfig into ~/.kube/config...${ENDCOLOR}"
-    
-    # Backup existing kubeconfig if it exists
-    if [ -f ~/.kube/config ]; then
-      cp ~/.kube/config ~/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
-      echo -e "${BLUE}Existing kubeconfig backed up${ENDCOLOR}"
-    fi
-
-    # Ensure .kube directory exists
-    mkdir -p ~/.kube
-
-    # Merge kubeconfig
-    if [ -f ~/.kube/config ] && [ -s ~/.kube/config ]; then
-      # Existing config exists and is not empty
-      
-      # Remove existing context if it exists to avoid conflicts
-      if kubectl config get-contexts -o name | grep -q "^${context_name}$"; then
-        echo -e "${BLUE}Removing existing context '$context_name' to avoid conflicts...${ENDCOLOR}"
-        kubectl config delete-context "$context_name" &>/dev/null || true
-        kubectl config delete-cluster "${context_name}-cluster" &>/dev/null || true
-        kubectl config delete-user "${context_name}-admin" &>/dev/null || true
-      fi
-      
-      KUBECONFIG=~/.kube/config:$temp_kubeconfig kubectl config view --flatten > ~/.kube/config.tmp
-      if [ -s ~/.kube/config.tmp ]; then
-        mv ~/.kube/config.tmp ~/.kube/config
-      else
-        echo -e "${YELLOW}Warning: Merge resulted in empty config, using new config only${ENDCOLOR}"
-        cp "$temp_kubeconfig" ~/.kube/config
-      fi
-    else
-      # No existing config or empty config
-      cp "$temp_kubeconfig" ~/.kube/config
-    fi
-
-    # Set the new context as current
-    if kubectl config use-context "$context_name" &>/dev/null; then
-      echo -e "${GREEN}Successfully set '$context_name' as the current context${ENDCOLOR}"
-    else
-      echo -e "${YELLOW}Kubeconfig merged but failed to set '$context_name' as current context${ENDCOLOR}"
-      echo -e "${YELLOW}You can manually switch using: kubectl config use-context $context_name${ENDCOLOR}"
-    fi
-
-    # Test the connection
-    echo -e "${BLUE}Testing connection to cluster...${ENDCOLOR}"
-    if kubectl cluster-info --context "$context_name" &>/dev/null; then
-      echo -e "${GREEN}Successfully connected to Kubernetes cluster!${ENDCOLOR}"
-      echo -e "${BLUE}Cluster information:${ENDCOLOR}"
-      kubectl cluster-info --context "$context_name"
-    else
-      echo -e "${YELLOW}Kubeconfig retrieved but connection test failed${ENDCOLOR}"
-      echo -e "${YELLOW}Please check cluster status and network connectivity${ENDCOLOR}"
-    fi
-
-    echo -e "${GREEN}Kubeconfig setup completed for context: $context_name${ENDCOLOR}"
-    ;;
-
-  add-vm)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc add-vm"
-      echo ""
-      echo "Interactively add a new VM and update configuration."
-      echo "This command will:"
-      echo "1. Ask for node type (worker or control plane)"
-      echo "2. Generate a unique node name"
-      echo "3. Update Terraform configuration"
-      echo "4. Create the VM"
-      echo ""
-      echo "Note: To join to Kubernetes after VM creation, use:"
-      echo "  ./cpc add-nodes --target-hosts \"<node-name>\" --node-type \"<type>\""
-      exit 0
-    fi
-
-    echo -e "${BLUE}=== Interactive VM Addition ===${ENDCOLOR}"
-    echo ""
-    
-    # Get current context
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${BLUE}Current cluster context: $current_ctx${ENDCOLOR}"
-    
-    # Ask for node type
-    echo ""
-    echo "Select node type:"
-    echo "1) Worker node"
-    echo "2) Control plane node"
-    echo ""
-    read -p "Enter your choice (1-2): " node_type_choice
-    
-    case $node_type_choice in
-      1)
-        node_type="worker"
-        node_prefix="worker"
-        ;;
-      2)
-        node_type="controlplane"
-        node_prefix="controlplane"
-        ;;
-      *)
-        echo -e "${RED}Invalid choice. Exiting.${ENDCOLOR}"
-        exit 1
-        ;;
-    esac
-    
-    # Find next available worker/controlplane number
-    env_file="$REPO_PATH/envs/$current_ctx.env"
-    current_additional=""
-    if [ -f "$env_file" ]; then
-      # Get all ADDITIONAL_WORKERS values and combine them
-      current_additional=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' | paste -sd ',' | tr -d '\n' || echo "")
-      # Remove empty values and clean up
-      current_additional=$(echo "$current_additional" | sed 's/,\+/,/g' | sed 's/^,\|,$//g' | sed 's/,,\+/,/g')
-      if [ "$current_additional" = "" ]; then
-        current_additional=""
-      fi
-    fi
-    
-    # Determine next node number
-    if [ "$node_type" = "worker" ]; then
-      # Count existing workers (worker1, worker2 are base, so start from worker3)
-      next_num=3
-      while true; do
-        # Check all formats: worker3, worker-3
-        if [[ "$current_additional" == *"worker-$next_num"* || "$current_additional" == *"worker$next_num"* ]]; then
-          ((next_num++))
-        else
-          break
-        fi
-      done
-      new_node_name="worker-$next_num"
-    else
-      # Control plane logic
-      current_additional_cp=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      # Count existing control planes (controlplane is base, so start from controlplane2)
-      next_num=2
-      while true; do
-        if [[ "$current_additional_cp" == *"controlplane-$next_num"* || "$current_additional_cp" == *"controlplane$next_num"* ]]; then
-          ((next_num++))
-        else
-          break
-        fi
-      done
-      new_node_name="controlplane-$next_num"
-    fi
-    
-    echo ""
-    echo -e "${BLUE}New node will be: $new_node_name (type: $node_type)${ENDCOLOR}"
-    echo ""
-    read -p "Continue? (y/N): " confirm
-    
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-      echo "Cancelled."
-      exit 0
-    fi
-    
-    # Update environment file
-    if [ -f "$env_file" ]; then
-      if [ "$node_type" = "worker" ]; then
-        # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
-        sed -i '/^#\?ADDITIONAL_WORKERS=/d' "$env_file"
-        
-        if [ -z "$current_additional" ]; then
-          echo "ADDITIONAL_WORKERS=\"$new_node_name\"" >> "$env_file"
-        else
-          # Add to existing list
-          new_additional="$current_additional,$new_node_name"
-          echo "ADDITIONAL_WORKERS=\"$new_additional\"" >> "$env_file"
-        fi
-      else
-        # Control plane
-        current_additional_cp=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-        if [ -z "$current_additional_cp" ]; then
-          # Check if line exists
-          if grep -q "^ADDITIONAL_CONTROLPLANES=" "$env_file"; then
-            sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_node_name\"/" "$env_file"
-          else
-            echo "ADDITIONAL_CONTROLPLANES=\"$new_node_name\"" >> "$env_file"
-          fi
-        else
-          # Add to existing list
-          new_additional_cp="$current_additional_cp,$new_node_name"
-          sed -i "s/^ADDITIONAL_CONTROLPLANES=.*/ADDITIONAL_CONTROLPLANES=\"$new_additional_cp\"/" "$env_file"
-        fi
-      fi
-      echo -e "${GREEN}Updated $env_file with $new_node_name${ENDCOLOR}"
-    else
-      echo -e "${RED}Environment file not found: $env_file${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Apply Terraform changes
-    echo -e "${BLUE}Creating VM with Terraform...${ENDCOLOR}"
-    
-    # Pre-generate hostname file for the new node to avoid "file not found" error
-    if [[ "$node_type" == "worker" ]]; then
-      # Get the release letter from environment file
-      release_letter=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      
-      if [ -z "$release_letter" ]; then
-        echo -e "${YELLOW}Warning: RELEASE_LETTER not found in environment file, using first letter of workspace name${ENDCOLOR}"
-        release_letter="${current_ctx:0:1}"
-      fi
-      
-      # Generate expected hostname
-      node_num=$(echo "$new_node_name" | grep -Eo '[0-9]+$')
-      expected_hostname="${release_letter}w${node_num}.bevz.net"
-      
-      echo -e "${BLUE}Using release letter '${release_letter}' for hostname generation${ENDCOLOR}"
-      echo -e "${BLUE}Expected hostname for new node: ${expected_hostname}${ENDCOLOR}"
-      
-      # Create snippets directory if it doesn't exist
-      snippets_dir="$REPO_PATH/terraform/snippets"
-      mkdir -p "$snippets_dir"
-      
-      # Generate temp cloud-init user-data file
-      temp_userdata="$snippets_dir/node-${release_letter}w${node_num}-userdata.yaml"
-      
-      # Copy template or create minimal file if no template exists
-      template_file="$snippets_dir/node-template-userdata.yaml"
-      if [ -f "$template_file" ]; then
-        cp "$template_file" "$temp_userdata"
-        # Replace hostname placeholder
-        sed -i "s/HOSTNAME_PLACEHOLDER/$expected_hostname/g" "$temp_userdata"
-      else
-        cat > "$temp_userdata" << EOF
-#cloud-config
-hostname: $expected_hostname
-fqdn: $expected_hostname
-manage_etc_hosts: true
-EOF
-      fi
-      
-      echo -e "${BLUE}Pre-generated cloud-init hostname file for $expected_hostname${ENDCOLOR}"
-    fi
-    
-    # Generate hostnames (this may fail for new nodes, but we've pre-created the file above)
-    ./cpc generate-hostnames || true
-    
-    # Now run terraform apply
-    if ! ./cpc deploy apply -auto-approve; then
-      echo -e "${RED}Failed to apply Terraform changes${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # After VM creation, regenerate hostnames to ensure everything is updated
-    echo -e "${BLUE}Regenerating hostname configurations...${ENDCOLOR}"
-    if ! ./cpc generate-hostnames; then
-      echo -e "${YELLOW}Warning: Failed to regenerate hostnames, you may need to run this manually${ENDCOLOR}"
-    fi
-    
-    echo -e "${GREEN}Successfully created VM $new_node_name!${ENDCOLOR}"
-    echo -e "${BLUE}To join the node to Kubernetes cluster, use:${ENDCOLOR}"
-    echo -e "${YELLOW}  ./cpc add-nodes --target-hosts \"$new_node_name\" --node-type \"$node_type\"${ENDCOLOR}"
-    ;;
-
-  remove-vm)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc remove-vm"
-      echo ""
-      echo "Interactively remove a VM and update configuration."
-      echo "This command will:"
-      echo "1. Show available additional nodes"
-      echo "2. Destroy the VM with Terraform"
-      echo "3. Update the configuration file"
-      echo ""
-      echo "Note: To remove from Kubernetes first, use:"
-      echo "  ./cpc remove-nodes --target-hosts \"<node-name>\""
-      exit 0
-    fi
-
-    echo -e "${BLUE}=== Interactive VM Removal ===${ENDCOLOR}"
-    echo ""
-    
-    # Get current context
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${BLUE}Current cluster context: $current_ctx${ENDCOLOR}"
-    
-    # Get additional workers and control planes
-    env_file="$REPO_PATH/envs/$current_ctx.env"
-    current_additional_workers=""
-    current_additional_controlplanes=""
-    if [ -f "$env_file" ]; then
-      # Get all ADDITIONAL_WORKERS values and combine them
-      current_additional_workers=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' | paste -sd ',' | tr -d '\n' || echo "")
-      # Remove empty values and clean up
-      current_additional_workers=$(echo "$current_additional_workers" | sed 's/,\+/,/g' | sed 's/^,\|,$//g' | sed 's/,,\+/,/g')
-      if [ "$current_additional_workers" = "" ]; then
-        current_additional_workers=""
-      fi
-      
-      # Get all ADDITIONAL_CONTROLPLANES values and combine them
-      current_additional_controlplanes=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' | paste -sd ',' | tr -d '\n' || echo "")
-      # Remove empty values and clean up
-      current_additional_controlplanes=$(echo "$current_additional_controlplanes" | sed 's/,\+/,/g' | sed 's/^,\|,$//g' | sed 's/,,\+/,/g')
-      if [ "$current_additional_controlplanes" = "" ]; then
-        current_additional_controlplanes=""
-      fi
-    fi
-    
-    # Combine all additional nodes
-    all_nodes=()
-    if [ -n "$current_additional_workers" ]; then
-      IFS=',' read -ra worker_nodes <<< "$current_additional_workers"
-      for node in "${worker_nodes[@]}"; do
-        all_nodes+=("$node (worker)")
-      done
-    fi
-    if [ -n "$current_additional_controlplanes" ]; then
-      IFS=',' read -ra cp_nodes <<< "$current_additional_controlplanes"
-      for node in "${cp_nodes[@]}"; do
-        all_nodes+=("$node (control plane)")
-      done
-    fi
-    
-    if [ ${#all_nodes[@]} -eq 0 ]; then
-      echo -e "${YELLOW}No additional nodes found to remove.${ENDCOLOR}"
-      echo -e "${YELLOW}Base nodes (controlplane, worker1, worker2) cannot be removed with this command.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Show available nodes
-    echo ""
-    echo -e "${BLUE}Available nodes to remove:${ENDCOLOR}"
-    for i in "${!all_nodes[@]}"; do
-      echo "$((i+1)). ${all_nodes[i]}"
-    done
-    
-    echo
-    read -p "Enter the number of the node to remove: " choice
-    
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#all_nodes[@]} ]; then
-      echo -e "${RED}Invalid choice.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    selected_node="${all_nodes[$((choice-1))]}"
-    # Extract just the node name (before the parentheses)
-    node_name="${selected_node%% (*}"
-    # Extract node type (between parentheses)
-    node_type="${selected_node##*\(}"
-    node_type="${node_type%\)*}"
-    
-    echo ""
-    echo -e "${RED}This will remove node: $node_name (type: $node_type)${ENDCOLOR}"
-    echo -e "${RED}The VM will be destroyed and cannot be recovered!${ENDCOLOR}"
-    echo ""
-    read -p "Are you sure? (y/N): " confirm
-    
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-      echo "Cancelled."
-      exit 0
-    fi
-    
-    # Remove from appropriate variable
-    if [ "$node_type" = "worker" ]; then
-      # Remove from ADDITIONAL_WORKERS
-      echo -e "${BLUE}DEBUG: current_additional_workers='$current_additional_workers'${ENDCOLOR}"
-      echo -e "${BLUE}DEBUG: node_name='$node_name'${ENDCOLOR}"
-      
-      # Extract numeric part of node name (e.g., worker3 -> 3)
-      node_number=""
-      if [[ "$node_name" =~ ^worker-([0-9]+)$ ]]; then
-        node_number="${BASH_REMATCH[1]}"
-        echo -e "${BLUE}DEBUG: detected new format node name with number $node_number${ENDCOLOR}"
-      elif [[ "$node_name" =~ ^worker([0-9]+)$ ]]; then
-        node_number="${BASH_REMATCH[1]}"
-        echo -e "${BLUE}DEBUG: detected legacy format node name with number $node_number${ENDCOLOR}"
-      fi
-      
-      if [ -n "$current_additional_workers" ]; then
-        IFS=',' read -ra worker_array <<< "$current_additional_workers"
-        echo -e "${BLUE}DEBUG: worker_array=(${worker_array[@]})${ENDCOLOR}"
-        
-        new_workers=()
-        for worker in "${worker_array[@]}"; do
-          echo -e "${BLUE}DEBUG: checking worker='$worker' vs node_name='$node_name'${ENDCOLOR}"
-          
-          # Check for both old and new format matches
-          if [ "$worker" != "$node_name" ]; then
-            # If we have a node number, also check the alternate format
-            if [ -n "$node_number" ]; then
-              # Check if worker is either worker3 or worker-3 when node_name is the other format
-              if [ "$worker" != "worker$node_number" ] && [ "$worker" != "worker-$node_number" ]; then
-                new_workers+=("$worker")
-                echo -e "${BLUE}DEBUG: keeping worker='$worker'${ENDCOLOR}"
-              else
-                echo -e "${BLUE}DEBUG: removing worker='$worker' (matched by number)${ENDCOLOR}"
-              fi
-            else
-              # Standard exact name check
-              new_workers+=("$worker")
-              echo -e "${BLUE}DEBUG: keeping worker='$worker'${ENDCOLOR}"
-            fi
-          else
-            echo -e "${BLUE}DEBUG: removing worker='$worker'${ENDCOLOR}"
-          fi
-        done
-        
-        echo -e "${BLUE}DEBUG: new_workers=(${new_workers[@]})${ENDCOLOR}"
-        echo -e "${BLUE}DEBUG: new_workers length=${#new_workers[@]}${ENDCOLOR}"
-        
-        # Remove all existing ADDITIONAL_WORKERS lines (including commented ones)
-        sed -i '/^#\?ADDITIONAL_WORKERS=/d' "$env_file"
-        
-        if [ ${#new_workers[@]} -eq 0 ]; then
-          echo 'ADDITIONAL_WORKERS=""' >> "$env_file"
-        else
-          new_additional_workers=$(IFS=','; echo "${new_workers[*]}")
-          echo "ADDITIONAL_WORKERS=\"$new_additional_workers\"" >> "$env_file"
-        fi
-      fi
-    else
-      # Remove from ADDITIONAL_CONTROLPLANES
-      
-      # Extract numeric part of node name (e.g., controlplane2 -> 2)
-      node_number=""
-      if [[ "$node_name" =~ ^controlplane-([0-9]+)$ ]]; then
-        node_number="${BASH_REMATCH[1]}"
-        echo -e "${BLUE}DEBUG: detected new format controlplane name with number $node_number${ENDCOLOR}"
-      elif [[ "$node_name" =~ ^controlplane([0-9]+)$ ]]; then
-        node_number="${BASH_REMATCH[1]}"
-        echo -e "${BLUE}DEBUG: detected legacy format controlplane name with number $node_number${ENDCOLOR}"
-      fi
-      
-      if [ -n "$current_additional_controlplanes" ]; then
-        IFS=',' read -ra cp_array <<< "$current_additional_controlplanes"
-        echo -e "${BLUE}DEBUG: cp_array=(${cp_array[@]})${ENDCOLOR}"
-        
-        new_cps=()
-        for cp in "${cp_array[@]}"; do
-          echo -e "${BLUE}DEBUG: checking cp='$cp' vs node_name='$node_name'${ENDCOLOR}"
-          
-          # Check for both old and new format matches
-          if [ "$cp" != "$node_name" ]; then
-            # If we have a node number, also check the alternate format
-            if [ -n "$node_number" ]; then
-              # Check if cp is either controlplane2 or controlplane-2 when node_name is the other format
-              if [ "$cp" != "controlplane$node_number" ] && [ "$cp" != "controlplane-$node_number" ]; then
-                new_cps+=("$cp")
-                echo -e "${BLUE}DEBUG: keeping cp='$cp'${ENDCOLOR}"
-              else
-                echo -e "${BLUE}DEBUG: removing cp='$cp' (matched by number)${ENDCOLOR}"
-              fi
-            else
-              # Standard exact name check
-              new_cps+=("$cp")
-              echo -e "${BLUE}DEBUG: keeping cp='$cp'${ENDCOLOR}"
-            fi
-          else
-            echo -e "${BLUE}DEBUG: removing cp='$cp'${ENDCOLOR}"
-          fi
-        done
-        
-        # Remove all existing ADDITIONAL_CONTROLPLANES lines (including commented ones)
-        sed -i '/^#\?ADDITIONAL_CONTROLPLANES=/d' "$env_file"
-        
-        if [ ${#new_cps[@]} -eq 0 ]; then
-          echo 'ADDITIONAL_CONTROLPLANES=""' >> "$env_file"
-        else
-          new_additional_controlplanes=$(IFS=','; echo "${new_cps[*]}")
-          echo "ADDITIONAL_CONTROLPLANES=\"$new_additional_controlplanes\"" >> "$env_file"
-        fi
-      fi
-    fi
-    
-    echo -e "${GREEN}Updated configuration file${ENDCOLOR}"
-    
-    # Get VM info before destruction to verify removal
-    echo -e "${BLUE}Getting current VM information...${ENDCOLOR}"
-    vm_count_before=$(./cpc deploy output -json cluster_summary 2>/dev/null | jq '. | length' 2>/dev/null || echo "unknown")
-    
-    # Destroy VM with Terraform
-    echo -e "${BLUE}Destroying VM with Terraform...${ENDCOLOR}"
-    if ! ./cpc deploy apply -auto-approve; then
-      echo -e "${RED}Failed to apply Terraform changes${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Verify VM was actually removed
-    echo -e "${BLUE}Verifying VM removal...${ENDCOLOR}"
-    vm_count_after=$(./cpc deploy output -json cluster_summary 2>/dev/null | jq '. | length' 2>/dev/null || echo "unknown")
-    
-    if [[ "$vm_count_before" != "unknown" && "$vm_count_after" != "unknown" && "$vm_count_after" -lt "$vm_count_before" ]]; then
-      echo -e "${GREEN}Successfully removed VM $node_name from infrastructure!${ENDCOLOR}"
-      echo -e "${GREEN}VM count reduced from $vm_count_before to $vm_count_after${ENDCOLOR}"
-    elif [[ "$vm_count_before" != "unknown" && "$vm_count_after" != "unknown" && "$vm_count_after" -eq "$vm_count_before" ]]; then
-      echo -e "${YELLOW}Warning: VM count unchanged ($vm_count_before). VM may not have been removed.${ENDCOLOR}"
-      echo -e "${YELLOW}This could be due to configuration caching. Try running:${ENDCOLOR}"
-      echo -e "${YELLOW}  ./cpc deploy apply -auto-approve${ENDCOLOR}"
-      echo -e "${YELLOW}to manually complete the removal.${ENDCOLOR}"
-    else
-      echo -e "${GREEN}VM removal completed (verification unavailable)${ENDCOLOR}"
-    fi
-    
-    echo -e "${BLUE}Note: If the node was part of Kubernetes cluster, you may need to manually clean up the cluster state.${ENDCOLOR}"
-    ;;
-
-  ctx)
-    if [ -z "$1" ]; then
-      current_ctx=$(get_current_cluster_context)
-      echo "Current cluster context: $current_ctx"
-      echo "Available Tofu workspaces:" # Changed from Terraform
-      (cd "$REPO_PATH/terraform" && tofu workspace list) # Changed from terraform
-      exit 0
-    elif [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc ctx [<cluster_name>]" # Changed from ccr
-      echo "Sets the current cluster context for cpc and switches Tofu workspace." # Changed from ccr and Terraform
-      exit 0
-    fi
-    cluster_name="$1"
-    echo "$cluster_name" > "$CLUSTER_CONTEXT_FILE"
-    echo -e "${GREEN}Cluster context set to: $cluster_name${ENDCOLOR}"
-    pushd "$REPO_PATH/terraform" > /dev/null || exit 1
-    if tofu workspace list | grep -qw "$cluster_name"; then # Changed from terraform
-      tofu workspace select "$cluster_name" # Changed from terraform
-    else
-      echo -e "${YELLOW}Tofu workspace '$cluster_name' does not exist. Creating and selecting.${ENDCOLOR}" # Changed from Terraform
-      tofu workspace new "$cluster_name" # Changed from terraform
-    fi
-    popd > /dev/null || exit 1
-    
-    # Update template variables for the new workspace context
-    set_workspace_template_vars "$cluster_name"
-    ;;
-  
-  clone-workspace)
-    if [[ "$1" == "-h" || "$1" == "--help" || $# -lt 2 ]]; then
-      echo "Usage: cpc clone-workspace <source_workspace> <destination_workspace> [release_letter]"
-      echo "Clones a workspace environment to create a new one."
-      echo ""
-      echo "Arguments:"
-      echo "  <source_workspace>      Source workspace to clone (e.g., ubuntu, debian)"
-      echo "  <destination_workspace> New workspace name (e.g., k8s129, test-workspace)"
-      echo "  [release_letter]        Optional: Single letter to use for hostnames (defaults to first letter of destination)"
-      echo ""
-      echo "Example:"
-      echo "  cpc clone-workspace ubuntu k8s129 k"
-      exit 0
-    fi
-
-    source_workspace="$1"
-    destination_workspace="$2"
-    
-    # Default release letter to first character of destination workspace
-    if [ -z "$3" ]; then
-      release_letter="${destination_workspace:0:1}"
-    else
-      release_letter="$3"
-    fi
-    
-    # Validate release letter is a single character
-    if [ ${#release_letter} -ne 1 ]; then
-      echo -e "${RED}Error: Release letter must be a single character.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Check if release letter is already used by another workspace
-    locals_tf="$REPO_PATH/terraform/locals.tf"
-    existing_release_letters=$(grep -A 50 "release_letters_map = {" "$locals_tf" | grep -E '= "[a-zA-Z]"' | grep -v "$destination_workspace" | sed -E 's/.*= "([a-zA-Z])".*/\1/g')
-    
-    if echo "$existing_release_letters" | grep -q "$release_letter"; then
-      echo -e "${RED}Error: Release letter '$release_letter' is already used by another workspace.${ENDCOLOR}"
-      echo -e "${BLUE}Please choose a different release letter. Currently used letters:${ENDCOLOR}"
-      echo "$existing_release_letters" | tr '\n' ' '
-      echo ""
-      exit 1
-    fi
-    
-    # Check if source workspace exists
-    source_env="$REPO_PATH/envs/$source_workspace.env"
-    if [ ! -f "$source_env" ]; then
-      echo -e "${RED}Error: Source workspace $source_workspace does not exist.${ENDCOLOR}"
-      echo -e "${BLUE}Available workspaces:${ENDCOLOR}"
-      ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
-      exit 1
-    fi
-    
-    # Check if destination workspace already exists
-    dest_env_file="$REPO_PATH/envs/$destination_workspace.env"
-    if [ -f "$dest_env_file" ]; then
-      echo -e "${RED}Error: Destination workspace $destination_workspace already exists.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Copy environment file
-    cp "$source_env" "$dest_env_file"
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Error: Failed to copy environment file.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Add/update RELEASE_LETTER in the new environment file
-    if grep -q "^RELEASE_LETTER=" "$dest_env_file"; then
-      sed -i "s/^RELEASE_LETTER=.*/RELEASE_LETTER=$release_letter/" "$dest_env_file"
-    else
-      echo -e "\n# Release letter used for hostname generation" >> "$dest_env_file"
-      echo "RELEASE_LETTER=$release_letter" >> "$dest_env_file"
-    fi
-    
-    # Update locals.tf
-    locals_tf="$REPO_PATH/terraform/locals.tf"
-    
-    # Add template VM ID mapping
-    pushd "$REPO_PATH/terraform" > /dev/null || exit 1
-    source_template_var=""
-    
-    # Add the destination workspace to template_vm_ids
-    # First, get the correct variable for the source workspace
-    if grep -q "\"$source_workspace\".*var.pm_template_${source_workspace}_id" "$locals_tf"; then
-      # Source workspace uses its own template variable
-      template_var="var.pm_template_${source_workspace}_id"
-    else
-      # Source workspace likely uses another OS's template
-      template_var="var.pm_template_ubuntu_id"  # Default to Ubuntu template
-    fi
-    
-    # Now add the entry to template_vm_ids
-    sed -i "/^[[:space:]]*template_vm_ids = {/a \\    \"$destination_workspace\" = $template_var  # Auto-added by clone-workspace" "$locals_tf"
-    echo -e "${BLUE}Added template_vm_ids entry: \"$destination_workspace\" = $template_var${ENDCOLOR}"
-    
-    if [ -z "$source_template_var" ]; then
-      echo -e "${YELLOW}Warning: Could not find template_vm_ids entry for $source_workspace in locals.tf.${ENDCOLOR}"
-      echo -e "${YELLOW}You may need to manually update locals.tf to map the template VM ID for $destination_workspace.${ENDCOLOR}"
-    fi
-    
-    # Add release letter mapping
-    sed -i "/release_letters_map = {/a \    \"$destination_workspace\" = \"$release_letter\"  # Auto-added by clone-workspace" "$locals_tf"
-    
-    # Add VM ID range
-    # Find all existing ranges and generate a safe new one
-    used_ranges=()
-    while read -r line; do
-      if [[ "$line" =~ \"[^\"]+\"[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
-        range=${BASH_REMATCH[1]}
-        used_ranges+=("$range")
-      fi
-    done < <(grep -A 20 "vm_id_ranges = {" "$locals_tf" | grep -E '= [0-9]+')
-    
-    # Find a safe new range that doesn't conflict
-    new_range=700
-    while [[ " ${used_ranges[*]} " =~ " ${new_range} " ]]; do
-      new_range=$((new_range + 100))
-    done
-    sed -i "/vm_id_ranges = {/a \    \"$destination_workspace\" = $new_range  # Auto-added by clone-workspace" "$locals_tf"
-    
-    echo -e "${BLUE}Updated locals.tf with new workspace entries${ENDCOLOR}"
-    
-    # Update validations.tf if it exists
-    validations_tf="$REPO_PATH/terraform/validations.tf"
-    if [ -f "$validations_tf" ]; then
-      # Find the line with the condition that contains the list of valid workspaces
-      condition_line=$(grep -n "condition.*contains.*terraform.workspace" "$validations_tf" | head -1 | cut -d':' -f1)
-      if [ -n "$condition_line" ]; then
-        # Get the last workspace in the list
-        last_workspace=$(grep -o "\"[^\"]*\"" "$validations_tf" | tail -1 | tr -d '"')
-        if [ -n "$last_workspace" ]; then
-          # Add the new workspace to the condition
-          sed -i "${condition_line}s/\"$last_workspace\"/\"$last_workspace\", \"$destination_workspace\"/" "$validations_tf"
-          echo -e "${BLUE}Updated validations.tf with new workspace${ENDCOLOR}"
-        else
-          echo -e "${YELLOW}Warning: Could not find workspace list in validations.tf to update.${ENDCOLOR}"
-        fi
-      else
-        echo -e "${YELLOW}Warning: Could not find condition line in validations.tf to update.${ENDCOLOR}"
-      fi
-    fi
-    
-    # Create the workspace
-    if ! tofu workspace list | grep -qw "$destination_workspace"; then
-      echo -e "${BLUE}Creating new Tofu workspace: $destination_workspace${ENDCOLOR}"
-      tofu workspace new "$destination_workspace"
-    fi
-    popd > /dev/null || exit 1
-    
-    echo -e "${GREEN}Successfully created new workspace environment: $destination_workspace${ENDCOLOR}"
-    echo -e "${BLUE}You can now edit $dest_env_file to customize your new workspace.${ENDCOLOR}"
-    echo -e "${BLUE}To use this workspace, run: cpc ctx $destination_workspace${ENDCOLOR}"
-    ;;
-    
-  delete-workspace)
-    if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
-      echo "Usage: cpc delete-workspace <workspace_name> [--force]"
-      echo "Deletes a workspace environment and removes it from the Terraform configuration."
-      echo ""
-      echo "Arguments:"
-      echo "  <workspace_name>    Name of the workspace to delete (e.g., k8s129, test-workspace)"
-      echo "  --force             Skip confirmation prompt"
-      echo ""
-      echo "Example:"
-      echo "  cpc delete-workspace test-workspace"
-      exit 0
-    fi
-    
-    workspace_name="$1"
-    force=false
-    if [[ "$2" == "--force" ]]; then
-      force=true
-    fi
-    
-    # Check if workspace exists
-    env_file="$REPO_PATH/envs/$workspace_name.env"
-    if [ ! -f "$env_file" ]; then
-      echo -e "${RED}Error: Workspace '$workspace_name' not found.${ENDCOLOR}"
-      echo -e "${BLUE}Available workspaces:${ENDCOLOR}"
-      ls -1 "$REPO_PATH/envs/" | grep -E '\.env$' | sed 's/\.env$//'
-      exit 1
-    fi
-    
-    # Check if it's one of the predefined workspaces
-    if [[ "$workspace_name" == "debian" || "$workspace_name" == "ubuntu" || "$workspace_name" == "rocky" || "$workspace_name" == "suse" ]]; then
-      echo -e "${RED}Error: Cannot delete predefined workspace '$workspace_name'.${ENDCOLOR}"
-      echo -e "${BLUE}These are base workspaces used as templates for cloning.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Confirm deletion unless --force is used
-    if [ "$force" = false ]; then
-      echo -e "${YELLOW}Warning: You are about to delete workspace '$workspace_name'.${ENDCOLOR}"
-      echo -e "${YELLOW}This will:${ENDCOLOR}"
-      echo -e "${YELLOW} - Delete the environment file at $env_file${ENDCOLOR}"
-      echo -e "${YELLOW} - Remove entries from locals.tf${ENDCOLOR}"
-      echo -e "${YELLOW} - Remove it from validations.tf${ENDCOLOR}"
-      echo -e "${YELLOW} - Delete the Tofu workspace if it exists${ENDCOLOR}"
-      echo -e "${YELLOW} - Stop and destroy all VMs in this workspace${ENDCOLOR}"
-      echo -e "${YELLOW} - Remove all DNS records from Pi-hole for these VMs${ENDCOLOR}"
-      echo -e "${YELLOW} - Clean up cloud-init snippet files${ENDCOLOR}"
-      read -p "Are you sure you want to continue? (y/N) " confirm
-      if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        echo -e "${BLUE}Operation cancelled.${ENDCOLOR}"
-        exit 0
-      fi
-    fi
-    
-    # 1. First, prepare to clean up resources
-    pushd "$REPO_PATH/terraform" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
-    
-    # Check if the workspace exists
-    if tofu workspace list | grep -qw "$workspace_name"; then
-      # Save current workspace to return to it later
-      original_ws=$(tofu workspace show)
-      
-      # Switch to the workspace we're about to delete
-      if [ "$original_ws" != "$workspace_name" ]; then
-        echo -e "${BLUE}Switching to workspace '$workspace_name' to check resources...${ENDCOLOR}"
-        tofu workspace select "$workspace_name"
-      fi
-      
-      # 2. Check if there are any resources in this workspace
-      echo -e "${BLUE}Checking for existing resources in workspace '$workspace_name'...${ENDCOLOR}"
-      tofu show -json > /dev/null 2>&1
-      if [ $? -eq 0 ]; then
-        # Get state info without creating anything
-        resource_count=$(tofu state list 2>/dev/null | wc -l)
-        if [ "$resource_count" -gt 0 ]; then
-          echo -e "${BLUE}Found $resource_count resources in workspace '$workspace_name'. Proceeding with cleanup...${ENDCOLOR}"
-          
-          # 3. Remove DNS records from Pi-hole before destroying VMs
-          echo -e "${BLUE}Removing DNS records from Pi-hole...${ENDCOLOR}"
-          # Change directory to run the Python script with correct paths
-          pushd "$REPO_PATH" > /dev/null || exit 1
-          if [ -x "$REPO_PATH/scripts/add_pihole_dns.py" ]; then
-            "$REPO_PATH/scripts/add_pihole_dns.py" --action "unregister-dns" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform"
-            if [ $? -ne 0 ]; then
-              echo -e "${YELLOW}Warning: Failed to remove some DNS records from Pi-hole. Continuing with cleanup...${ENDCOLOR}"
-            else
-              echo -e "${BLUE}Successfully removed DNS records from Pi-hole.${ENDCOLOR}"
-            fi
-          else
-            echo -e "${YELLOW}Warning: Pi-hole DNS update script not found or not executable. DNS records may remain.${ENDCOLOR}"
-          fi
-          popd > /dev/null || exit 1
-          
-          # 4. Destroy all resources directly
-          echo -e "${BLUE}Destroying all resources in workspace '$workspace_name'...${ENDCOLOR}"
-          tofu destroy -auto-approve
-          if [ $? -ne 0 ]; then
-            echo -e "${YELLOW}Warning: Failed to destroy some resources. Manual cleanup may be required.${ENDCOLOR}"
-          else
-            echo -e "${BLUE}Successfully destroyed all resources in workspace '$workspace_name'.${ENDCOLOR}"
-          fi
-        else
-          echo -e "${BLUE}No resources found in workspace '$workspace_name', skipping resource cleanup.${ENDCOLOR}"
-        fi
-      else
-        echo -e "${BLUE}Workspace '$workspace_name' appears to be empty or has no state, skipping resource cleanup.${ENDCOLOR}"
-      fi
-      
-      # Return to original workspace if it was different
-      if [ "$original_ws" != "$workspace_name" ] && [ "$original_ws" != "default" ]; then
-        echo -e "${BLUE}Switching back to workspace '$original_ws'...${ENDCOLOR}"
-        tofu workspace select "$original_ws"
-      else
-        echo -e "${BLUE}Switching to default workspace...${ENDCOLOR}"
-        tofu workspace select default
-      fi
-      
-      # 5. Now delete the workspace
-      echo -e "${BLUE}Deleting Tofu workspace '$workspace_name'...${ENDCOLOR}"
-      tofu workspace delete "$workspace_name"
-      echo -e "${BLUE}- Deleted Tofu workspace '$workspace_name'${ENDCOLOR}"
-    else
-      echo -e "${YELLOW}- Tofu workspace '$workspace_name' does not exist, skipping resource cleanup${ENDCOLOR}"
-    fi
-    
-    # 6. Update locals.tf
-    locals_tf="$REPO_PATH/terraform/locals.tf"
-    
-    # Remove from template_vm_ids
-    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*var\.[^,]*[[:space:]]*#.*clone-workspace/d" "$locals_tf"
-    
-    # Remove from release_letters_map
-    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*#.*clone-workspace/d" "$locals_tf"
-    
-    # Remove from vm_id_ranges
-    sed -i "/\"$workspace_name\"[[:space:]]*=[[:space:]]*[0-9][0-9]*[[:space:]]*#.*clone-workspace/d" "$locals_tf"
-    
-    echo -e "${BLUE}- Removed entries from locals.tf${ENDCOLOR}"
-    
-    # 7. Update validations.tf
-    validations_tf="$REPO_PATH/terraform/validations.tf"
-    if [ -f "$validations_tf" ]; then
-      # Find the line with the condition that contains the list of valid workspaces
-      condition_line=$(grep -n "condition.*contains.*terraform.workspace" "$validations_tf" | head -1 | cut -d':' -f1)
-      if [ -n "$condition_line" ]; then
-        # Remove the workspace from the list of valid workspaces
-        # This is a bit more complex as we need to handle different formats
-        sed -i "${condition_line}s/\"$workspace_name\"[[:space:]]*,//g" "$validations_tf" # Remove with trailing comma
-        sed -i "${condition_line}s/,[[:space:]]*\"$workspace_name\"//g" "$validations_tf" # Remove with leading comma
-        echo -e "${BLUE}- Updated validations.tf to remove '$workspace_name' workspace${ENDCOLOR}"
-      else
-        echo -e "${YELLOW}Warning: Could not find condition line in validations.tf to update.${ENDCOLOR}"
-      fi
-    fi
-    
-    # 8. Clean up cloud-init snippet files
-    # First, we need to get the release letter for this workspace to know which files to delete
-    if [ -f "$env_file" ]; then
-      # Read RELEASE_LETTER from the environment file before we delete it
-      workspace_release_letter=$(grep "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' | tr -d "'" | head -1)
-      
-      # If not found in file, use fallback mapping
-      if [ -z "$workspace_release_letter" ]; then
-        case "$workspace_name" in
-          debian) workspace_release_letter="d" ;;
-          ubuntu) workspace_release_letter="u" ;;
-          rocky) workspace_release_letter="r" ;;
-          suse) workspace_release_letter="s" ;;
-          *) workspace_release_letter=$(echo "$workspace_name" | head -c 1) ;;
-        esac
-      fi
-      
-      # Clean up cloud-init snippet files with this release letter
-      snippets_dir="$REPO_PATH/terraform/snippets"
-      if [ -d "$snippets_dir" ] && [ -n "$workspace_release_letter" ]; then
-        echo -e "${BLUE}Cleaning up cloud-init snippet files for release letter '$workspace_release_letter'...${ENDCOLOR}"
-        
-        # Remove controlplane snippet files: node-c<letter><number>-userdata.yaml
-        find "$snippets_dir" -name "node-c${workspace_release_letter}[0-9]*-userdata.yaml" -delete 2>/dev/null
-        
-        # Remove worker snippet files: node-w<letter><number>-userdata.yaml  
-        find "$snippets_dir" -name "node-w${workspace_release_letter}[0-9]*-userdata.yaml" -delete 2>/dev/null
-        
-        # Count remaining snippet files to report
-        remaining_snippets=$(find "$snippets_dir" -name "node-*${workspace_release_letter}[0-9]*-userdata.yaml" 2>/dev/null | wc -l)
-        if [ "$remaining_snippets" -eq 0 ]; then
-          echo -e "${BLUE}- Cleaned up all snippet files for release letter '$workspace_release_letter'${ENDCOLOR}"
-        else
-          echo -e "${YELLOW}- Warning: $remaining_snippets snippet files with release letter '$workspace_release_letter' still remain${ENDCOLOR}"
-        fi
-      else
-        echo -e "${YELLOW}- Warning: Could not determine release letter for workspace '$workspace_name', skipping snippet cleanup${ENDCOLOR}"
-      fi
-    fi
-    
-    # 9. Delete the environment file last (after we're done using any values from it)
-    popd > /dev/null || true  # Use true instead of exit 1 to avoid exiting on error
-    rm -f "$env_file"
-    echo -e "${BLUE}- Deleted environment file: $env_file${ENDCOLOR}"
-    
-    # Note: No need for another popd here as we've already returned to the original directory
-    
-    echo -e "${GREEN}Successfully deleted workspace '$workspace_name'.${ENDCOLOR}"
-    ;;
-  
-  template)
-    # Ensure workspace-specific template variables are set
-    current_ctx=$(get_current_cluster_context)
-    set_workspace_template_vars "$current_ctx"
-    
-    # Check if essential template variables are set
-    if [ -z "$TEMPLATE_VM_ID" ] || [ -z "$TEMPLATE_VM_NAME" ] || [ -z "$IMAGE_NAME" ] || [ -z "$IMAGE_LINK" ]; then
-      echo -e "${RED}Error: Template variables not properly set for workspace '$current_ctx'.${ENDCOLOR}"
-      echo -e "${RED}Please ensure cpc.env contains the required TEMPLATE_VM_ID_*, TEMPLATE_VM_NAME_*, IMAGE_NAME_*, IMAGE_LINK_* variables.${ENDCOLOR}"
-      exit 1
-    fi
-    
-    (
-      "$REPO_PATH/scripts/template.sh" "$@"
-    )
-    ;;
-
-  load_secrets)
-    echo -e "${BLUE}Loading secrets from SOPS...${ENDCOLOR}"
-    load_secrets
-    echo -e "${GREEN}Secrets loaded successfully!${ENDCOLOR}"
-    echo -e "${BLUE}Available variables:${ENDCOLOR}"
-    echo -e "${BLUE}  PROXMOX_HOST: $PROXMOX_HOST${ENDCOLOR}"
-    echo -e "${BLUE}  PROXMOX_USERNAME: $PROXMOX_USERNAME${ENDCOLOR}"
-    echo -e "${BLUE}  VM_USERNAME: $VM_USERNAME${ENDCOLOR}"
-    echo -e "${BLUE}  VM_SSH_KEY: ${VM_SSH_KEY:0:20}...${ENDCOLOR}"
-    ;;
-
-  bootstrap)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc bootstrap [--skip-check] [--force]"
-      echo ""
-      echo "Bootstrap a complete Kubernetes cluster on the deployed VMs."
-      echo ""
-      echo "The bootstrap process includes:"
-      echo "  1. Install Kubernetes components (kubelet, kubeadm, kubectl, containerd)"
-      echo "  2. Initialize control plane with kubeadm"
-      echo "  3. Install Calico CNI plugin"
-      echo "  4. Join worker nodes to the cluster"
-      echo "  5. Configure kubectl access for the cluster"
-      echo ""
-      echo "Options:"
-      echo "  --skip-check   Skip VM connectivity check before starting"
-      echo "  --force        Force bootstrap even if cluster appears already initialized"
-      echo ""
-      echo "Prerequisites:"
-      echo "  - VMs must be deployed and accessible (use 'cpc deploy apply')"
-      echo "  - SSH access configured to all nodes"
-      echo "  - SOPS secrets loaded for VM authentication"
-      echo ""
-      echo "Example workflow:"
-      echo "  cpc ctx ubuntu           # Set context"
-      echo "  cpc deploy apply         # Deploy VMs"
-      echo "  cpc bootstrap           # Bootstrap Kubernetes cluster"
-      echo "  cpc get-kubeconfig      # Get cluster access"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    skip_check=false
-    force_bootstrap=false
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --skip-check)
-          skip_check=true
-          shift
-          ;;
-        --force)
-          force_bootstrap=true
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    # Check if secrets are loaded
-    check_secrets_loaded
-
-    current_ctx=$(get_current_cluster_context)
-    repo_root=$(get_repo_path)
-    echo -e "${BLUE}Starting Kubernetes bootstrap for context '$current_ctx'...${ENDCOLOR}"
-
-    # Verify that VMs are deployed and accessible
-    if [ "$skip_check" = false ]; then
-      echo -e "${BLUE}Checking VM connectivity...${ENDCOLOR}"
-      pushd "$repo_root/terraform" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
-      
-      # Check if we're in the right workspace
-      if ! tofu workspace select "$current_ctx" &>/dev/null; then
-        echo -e "${RED}Failed to select Tofu workspace '$current_ctx'${ENDCOLOR}" >&2
-        echo -e "${RED}Please ensure VMs are deployed with 'cpc deploy apply'${ENDCOLOR}" >&2
-        popd > /dev/null
-        exit 1
-      fi
-
-      # Check if VMs exist
-      vm_ips=$(tofu output -json k8s_node_ips 2>/dev/null)
-      if [ -z "$vm_ips" ] || [ "$vm_ips" = "null" ]; then
-        echo -e "${RED}No VMs found in Tofu output. Please deploy VMs first with 'cpc deploy apply'${ENDCOLOR}" >&2
-        popd > /dev/null
-        exit 1
-      fi
-
-      popd > /dev/null
-
-      echo -e "${GREEN}VM connectivity check passed${ENDCOLOR}"
-    fi
-
-    # Check if cluster is already initialized (unless forced)
-    if [ "$force_bootstrap" = false ]; then
-      echo -e "${BLUE}Checking if cluster is already initialized...${ENDCOLOR}"
-      
-      # Try to connect to potential control plane and check if Kubernetes is running
-      repo_root=$(get_repo_path)
-      pushd "$repo_root/terraform" > /dev/null || exit 1
-      control_plane_ip=$(tofu output -json k8s_node_ips 2>/dev/null | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value' | head -1)
-      popd > /dev/null
-      
-      if [ -n "$control_plane_ip" ] && [ "$control_plane_ip" != "null" ]; then
-        # Check if kubeconfig exists on control plane
-        ansible_dir="$repo_root/ansible"
-        remote_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'root')
-        
-        if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
-             "${remote_user}@${control_plane_ip}" \
-             "test -f /etc/kubernetes/admin.conf" 2>/dev/null; then
-          echo -e "${YELLOW}Kubernetes cluster appears to already be initialized on $control_plane_ip${ENDCOLOR}"
-          echo -e "${YELLOW}Use --force to bootstrap anyway (this will reset the cluster)${ENDCOLOR}"
-          exit 1
-        fi
-      fi
-    fi
-
-    # Run the bootstrap playbooks
-    echo -e "${GREEN}Starting Kubernetes cluster bootstrap...${ENDCOLOR}"
-    ansible_dir="$repo_root/ansible"
-    inventory_file="$ansible_dir/inventory/tofu_inventory.py"
-
-    # Check if inventory exists
-    if [ ! -f "$inventory_file" ]; then
-      echo -e "${RED}Ansible inventory not found at $inventory_file${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # First, verify connectivity to all nodes
-    echo -e "${BLUE}Testing Ansible connectivity to all nodes...${ENDCOLOR}"
-    if ! ansible all -i "$inventory_file" -m ping --ssh-extra-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"; then
-      echo -e "${RED}Failed to connect to all nodes via Ansible${ENDCOLOR}" >&2
-      echo -e "${RED}Please check SSH access and ensure VMs are running${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    echo -e "${GREEN}Ansible connectivity test passed${ENDCOLOR}"
-
-    # Step 1: Install Kubernetes components
-    echo -e "${BLUE}Step 1: Installing Kubernetes components (kubelet, kubeadm, kubectl, containerd)...${ENDCOLOR}"
-    if ! run_ansible_playbook "install_kubernetes_cluster.yml"; then
-      echo -e "${RED}Failed to install Kubernetes components${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Step 2: Initialize cluster and setup CNI with DNS hostname support
-    echo -e "${BLUE}Step 2: Initializing Kubernetes cluster with DNS hostname support and installing Calico CNI...${ENDCOLOR}"
-    if ! run_ansible_playbook "initialize_kubernetes_cluster_with_dns.yml"; then
-      echo -e "${RED}Failed to initialize Kubernetes cluster with DNS support${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Step 3: Validate cluster
-    echo -e "${BLUE}Step 3: Validating cluster installation...${ENDCOLOR}"
-    if ! run_ansible_playbook "validate_cluster.yml" -l control_plane; then
-      echo -e "${YELLOW}Cluster validation failed, but continuing...${ENDCOLOR}"
-    fi
-
-    echo -e "${GREEN}Kubernetes cluster bootstrap completed successfully!${ENDCOLOR}"
-    echo -e "${BLUE}Next steps:${ENDCOLOR}"
-    echo -e "${BLUE}  1. Get cluster access: cpc get-kubeconfig${ENDCOLOR}"
-    echo -e "${BLUE}  2. Install addons: cpc upgrade-addons${ENDCOLOR}"
-    echo -e "${BLUE}  3. Verify cluster: kubectl get nodes -o wide${ENDCOLOR}"
-    ;;
-
-  run-playbook)
-    if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
-      echo "Usage: cpc run-playbook <playbook_name> [ansible_options...]"
-      echo ""
-      echo "Run any Ansible playbook from the ansible/playbooks/ directory."
-      echo ""
-      echo "Arguments:"
-      echo "  <playbook_name>     Name of the playbook (with or without .yml extension)"
-      echo "  [ansible_options]   Additional ansible-playbook options (optional)"
-      echo ""
-      echo "Examples:"
-      echo "  cpc run-playbook install_kubernetes_cluster"
-      echo "  cpc run-playbook pb_run_command -e 'shell_command=\"uptime\"'"
-      echo "  cpc run-playbook validate_cluster -l control_plane"
-      echo "  cpc run-playbook configure_coredns_local_domains --check"
-      echo ""
-      echo "Available playbooks:"
-      if [[ -d "$REPO_PATH/ansible/playbooks" ]]; then
-        ls -1 "$REPO_PATH/ansible/playbooks"/*.yml 2>/dev/null | xargs -I {} basename {} .yml | sed 's/^/  /'
-      else
-        echo "  (Unable to list - ansible/playbooks directory not found)"
-      fi
-      echo ""
-      echo "The command automatically:"
-      echo "  - Uses the correct inventory (tofu_inventory.py)"
-      echo "  - Sets current cluster context and kubernetes version"
-      echo "  - Configures SSH options for seamless connection"
-      exit 0
-    fi
-
-    # Get playbook name and add .yml extension if not present
-    playbook_name="$1"
-    shift
-    if [[ "$playbook_name" != *.yml ]]; then
-      playbook_name="${playbook_name}.yml"
-    fi
-
-    # Check if playbook exists
-    if [[ ! -f "$REPO_PATH/ansible/playbooks/$playbook_name" ]]; then
-      echo -e "${RED}Error: Playbook '$playbook_name' not found in ansible/playbooks/${ENDCOLOR}" >&2
-      echo -e "${YELLOW}Available playbooks:${ENDCOLOR}" >&2
-      if [[ -d "$REPO_PATH/ansible/playbooks" ]]; then
-        ls -1 "$REPO_PATH/ansible/playbooks"/*.yml 2>/dev/null | xargs -I {} basename {} | sed 's/^/  /' >&2
-      fi
-      exit 1
-    fi
-
-    echo -e "${BLUE}Running playbook: $playbook_name${ENDCOLOR}"
-    if ! run_ansible_playbook "$playbook_name" "$@"; then
-      echo -e "${RED}Playbook execution failed!${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}Playbook '$playbook_name' completed successfully!${ENDCOLOR}"
-    ;;
-
-  clear-ssh-hosts)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc clear-ssh-hosts [--all] [--dry-run]"
-      echo ""
-      echo "Clear VM IP addresses from ~/.ssh/known_hosts to resolve SSH key conflicts"
-      echo "when VMs are recreated with the same IP addresses but new SSH keys."
-      echo ""
-      echo "Options:"
-      echo "  --all       Clear all VM IPs from all contexts (not just current)"
-      echo "  --dry-run   Show what would be removed without actually removing"
-      echo ""
-      echo "The command will:"
-      echo "  1. Get VM IP addresses from current Terraform/Tofu outputs"
-      echo "  2. Remove matching entries from ~/.ssh/known_hosts"
-      echo "  3. Display summary of removed entries"
-      echo ""
-      echo "Example usage:"
-      echo "  cpc clear-ssh-hosts           # Clear IPs from current context"
-      echo "  cpc clear-ssh-hosts --all     # Clear IPs from all contexts"
-      echo "  cpc clear-ssh-hosts --dry-run # Preview what would be removed"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    clear_all=false
-    dry_run=false
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --all)
-          clear_all=true
-          shift
-          ;;
-        --dry-run)
-          dry_run=true
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          echo "Use 'cpc clear-ssh-hosts --help' for usage information."
-          exit 1
-          ;;
-      esac
-    done
-
-    # Check if ~/.ssh/known_hosts exists
-    if [ ! -f ~/.ssh/known_hosts ]; then
-      echo -e "${YELLOW}No ~/.ssh/known_hosts file found. Nothing to clear.${ENDCOLOR}"
-      exit 0
-    fi
-
-    current_ctx=$(get_current_cluster_context)
-    repo_root=$(get_repo_path)
-    
-    echo -e "${BLUE}Clearing SSH known_hosts entries for VM IP addresses...${ENDCOLOR}"
-    
-    # Function to get VM IPs from a specific context
-    get_vm_ips_from_context() {
-      local context="$1"
-      local terraform_dir="$repo_root/terraform"
-      
-      # Change to terraform directory and select workspace
-      pushd "$terraform_dir" > /dev/null || return 1
-      
-      # Save current workspace before switching
-      local original_workspace
-      original_workspace=$(tofu workspace show 2>/dev/null)
-      
-      if ! tofu workspace select "$context" &>/dev/null; then
-        echo -e "${YELLOW}Warning: Could not select Tofu workspace '$context'${ENDCOLOR}" >&2
-        popd > /dev/null
-        return 1
-      fi
-      
-      # Get VM IPs from Tofu output
-      local vm_ips
-      vm_ips=$(tofu output -json k8s_node_ips 2>/dev/null)
-      
-      # Restore original workspace
-      if [ -n "$original_workspace" ] && [ "$original_workspace" != "$context" ]; then
-        tofu workspace select "$original_workspace" &>/dev/null
-      fi
-      
-      popd > /dev/null
-      
-      if [ -z "$vm_ips" ] || [ "$vm_ips" = "null" ] || [ "$vm_ips" = "{}" ]; then
-        return 1
-      fi
-      
-      # Extract IP addresses from JSON output
-      echo "$vm_ips" | jq -r 'to_entries[] | .value' 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
-    }
-    
-    # Collect all VM IPs to remove
-    vm_ips_to_clear=()
-    vm_hostnames_to_clear=()
-    
-    if [ "$clear_all" = true ]; then
-      echo -e "${BLUE}Collecting VM IPs from all contexts...${ENDCOLOR}"
-      
-      # Get all available workspaces
-      pushd "$repo_root/terraform" > /dev/null || { echo -e "${RED}Failed to access terraform directory${ENDCOLOR}"; exit 1; }
-      workspaces=$(tofu workspace list | grep -v '^\*' | sed 's/^[ *]*//' | grep -v '^default$')
-      popd > /dev/null
-      
-      for workspace in $workspaces; do
-        echo -e "${BLUE}  Checking context: $workspace${ENDCOLOR}"
-        ips=$(get_vm_ips_from_context "$workspace")
-        if [ -n "$ips" ]; then
-          while IFS= read -r ip; do
-            if [ -n "$ip" ]; then
-              vm_ips_to_clear+=("$ip")
-            fi
-          done <<< "$ips"
-          echo -e "${BLUE}    Found IPs: $(echo "$ips" | tr '\n' ' ')${ENDCOLOR}"
-        else
-          echo -e "${YELLOW}    No VMs found in context '$workspace'${ENDCOLOR}"
-        fi
-      done
-    else
-      echo -e "${BLUE}Collecting VM IPs from current context: $current_ctx${ENDCOLOR}"
-      ips=$(get_vm_ips_from_context "$current_ctx")
-      if [ -n "$ips" ]; then
-        while IFS= read -r ip; do
-          if [ -n "$ip" ]; then
-            vm_ips_to_clear+=("$ip")
-          fi
-        done <<< "$ips"
-        echo -e "${BLUE}  Found IPs: $(echo "$ips" | tr '\n' ' ')${ENDCOLOR}"
-      else
-        echo -e "${YELLOW}No VMs found in current context '$current_ctx'${ENDCOLOR}"
-        echo -e "${BLUE}Make sure VMs are deployed with 'cpc deploy apply'${ENDCOLOR}"
-        exit 0
-      fi
-    fi
-    
-    # Now get hostnames from cluster-info
-    vm_hostnames_to_clear=()
-    
-    # Get cluster information to extract hostnames
-    echo -e "${BLUE}Fetching hostname information from cluster...${ENDCOLOR}"
-    cluster_info=$(get_cluster_info "json" 2>/dev/null)
-    
-    if [ -n "$cluster_info" ] && [ "$cluster_info" != "null" ]; then
-      # Extract hostnames from cluster info
-      while IFS= read -r hostname; do
-        if [ -n "$hostname" ]; then
-          vm_hostnames_to_clear+=("$hostname")
-        fi
-      done < <(echo "$cluster_info" | jq -r 'to_entries[] | .value.hostname')
-      
-      echo -e "${BLUE}  Found hostnames: ${vm_hostnames_to_clear[*]} ${ENDCOLOR}"
-    else
-      echo -e "${YELLOW}  Could not get hostnames from cluster info, using default naming pattern${ENDCOLOR}"
-      
-      # Add common hostname patterns based on current context
-      # Hardcoded hostnames for the common pattern used in the cluster
-      vm_hostnames_to_clear+=(
-        "ck1.bevz.net" "wk1.bevz.net" "wk2.bevz.net" "wk3.bevz.net"
-        "ck1" "wk1" "wk2" "wk3"
-      )
-      
-      echo -e "${BLUE}  Added default hostnames: ${vm_hostnames_to_clear[*]} ${ENDCOLOR}"
-    fi
-    
-    # Add short hostnames (without domain suffix)
-    short_hostnames=()
-    for hostname in "${vm_hostnames_to_clear[@]}"; do
-      short_name=$(echo "$hostname" | cut -d. -f1)
-      if [[ "$short_name" != "$hostname" ]]; then
-        short_hostnames+=("$short_name")
-      fi
-    done
-    
-    # Add short hostnames to the list
-    if [ ${#short_hostnames[@]} -gt 0 ]; then
-      vm_hostnames_to_clear+=("${short_hostnames[@]}")
-    fi
-    
-    # Remove duplicates from IPs and hostnames
-    vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u))
-    vm_hostnames_to_clear=($(printf '%s\n' "${vm_hostnames_to_clear[@]}" | sort -u))
-    
-    if [ ${#vm_ips_to_clear[@]} -eq 0 ]; then
-      echo -e "${YELLOW}No VM IP addresses found to clear.${ENDCOLOR}"
-      exit 0
-    fi
-    
-    echo -e "${BLUE}VM entries to clear from ~/.ssh/known_hosts:${ENDCOLOR}"
-    echo -e "${BLUE}  IP addresses:${ENDCOLOR}"
-    for ip in "${vm_ips_to_clear[@]}"; do
-      echo -e "${BLUE}    - $ip${ENDCOLOR}"
-    done
-    
-    echo -e "${BLUE}  Hostnames:${ENDCOLOR}"
-    for hostname in "${vm_hostnames_to_clear[@]}"; do
-      echo -e "${BLUE}    - $hostname${ENDCOLOR}"
-    done
-    
-    if [ "$dry_run" = true ]; then
-      echo -e "${YELLOW}Dry run mode - showing what would be removed:${ENDCOLOR}"
-      for ip in "${vm_ips_to_clear[@]}"; do
-        entries=$(grep -n "^$ip " ~/.ssh/known_hosts 2>/dev/null || true)
-        if [ -n "$entries" ]; then
-          echo -e "${YELLOW}  Would remove entries for $ip:${ENDCOLOR}"
-          echo "$entries" | sed 's/^/    /'
-        else
-          echo -e "${BLUE}  No entries found for $ip${ENDCOLOR}"
-        fi
-      done
-      echo -e "${BLUE}Run without --dry-run to actually remove entries.${ENDCOLOR}"
-      exit 0
-    fi
-    
-    # Create backup of known_hosts
-    backup_file=~/.ssh/known_hosts.backup.$(date +%Y%m%d_%H%M%S)
-    cp ~/.ssh/known_hosts "$backup_file"
-    echo -e "${BLUE}Created backup: $backup_file${ENDCOLOR}"
-    
-    # Get hostnames for each IP using DNS lookup
-    declare -A ip_to_hostname
-    for ip in "${vm_ips_to_clear[@]}"; do
-      # Try to get hostname using reverse DNS lookup
-      hostname=$(getent hosts "$ip" | awk '{print $2}' 2>/dev/null || echo "")
-      if [ -n "$hostname" ]; then
-        ip_to_hostname["$ip"]=$hostname
-      fi
-    done
-    
-    # Remove entries for each IP and hostname
-    removed_count=0
-    
-    # First process IPs
-    for ip in "${vm_ips_to_clear[@]}"; do
-      # Count entries before removal
-      before_count=$(grep -c "^$ip " ~/.ssh/known_hosts 2>/dev/null || echo "0")
-      # Make sure before_count is a clean integer
-      before_count=$(echo "$before_count" | tr -d '\n\r')
-      
-      if [ "$before_count" -gt 0 ]; then
-        # Remove entries for this IP
-        sed -i "/^$ip /d" ~/.ssh/known_hosts
-        
-        # Count entries after removal
-        after_count=$(grep -c "^$ip " ~/.ssh/known_hosts 2>/dev/null || echo "0")
-        # Make sure after_count is a clean integer
-        after_count=$(echo "$after_count" | tr -d '\n\r')
-        entries_removed=$((before_count - after_count))
-        
-        if [ $entries_removed -gt 0 ]; then
-          echo -e "${GREEN}  Removed $entries_removed entries for IP $ip${ENDCOLOR}"
-          removed_count=$((removed_count + entries_removed))
-        fi
-      else
-        echo -e "${BLUE}  No entries found for IP $ip${ENDCOLOR}"
-      fi
-    done
-    
-    # Then process hostnames - both from the cluster and from DNS lookups
-    all_hostnames=()
-    
-    # Add hostnames from cluster info if available
-    if [ ${#vm_hostnames_to_clear[@]} -gt 0 ]; then
-      for hostname in "${vm_hostnames_to_clear[@]}"; do
-        all_hostnames+=("$hostname")
-      done
-    fi
-    
-    # Add hostnames from DNS lookups
-    for ip in "${!ip_to_hostname[@]}"; do
-      hostname="${ip_to_hostname[$ip]}"
-      # Check if hostname is already in the list
-      if [[ ! " ${all_hostnames[*]} " =~ " ${hostname} " ]]; then
-        all_hostnames+=("$hostname")
-      fi
-    done
-    
-    # Process each hostname
-    for hostname in "${all_hostnames[@]}"; do
-      # Skip empty hostnames
-      [ -z "$hostname" ] && continue
-      
-      # Count entries before removal
-      before_count=$(grep -c "^$hostname " ~/.ssh/known_hosts 2>/dev/null || echo "0")
-      # Make sure before_count is a clean integer
-      before_count=$(echo "$before_count" | tr -d '\n\r')
-      
-      if [ "$before_count" -gt 0 ]; then
-        # Remove entries for this hostname
-        sed -i "/^$hostname /d" ~/.ssh/known_hosts
-        
-        # Count entries after removal
-        after_count=$(grep -c "^$hostname " ~/.ssh/known_hosts 2>/dev/null || echo "0")
-        # Make sure after_count is a clean integer
-        after_count=$(echo "$after_count" | tr -d '\n\r')
-        entries_removed=$((before_count - after_count))
-        
-        if [ $entries_removed -gt 0 ]; then
-          echo -e "${GREEN}  Removed $entries_removed entries for hostname $hostname${ENDCOLOR}"
-          removed_count=$((removed_count + entries_removed))
-        fi
-      else
-        echo -e "${BLUE}  No entries found for hostname $hostname${ENDCOLOR}"
-      fi
-    done
-    
-    # Use ssh-keygen -R for more reliable removal of host entries
-    echo -e "${BLUE}Using ssh-keygen to remove hostname entries...${ENDCOLOR}"
-    
-    # For IPs
-    for ip in "${vm_ips_to_clear[@]}"; do
-      # Try with ssh-keygen -R which handles entries better
-      ssh-keygen -R "$ip" &>/dev/null
-      if [ $? -eq 0 ]; then
-        echo -e "${GREEN}  Removed entries for IP $ip using ssh-keygen${ENDCOLOR}"
-        removed_count=$((removed_count + 1))
-      fi
-    done
-    
-    # Now use hostnames from the list we built earlier
-    for hostname in "${vm_hostnames_to_clear[@]}"; do
-      # Skip empty hostnames
-      [ -z "$hostname" ] && continue
-      
-      # Try with ssh-keygen -R which handles entries better
-      output=$(ssh-keygen -R "$hostname" 2>&1)
-      if [ $? -eq 0 ] || [[ "$output" == *"Host $hostname found:"* ]]; then
-        echo -e "${GREEN}  Removed entries for hostname $hostname using ssh-keygen${ENDCOLOR}"
-        removed_count=$((removed_count + 1))
-      else
-        echo -e "${BLUE}  No entries found for hostname $hostname${ENDCOLOR}"
-      fi
-    done
-    
-    if [ $removed_count -gt 0 ]; then
-      echo -e "${GREEN}Successfully removed $removed_count SSH known_hosts entries.${ENDCOLOR}"
-      echo -e "${BLUE}Backup saved to: $backup_file${ENDCOLOR}"
-    else
-      echo -e "${YELLOW}No SSH known_hosts entries were removed.${ENDCOLOR}"
-      # Remove backup if nothing was changed
-      rm -f "$backup_file"
-    fi
-    
-    echo -e "${BLUE}SSH known_hosts cleanup completed.${ENDCOLOR}"
-    ;;
-
-  clear-ssh-maps)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc clear-ssh-maps [--all] [--dry-run]"
-      echo ""
-      echo "Clear SSH control sockets and connections for VMs to resolve SSH connection issues"
-      echo "when VMs are recreated or SSH configurations change."
-      echo ""
-      echo "Options:"
-      echo "  --all       Clear SSH connections for all contexts (not just current)"
-      echo "  --dry-run   Show what would be cleared without actually clearing"
-      echo ""
-      echo "The command will:"
-      echo "  1. Get VM IP addresses from current Terraform/Tofu outputs"
-      echo "  2. Close active SSH connections to those IPs"
-      echo "  3. Remove SSH control sockets (if ControlMaster is enabled)"
-      echo "  4. Display summary of cleared connections"
-      echo ""
-      echo "Example usage:"
-      echo "  cpc clear-ssh-maps           # Clear SSH connections for current context"
-      echo "  cpc clear-ssh-maps --all     # Clear SSH connections for all contexts"
-      echo "  cpc clear-ssh-maps --dry-run # Preview what would be cleared"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    clear_all=false
-    dry_run=false
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --all)
-          clear_all=true
-          shift
-          ;;
-        --dry-run)
-          dry_run=true
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          echo "Use 'cpc clear-ssh-maps --help' for usage information."
-          exit 1
-          ;;
-      esac
-    done
-
-    current_ctx=$(get_current_cluster_context)
-    repo_root=$(get_repo_path)
-    
-    echo -e "${BLUE}Clearing SSH connections and control sockets for VM IP addresses...${ENDCOLOR}"
-    
-    # Function to get VM IPs from a specific context (reuse from clear-ssh-hosts)
-    get_vm_ips_from_context() {
-      local context="$1"
-      local terraform_dir="$repo_root/terraform"
-      
-      # Change to terraform directory and select workspace
-      pushd "$terraform_dir" > /dev/null || return 1
-      
-      # Save current workspace before switching
-      local original_workspace
-      original_workspace=$(tofu workspace show 2>/dev/null)
-      
-      if ! tofu workspace select "$context" &>/dev/null; then
-        echo -e "${YELLOW}Warning: Could not select Tofu workspace '$context'${ENDCOLOR}" >&2
-        popd > /dev/null
-        return 1
-      fi
-      
-      # Get VM IPs from Tofu output
-      local vm_ips
-      vm_ips=$(tofu output -json k8s_node_ips 2>/dev/null)
-      
-      # Restore original workspace
-      if [ -n "$original_workspace" ] && [ "$original_workspace" != "$context" ]; then
-        tofu workspace select "$original_workspace" &>/dev/null
-      fi
-      
-      popd > /dev/null
-      
-      if [ -z "$vm_ips" ] || [ "$vm_ips" = "null" ] || [ "$vm_ips" = "{}" ]; then
-        return 1
-      fi
-      
-      # Extract IP addresses from JSON output
-      echo "$vm_ips" | jq -r 'to_entries[] | .value' 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
-    }
-    
-    # Collect all VM IPs to clear
-    vm_ips_to_clear=()
-    
-    if [ "$clear_all" = true ]; then
-      echo -e "${BLUE}Collecting VM IPs from all contexts...${ENDCOLOR}"
-      
-      # Get all available workspaces
-      pushd "$repo_root/terraform" > /dev/null || { echo -e "${RED}Failed to access terraform directory${ENDCOLOR}"; exit 1; }
-      workspaces=$(tofu workspace list | grep -v '^\*' | sed 's/^[ *]*//' | grep -v '^default$')
-      popd > /dev/null
-      
-      for workspace in $workspaces; do
-        echo -e "${BLUE}  Checking context: $workspace${ENDCOLOR}"
-        ips=$(get_vm_ips_from_context "$workspace")
-        if [ -n "$ips" ]; then
-          while IFS= read -r ip; do
-            if [ -n "$ip" ]; then
-              vm_ips_to_clear+=("$ip")
-            fi
-          done <<< "$ips"
-          echo -e "${BLUE}    Found IPs: $(echo "$ips" | tr '\n' ' ')${ENDCOLOR}"
-        else
-          echo -e "${YELLOW}    No VMs found in context '$workspace'${ENDCOLOR}"
-        fi
-      done
-    else
-      echo -e "${BLUE}Collecting VM IPs from current context: $current_ctx${ENDCOLOR}"
-      ips=$(get_vm_ips_from_context "$current_ctx")
-      if [ -n "$ips" ]; then
-        while IFS= read -r ip; do
-          if [ -n "$ip" ]; then
-            vm_ips_to_clear+=("$ip")
-          fi
-        done <<< "$ips"
-        echo -e "${BLUE}  Found IPs: $(echo "$ips" | tr '\n' ' ')${ENDCOLOR}"
-      else
-        echo -e "${YELLOW}No VMs found in current context '$current_ctx'${ENDCOLOR}"
-        echo -e "${BLUE}Make sure VMs are deployed with 'cpc deploy apply'${ENDCOLOR}"
-        exit 0
-      fi
-    fi
-    
-    # Remove duplicates
-    vm_ips_to_clear=($(printf '%s\n' "${vm_ips_to_clear[@]}" | sort -u))
-    
-    if [ ${#vm_ips_to_clear[@]} -eq 0 ]; then
-      echo -e "${YELLOW}No VM IP addresses found to clear SSH connections for.${ENDCOLOR}"
-      exit 0
-    fi
-    
-    echo -e "${BLUE}VM IP addresses to clear SSH connections for:${ENDCOLOR}"
-    for ip in "${vm_ips_to_clear[@]}"; do
-      echo -e "${BLUE}  - $ip${ENDCOLOR}"
-    done
-    
-    # Find SSH control sockets and active connections
-    connections_found=0
-    sockets_found=0
-    
-    if [ "$dry_run" = true ]; then
-      echo -e "${YELLOW}Dry run mode - showing what would be cleared:${ENDCOLOR}"
-      
-      for ip in "${vm_ips_to_clear[@]}"; do
-        echo -e "${BLUE}  Checking SSH connections for $ip:${ENDCOLOR}"
-        
-        # Check for active SSH connections
-        active_connections=$(ps aux | grep -E "ssh.*$ip" | grep -v grep | grep -v "clear-ssh-maps" || true)
-        if [ -n "$active_connections" ]; then
-          echo -e "${YELLOW}    Active SSH connections found:${ENDCOLOR}"
-          echo "$active_connections" | sed 's/^/      /'
-          connections_found=$((connections_found + 1))
-        fi
-        
-        # Check for SSH control sockets in common locations
-        socket_locations=(
-          "$HOME/.ssh/sockets"
-          "$HOME/.ssh/connections"
-          "$HOME/.ssh/master"
-          "/tmp"
-        )
-        
-        for socket_dir in "${socket_locations[@]}"; do
-          if [ -d "$socket_dir" ]; then
-            sockets=$(find "$socket_dir" -name "*$ip*" -type s 2>/dev/null || true)
-            if [ -n "$sockets" ]; then
-              echo -e "${YELLOW}    SSH control sockets found in $socket_dir:${ENDCOLOR}"
-              echo "$sockets" | sed 's/^/      /'
-              sockets_found=$((sockets_found + $(echo "$sockets" | wc -l)))
-            fi
-          fi
-        done
-        
-        if [ -z "$active_connections" ] && [ $sockets_found -eq 0 ]; then
-          echo -e "${BLUE}    No SSH connections or sockets found for $ip${ENDCOLOR}"
-        fi
-      done
-      
-      echo -e "${BLUE}Total connections to close: $connections_found${ENDCOLOR}"
-      echo -e "${BLUE}Total sockets to remove: $sockets_found${ENDCOLOR}"
-      echo -e "${BLUE}Run without --dry-run to actually clear connections.${ENDCOLOR}"
-      exit 0
-    fi
-    
-    # Actually clear SSH connections and sockets
-    cleared_connections=0
-    cleared_sockets=0
-    
-    for ip in "${vm_ips_to_clear[@]}"; do
-      echo -e "${BLUE}  Clearing SSH connections for $ip...${ENDCOLOR}"
-      
-      # Kill active SSH connections
-      ssh_pids=$(ps aux | grep -E "ssh.*$ip" | grep -v grep | grep -v "clear-ssh-maps" | awk '{print $2}' || true)
-      if [ -n "$ssh_pids" ]; then
-        for pid in $ssh_pids; do
-          if kill "$pid" 2>/dev/null; then
-            echo -e "${GREEN}    Closed SSH connection (PID: $pid)${ENDCOLOR}"
-            cleared_connections=$((cleared_connections + 1))
-          fi
-        done
-      fi
-      
-      # Remove SSH control sockets
-      socket_locations=(
-        "$HOME/.ssh/sockets"
-        "$HOME/.ssh/connections"
-        "$HOME/.ssh/master"
-        "/tmp"
-      )
-      
-      for socket_dir in "${socket_locations[@]}"; do
-        if [ -d "$socket_dir" ]; then
-          sockets=$(find "$socket_dir" -name "*$ip*" -type s 2>/dev/null || true)
-          if [ -n "$sockets" ]; then
-            while IFS= read -r socket; do
-              if [ -n "$socket" ] && rm -f "$socket" 2>/dev/null; then
-                echo -e "${GREEN}    Removed SSH socket: $(basename "$socket")${ENDCOLOR}"
-                cleared_sockets=$((cleared_sockets + 1))
-              fi
-            done <<< "$sockets"
-          fi
-        fi
-      done
-    done
-    
-    # Also check for SSH master connections that might use different naming
-    echo -e "${BLUE}Checking for SSH master connections...${ENDCOLOR}"
-    for ip in "${vm_ips_to_clear[@]}"; do
-      # Try to close SSH master connections using ssh -O exit
-      if ssh -O check "$ip" 2>/dev/null; then
-        if ssh -O exit "$ip" 2>/dev/null; then
-          echo -e "${GREEN}  Closed SSH master connection to $ip${ENDCOLOR}"
-          cleared_connections=$((cleared_connections + 1))
-        fi
-      fi
-    done
-    
-    echo -e "${GREEN}SSH connection cleanup completed:${ENDCOLOR}"
-    echo -e "${GREEN}  - Closed $cleared_connections active connections${ENDCOLOR}"
-    echo -e "${GREEN}  - Removed $cleared_sockets control sockets${ENDCOLOR}"
-    
-    if [ $cleared_connections -eq 0 ] && [ $cleared_sockets -eq 0 ]; then
-      echo -e "${YELLOW}No SSH connections or sockets were found to clear.${ENDCOLOR}"
-    fi
-    ;;
-
-  add-nodes)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc add-nodes [--target-hosts <hosts>] [--node-type <worker|control>]"
-      echo ""
-      echo "Add new nodes to the Kubernetes cluster."
-      echo ""
-      echo "Options:"
-      echo "  --target-hosts <hosts>  Specify target hosts (default: new_workers)"
-      echo "  --node-type <type>      Node type: worker or control (default: worker)"
-      echo ""
-      echo "Note: Ensure new nodes are added to your Terraform configuration first."
-      exit 0
-    fi
-
-    # Parse command line arguments
-    target_hosts="new_workers"
-    node_type="worker"
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --target-hosts)
-          target_hosts="$2"
-          shift 2
-          ;;
-        --node-type)
-          node_type="$2"
-          shift 2
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    echo -e "${BLUE}Adding $node_type nodes to the cluster...${ENDCOLOR}"
-    run_ansible_playbook "pb_add_nodes.yml" -l "$target_hosts" -e "node_type=$node_type"
-    ;;
-
-  prepare-node)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc prepare-node <hostname|IP>"
-      echo ""
-      echo "Install Kubernetes components (kubelet, kubeadm, kubectl, containerd) on a new VM"
-      echo "before joining it to the cluster. This prepares VMs created with 'add-vm' for cluster membership."
-      echo ""
-      echo "Arguments:"
-      echo "  <hostname|IP>  Target VM hostname or IP address"
-      echo ""
-      echo "Examples:"
-      echo "  cpc prepare-node wk3.bevz.net"
-      echo "  cpc prepare-node 10.10.10.112"
-      echo ""
-      echo "After preparation, use 'cpc add-nodes --target-hosts <hostname|IP>' to join the cluster."
-      exit 0
-    fi
-
-    if [[ $# -eq 0 ]]; then
-      echo -e "${RED}Error: hostname or IP address required${ENDCOLOR}" >&2
-      echo "Usage: cpc prepare-node <hostname|IP>"
-      echo "Use 'cpc prepare-node --help' for more information."
-      exit 1
-    fi
-
-    target_node="$1"
-    echo -e "${BLUE}Preparing node '$target_node' with Kubernetes components...${ENDCOLOR}"
-    echo -e "${BLUE}Installing kubelet, kubeadm, kubectl, and containerd...${ENDCOLOR}"
-    
-    run_ansible_playbook "install_kubernetes_cluster.yml" -l "$target_node"
-    
-    if [[ $? -eq 0 ]]; then
-      echo -e "${GREEN}Node '$target_node' successfully prepared!${ENDCOLOR}"
-      echo -e "${BLUE}Next step: Join to cluster with 'cpc add-nodes --target-hosts $target_node'${ENDCOLOR}"
-    else
-      echo -e "${RED}Failed to prepare node '$target_node'${ENDCOLOR}" >&2
-      exit 1
-    fi
-    ;;
-
-  update-inventory)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc update-inventory"
-      echo ""
-      echo "Update the Ansible inventory cache from current cluster state."
-      echo "This command fetches the latest cluster information and updates"
-      echo "the inventory cache file used by Ansible playbooks."
-      echo ""
-      echo "This is automatically called before Ansible operations, but can be"
-      echo "run manually to troubleshoot inventory issues."
-      exit 0
-    fi
-
-    echo -e "${BLUE}Updating Ansible inventory cache...${ENDCOLOR}"
-    
-    repo_root=$(get_repo_path)
-    cache_file="$repo_root/.ansible_inventory_cache.json"
-    terraform_dir="$repo_root/terraform"
-    
-    if [ ! -d "$terraform_dir" ]; then
-      echo -e "${RED}Error: terraform directory not found at $terraform_dir${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    # Export AWS credentials for terraform backend (needed for tofu output)
-    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
-    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
-    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
-
-    # Load current cluster info using cluster-info (which handles credentials)
-    echo -e "${YELLOW}Getting cluster information...${ENDCOLOR}"
-    
-    # Get cluster info and extract only the JSON part (last line that starts with {)
-    cluster_info_output=$(./cpc cluster-info --format json 2>/dev/null)
-    cluster_summary=$(echo "$cluster_info_output" | grep '^{.*}$' | tail -1)
-    
-    if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
-      echo -e "${RED}Error: Could not get cluster information from terraform${ENDCOLOR}" >&2
-      echo -e "${BLUE}Make sure terraform is applied and cluster is running${ENDCOLOR}"
-      exit 1
-    fi
-    
-    if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
-      echo -e "${RED}Error: Could not get cluster information from terraform${ENDCOLOR}" >&2
-      echo -e "${BLUE}Make sure terraform is applied and cluster is running${ENDCOLOR}"
-      exit 1
-    fi
-    
-    # Generate inventory from cluster_summary
-    inventory_json=$(echo "$cluster_summary" | jq '{
-      "_meta": {
-        "hostvars": (
-          to_entries | reduce .[] as $item ({}; 
-            . + {
-              ($item.value.IP): {
-                "ansible_host": $item.value.IP,
-                "node_name": $item.key,
-                "hostname": $item.value.hostname,
-                "vm_id": $item.value.VM_ID,
-                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
-              }
-            } + {
-              ($item.value.hostname): {
-                "ansible_host": $item.value.IP,
-                "node_name": $item.key,
-                "hostname": $item.value.hostname,
-                "vm_id": $item.value.VM_ID,
-                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
-              }
-            }
-          )
-        )
-      },
-      "all": {
-        "children": ["control_plane", "workers"]
-      },
-      "control_plane": {
-        "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("controlplane")) | .value.hostname) | .[]]
-      },
-      "workers": {
-        "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("worker")) | .value.hostname) | .[]]
-      }
-    }')
-    
-    # Write to cache file
-    echo "$inventory_json" > "$cache_file"
-    
-    echo -e "${GREEN}Ansible inventory cache updated at $cache_file${ENDCOLOR}"
-    echo -e "${BLUE}Inventory contents:${ENDCOLOR}"
-    jq '.' "$cache_file"
-    ;;
-
-  remove-nodes)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc remove-nodes [--target-hosts <hosts>]"
-      echo "   or: cpc remove-nodes <single-host>"
-      echo ""
-      echo "Remove nodes from the Kubernetes cluster."
-      echo "This will drain the nodes and remove them from the cluster."
-      echo ""
-      echo "Options:"
-      echo "  --target-hosts <hosts>  Specify target hosts (comma-separated for multiple)"
-      echo "  <single-host>          Single hostname to remove (without --target-hosts)"
-      echo ""
-      echo "Examples:"
-      echo "  cpc remove-nodes worker3"
-      echo "  cpc remove-nodes --target-hosts \"worker3,worker4\""
-      echo ""
-      echo "Note: This only removes from Kubernetes cluster."
-      echo "Use 'cpc remove-vm' to destroy VMs."
-      exit 0
-    fi
-
-    # Handle single host argument (no flag)
-    if [[ $# -eq 1 && "$1" != --* ]]; then
-      target_hosts="$1"
-    else
-      # Parse command line arguments
-      target_hosts=""
-      
-      while [[ $# -gt 0 ]]; do
-        case $1 in
-          --target-hosts)
-            target_hosts="$2"
-            shift 2
-            ;;
-          *)
-            echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-            exit 1
-            ;;
-        esac
-      done
-    fi
-
-    if [ -z "$target_hosts" ]; then
-      echo -e "${RED}Error: --target-hosts is required${ENDCOLOR}" >&2
-      echo "Use: cpc remove-nodes --target-hosts \"<node-name>\""
-      exit 1
-    fi
-
-    echo -e "${BLUE}Removing nodes from the cluster: $target_hosts${ENDCOLOR}"
-    
-    # First drain the nodes
-    echo -e "${BLUE}Draining nodes...${ENDCOLOR}"
-    for host in $(echo "$target_hosts" | tr ',' ' '); do
-      echo -e "${BLUE}Draining node: $host${ENDCOLOR}"
-      run_ansible_playbook "pb_drain_node.yml" -e "node_to_drain=$host"
-    done
-    
-    # Then delete from cluster
-    echo -e "${BLUE}Deleting nodes from cluster...${ENDCOLOR}"
-    for host in $(echo "$target_hosts" | tr ',' ' '); do
-      echo -e "${BLUE}Deleting node: $host${ENDCOLOR}"
-      run_ansible_playbook "pb_delete_node.yml" -e "node_to_delete=$host"
-    done
-    ;;
-
-  drain-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc drain-node <node_name> [--force] [--delete-emptydir-data]" # Changed from ccr
-      exit 1
-    fi
-    node_name="$1"
-    shift
-    extra_cli_opts="$*" # Pass through any remaining options like --force
-    run_ansible_playbook "pb_drain_node.yml" -e "node_to_drain=$node_name" -e "drain_options=$extra_cli_opts"
-    ;;
-
-  upgrade-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc upgrade-node <node_name> [--target-version <version>] [--skip-drain]"
-      echo ""
-      echo "Upgrade Kubernetes on a specific node."
-      echo ""
-      echo "Options:"
-      echo "  --target-version <version>  Target Kubernetes version (default: from environment)"
-      echo "  --skip-drain               Skip draining the node before upgrade"
-      echo ""
-      echo "The upgrade process will:"
-      echo "  1. Drain the node (unless --skip-drain is specified)"
-      echo "  2. Upgrade Kubernetes packages"
-      echo "  3. Restart kubelet service"
-      echo "  4. Uncordon the node"
-      exit 1
-    fi
-    
-    node_name="$1"
-    shift
-    
-    # Parse remaining arguments
-    target_version=""
-    skip_drain="false"
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --target-version)
-          target_version="$2"
-          shift 2
-          ;;
-        --skip-drain)
-          skip_drain="true"
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    extra_vars="-e target_node=$node_name -e skip_drain=$skip_drain"
-    if [ -n "$target_version" ]; then
-      # Split version into major.minor and patch parts if needed
-      if [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # Full version like 1.33.0
-        k8s_major_minor=$(echo "$target_version" | cut -d'.' -f1-2)
-        k8s_patch=$(echo "$target_version" | cut -d'.' -f3)
-        extra_vars="$extra_vars -e target_k8s_version=$k8s_major_minor -e kubernetes_patch_version=$k8s_patch"
-      else
-        # Just major.minor like 1.33
-        extra_vars="$extra_vars -e target_k8s_version=$target_version"
-      fi
-    fi
-
-    echo -e "${BLUE}Upgrading Kubernetes on node: $node_name${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_node.yml" -l "$node_name" $extra_vars
-    ;;
-
-  reset-node)
-    if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc reset-node <node_name_or_ip>" # Changed from ccr
-      exit 1
-    fi
-    node_name="$1"
-    run_ansible_playbook "pb_reset_node.yml" -l "$node_name"
-    ;;
-
-  reset-all-nodes)
-    read -r -p "Are you sure you want to reset Kubernetes on ALL nodes in context '$(get_current_cluster_context)'? [y/N] " response
-    if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-      run_ansible_playbook "pb_reset_all_nodes.yml"
-    else
-      echo "Operation cancelled."
-    fi
-    ;;
-
-  upgrade-addons)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc upgrade-addons [--addon <name>] [--version <version>]"
-      echo ""
-      echo "Install or upgrade cluster addons. Shows interactive menu if no --addon specified."
-      echo ""
-      echo "Options:"
-      echo "  --addon <name>     Force specific addon to install/upgrade (skips menu)"
-      echo "  --version <version> Target version for the addon (default: from environment variables)"
-      echo ""
-      echo "Available addons:"
-      echo "  - calico: Calico CNI networking"
-      echo "  - metallb: MetalLB load balancer"
-      echo "  - metrics-server: Kubernetes Metrics Server"
-      echo "  - coredns: CoreDNS DNS server"
-      echo "  - cert-manager: Certificate manager for Kubernetes"
-      echo "  - kubelet-serving-cert-approver: Automatic approval of kubelet serving certificates"
-      echo "  - argocd: ArgoCD GitOps continuous delivery"
-      echo "  - ingress-nginx: NGINX Ingress Controller"
-      echo "  - all: Install/upgrade all addons"
-      echo ""
-      echo "Examples:"
-      echo "  cpc upgrade-addons                    # Show interactive menu"
-      echo "  cpc upgrade-addons --addon all        # Install all addons directly"
-      echo "  cpc upgrade-addons --addon calico     # Install only Calico"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    addon_name=""
-    addon_version=""
-    force_addon=""
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --addon)
-          force_addon="$2"
-          shift 2
-          ;;
-        --version)
-          addon_version="$2"
-          shift 2
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    # If no addon specified via --addon, show interactive menu
-    if [ -z "$force_addon" ]; then
-      echo -e "${BLUE}Select addon to install/upgrade:${ENDCOLOR}"
-      echo ""
-      echo "  1) all                                 - Install/upgrade all addons"
-      echo "  2) calico                              - Calico CNI networking"
-      echo "  3) metallb                             - MetalLB load balancer"
-      echo "  4) metrics-server                      - Kubernetes Metrics Server" 
-      echo "  5) coredns                             - CoreDNS DNS server"
-      echo "  6) cert-manager                        - Certificate manager"
-      echo "  7) kubelet-serving-cert-approver       - Kubelet cert approver"
-      echo "  8) argocd                              - ArgoCD GitOps"
-      echo "  9) ingress-nginx                       - NGINX Ingress Controller"
-      echo ""
-      read -r -p "Enter your choice [1-9]: " choice
-      
-      case $choice in
-        1) addon_name="all" ;;
-        2) addon_name="calico" ;;
-        3) addon_name="metallb" ;;
-        4) addon_name="metrics-server" ;;
-        5) addon_name="coredns" ;;
-        6) addon_name="cert-manager" ;;
-        7) addon_name="kubelet-serving-cert-approver" ;;
-        8) addon_name="argocd" ;;
-        9) addon_name="ingress-nginx" ;;
-        *) 
-          echo -e "${RED}Invalid choice: $choice${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    else
-      addon_name="$force_addon"
-    fi
-
-    # Validate addon name
-    case "$addon_name" in
-      calico|metallb|metrics-server|coredns|cert-manager|kubelet-serving-cert-approver|argocd|ingress-nginx|all)
-        ;;
-      *)
-        echo -e "${RED}Invalid addon name: $addon_name${ENDCOLOR}" >&2
-        echo -e "${RED}Valid options: calico, metallb, metrics-server, coredns, cert-manager, kubelet-serving-cert-approver, argocd, ingress-nginx, all${ENDCOLOR}" >&2
-        exit 1
-        ;;
-    esac
-
-    extra_vars="-e addon_name=$addon_name"
-    if [ -n "$addon_version" ]; then
-      extra_vars="$extra_vars -e addon_version=$addon_version"
-    fi
-
-    echo -e "${BLUE}Installing/upgrading cluster addon(s): $addon_name${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_addons_extended.yml" -l control_plane -e "addon_name=$addon_name" $([ -n "$addon_version" ] && echo "-e addon_version=$addon_version")
-    ;;
-
-  upgrade-k8s)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc upgrade-k8s [--target-version <version>] [--skip-etcd-backup]"
-      echo ""
-      echo "Upgrade Kubernetes control plane components."
-      echo ""
-      echo "Options:"
-      echo "  --target-version <version>  Target Kubernetes version (default: from environment)"
-      echo "  --skip-etcd-backup         Skip etcd backup before upgrade"
-      echo ""
-      echo "The upgrade process will:"
-      echo "  1. Backup etcd (unless --skip-etcd-backup is specified)"
-      echo "  2. Upgrade control plane components on each control plane node"
-      echo "  3. Verify cluster health after upgrade"
-      echo ""
-      echo "Warning: This will upgrade the control plane. Ensure you have backups!"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    target_version=""
-    skip_etcd_backup="false"
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --target-version)
-          target_version="$2"
-          shift 2
-          ;;
-        --skip-etcd-backup)
-          skip_etcd_backup="true"
-          shift
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    # Confirmation prompt
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${YELLOW}Warning: This will upgrade the Kubernetes control plane for context '$current_ctx'.${ENDCOLOR}"
-    read -r -p "Are you sure you want to continue? [y/N] " response
-    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-      echo "Operation cancelled."
-      exit 0
-    fi
-
-    extra_vars="-e skip_etcd_backup=$skip_etcd_backup"
-    if [ -n "$target_version" ]; then
-      extra_vars="$extra_vars -e target_k8s_version=$target_version"
-    fi
-
-    echo -e "${BLUE}Upgrading Kubernetes control plane...${ENDCOLOR}"
-    run_ansible_playbook "pb_upgrade_k8s_control_plane.yml" -l control_plane -e "skip_etcd_backup=$skip_etcd_backup" $([ -n "$target_version" ] && echo "-e target_k8s_version=$target_version")
-    ;;
-
-  vmctl)
-    echo -e "${BLUE}VM control (start, stop, create, delete) is primarily managed by Tofu in this project.${ENDCOLOR}" # Changed from Terraform
-    echo -e "${BLUE}Please use 'tofu apply', 'tofu destroy', or modify your .tfvars and re-apply.${ENDCOLOR}" # Changed from terraform
-    echo -e "${BLUE}Example: To stop a VM, you might comment it out in Tofu and apply, or use Proxmox UI/API directly.${ENDCOLOR}" # Changed from Terraform
-    # Placeholder for future direct VM interactions if needed via Proxmox API etc.
-    # run_ansible_playbook "pb_vm_control.yml" "localhost" "-e vm_name=$1 -e action=$2"
-    ;;
-
-  run-command)
-    if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc run-command <target_hosts_or_group> \"<shell_command_to_run>\""
-      echo ""
-      echo "Runs a shell command on specified hosts or groups using Ansible."
-      echo ""
-      echo "Examples:"
-      echo "  cpc run-command control_plane \"hostname -f\""
-      echo "  cpc run-command all \"sudo apt update\""
-      echo "  cpc run-command workers \"systemctl status kubelet\""
-      echo ""
-      echo "Available target groups: all, control_plane, workers"
-      exit 0
-    fi
-    target="$1"
-    shell_cmd="$2"
-    run_ansible_playbook "pb_run_command.yml" -l "$target" -e "command_to_run=$shell_cmd"
-    ;;
-
-  dns-pihole)
-    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ -z "$1" ]]; then
-      echo "Usage: cpc dns-pihole <action>"
-      echo "Manages Pi-hole DNS records with VM FQDNs and IPs from the current Tofu workspace outputs."
-      echo "Actions:"
-      echo "  list             - Display current DNS records in Pi-hole"
-      echo "  add              - Add all missing DNS records to Pi-hole"
-      echo "  unregister-dns   - Remove all cluster DNS records from Pi-hole"
-      echo "  interactive-add  - Interactively select which DNS records to add"
-      echo "  interactive-unregister - Interactively select which DNS records to remove"
-      echo "Requires 'sops' and 'curl' to be installed, and secrets.sops.yaml to be configured."
-      exit 0
-    fi
-    
-    action="$1"
-    
-    # Validate actions
-    valid_actions=("list" "add" "unregister-dns" "interactive-add" "interactive-unregister")
-    action_valid=false
-    for valid_action in "${valid_actions[@]}"; do
-      if [[ "$action" == "$valid_action" ]]; then
-        action_valid=true
-        break
-      fi
-    done
-    
-    if [[ "$action_valid" != "true" ]]; then
-      echo -e "${RED}Error: Invalid action '$action' for dns-pihole.${ENDCOLOR}" >&2
-      echo -e "${YELLOW}Valid actions: list, add, unregister-dns, interactive-add, interactive-unregister${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    echo -e "${BLUE}Managing Pi-hole DNS records (action: $action)...${ENDCOLOR}"
-    
-    # Get the domain suffix from environment or use default
-    domain_suffix="${CLUSTER_DOMAIN:-bevz.net}"
-    
-    # Check if debug flag is provided
-    debug_flag=""
-    if [[ "$2" == "--debug" ]]; then
-      debug_flag="--debug"
-      echo -e "${YELLOW}Running in debug mode${ENDCOLOR}"
-    fi
-    
-    # Run the Python script with the appropriate action
-    "$REPO_PATH/scripts/add_pihole_dns.py" --action "$action" --secrets-file "$REPO_PATH/terraform/secrets.sops.yaml" --tf-dir "$REPO_PATH/terraform" --domain-suffix "$domain_suffix" $debug_flag
-    
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Error managing Pi-hole DNS records.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}Pi-hole DNS management completed.${ENDCOLOR}"
-    ;;
-
-  cluster-info)
-    format="table"  # default format
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        -h|--help)
-          echo "Usage: cpc cluster-info [--format <format>]"
-          echo ""
-          echo "Display simplified cluster information showing only essential details:"
-          echo "  - VM_ID: Proxmox VM identifier"
-          echo "  - hostname: VM hostname (node name)"
-          echo "  - IP: VM IP address"
-          echo ""
-          echo "Options:"
-          echo "  --format <format>  Output format: 'table' (default) or 'json'"
-          echo ""
-          echo "This command provides a clean, concise view of your cluster infrastructure"
-          echo "without the detailed debug information from 'cpc deploy output'."
-          exit 0
-          ;;
-        --format)
-          format="$2"
-          shift 2
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-    
-    if [[ "$format" != "table" && "$format" != "json" ]]; then
-      echo -e "${RED}Error: Invalid format '$format'. Supported formats: table, json${ENDCOLOR}" >&2
-      exit 1
-    fi
-
-    current_ctx=$(get_current_cluster_context)
-    tf_dir="$REPO_PATH/terraform"
-
-    if [ "$format" != "json" ]; then
-      echo -e "${BLUE}Getting cluster information for context '$current_ctx'...${ENDCOLOR}"
-    fi
-
-    # Export AWS credentials for terraform backend
-    export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
-    export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
-    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
-
-    # Load workspace environment variables
-    env_file="$REPO_PATH/envs/$current_ctx.env"
-    if [ -f "$env_file" ]; then
-      RELEASE_LETTER=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$RELEASE_LETTER" ]; then
-        export TF_VAR_release_letter="$RELEASE_LETTER"
-      fi
-      
-      ADDITIONAL_WORKERS=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$ADDITIONAL_WORKERS" ]; then
-        export TF_VAR_additional_workers="$ADDITIONAL_WORKERS"
-      fi
-      
-      ADDITIONAL_CONTROLPLANES=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
-        export TF_VAR_additional_controlplanes="$ADDITIONAL_CONTROLPLANES"
-      fi
-    fi
-
-    pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to terraform directory${ENDCOLOR}"; exit 1; }
-    
-    # Ensure we're in the correct workspace
-    if ! tofu workspace select "$current_ctx" &>/dev/null; then
-      echo -e "${RED}Failed to select Tofu workspace '$current_ctx'${ENDCOLOR}" >&2
-      popd > /dev/null
-      exit 1
-    fi
-
-    # Get the simplified cluster summary
-    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null)
-    if [ $? -eq 0 ] && [ "$cluster_summary" != "null" ]; then
-      if [ "$format" = "json" ]; then
-        # Output raw JSON - check if it has .value or is direct
-        if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
-          echo "$cluster_summary" | jq '.value'
-        else
-          echo "$cluster_summary"
-        fi
-      else
-        # Table format - handle both .value and direct JSON
-        if echo "$cluster_summary" | jq -e '.value' >/dev/null 2>&1; then
-          json_data=$(echo "$cluster_summary" | jq '.value')
-        else
-          json_data="$cluster_summary"
-        fi
-        
-        echo ""
-        echo -e "${GREEN}=== Cluster Information ===${ENDCOLOR}"
-        echo ""
-        printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
-        printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
-        
-        # Parse JSON and display in a table format
-        echo "$json_data" | jq -r 'to_entries[] | "\(.key) \(.value.VM_ID) \(.value.hostname) \(.value.IP)"' | \
-        while read -r node vm_id hostname ip; do
-          printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
-        done
-        echo ""
-      fi
-    else
-      echo -e "${RED}Failed to get cluster summary. Make sure VMs are deployed.${ENDCOLOR}" >&2
-      popd > /dev/null
-      exit 1
-    fi
-
-    popd > /dev/null
-    ;;
-
-  deploy)
-    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
-      echo "Usage: cpc deploy <tofu_command> [additional_tofu_options]"
-      echo ""
-      echo "Runs the specified 'tofu' command (e.g., plan, apply, validate, output, destroy) in the"
-      echo "Terraform directory for the current cpc context."
-      echo ""
-      echo "Key features:"
-      echo "  - Automatically changes to the '$REPO_PATH/terraform' directory."
-      echo "  - Ensures the Tofu workspace matches the current cpc context (e.g., 'debian', 'ubuntu')."
-      echo "  - For 'tofu plan', 'apply', 'destroy', 'import', and 'console' commands, automatically includes"
-      echo "    the context-specific variables file (e.g., 'environments/\$CONTEXT.tfvars') if it exists."
-      echo ""
-      echo "Examples:"
-      echo "  cpc deploy plan                                 # Plan changes for the current context"
-      echo "  cpc deploy apply -auto-approve                  # Apply changes with auto-approval"
-      echo "  cpc deploy output k8s_node_ips             # Get a specific output"
-      echo "  cpc deploy validate                             # Validate the configuration"
-      echo "  cpc deploy destroy -target=proxmox_vm_kvm.vm[0] # Destroy a specific resource"
-      echo "  cpc deploy workspace list                       # List Tofu workspaces"
-      exit 0
-    fi
-
-    current_ctx=$(get_current_cluster_context)
-    tf_dir="$REPO_PATH/terraform"
-    tfvars_file="$tf_dir/environments/${current_ctx}.tfvars"
-
-    echo -e "${BLUE}Preparing to run 'tofu $*' for context '$current_ctx' in $tf_dir...${ENDCOLOR}"
-
-    # Load RELEASE_LETTER from workspace environment file if it exists
-    env_file="$REPO_PATH/envs/$current_ctx.env"
-    if [ -f "$env_file" ]; then
-      RELEASE_LETTER=$(grep -E "^RELEASE_LETTER=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$RELEASE_LETTER" ]; then
-        export TF_VAR_release_letter="$RELEASE_LETTER"
-        echo -e "${BLUE}Using RELEASE_LETTER='$RELEASE_LETTER' from workspace environment file${ENDCOLOR}"
-      fi
-      
-      ADDITIONAL_WORKERS=$(grep -E "^ADDITIONAL_WORKERS=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$ADDITIONAL_WORKERS" ]; then
-        export TF_VAR_additional_workers="$ADDITIONAL_WORKERS"
-        echo -e "${BLUE}Using ADDITIONAL_WORKERS='$ADDITIONAL_WORKERS' from workspace environment file${ENDCOLOR}"
-      fi
-      
-      ADDITIONAL_CONTROLPLANES=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$env_file" | cut -d'=' -f2 | tr -d '"' || echo "")
-      if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
-        export TF_VAR_additional_controlplanes="$ADDITIONAL_CONTROLPLANES"
-        echo -e "${BLUE}Using ADDITIONAL_CONTROLPLANES='$ADDITIONAL_CONTROLPLANES' from workspace environment file${ENDCOLOR}"
-      fi
-    fi
-
-    pushd "$tf_dir" > /dev/null || { echo -e "${RED}Failed to change to directory $tf_dir${ENDCOLOR}"; exit 1; }
-    selected_workspace=$(tofu workspace show)
-    if [ "$selected_workspace" != "$current_ctx" ]; then
-        echo -e "${YELLOW}Warning: Current Tofu workspace ('$selected_workspace') does not match cpc context ('$current_ctx').${ENDCOLOR}"
-        echo -e "${YELLOW}Attempting to select workspace '$current_ctx'...${ENDCOLOR}"
-        tofu workspace select "$current_ctx"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}Error selecting Tofu workspace '$current_ctx'. Please check your Tofu setup.${ENDCOLOR}" >&2
-            popd > /dev/null
-            exit 1
-        fi
-    fi
-
-    tofu_subcommand="$1"
-    shift # Remove subcommand, rest are its arguments
-
-    final_tofu_cmd_array=(tofu "$tofu_subcommand")
-    
-    # Generate node hostname configurations for Proxmox if applying or planning
-    if [ "$tofu_subcommand" = "apply" ] || [ "$tofu_subcommand" = "plan" ]; then
-      echo -e "${BLUE}Generating node hostname configurations...${ENDCOLOR}"
-      if [ -x "$REPO_PATH/scripts/generate_node_hostnames.sh" ]; then
-        pushd "$REPO_PATH/scripts" > /dev/null
-        ./generate_node_hostnames.sh
-        HOSTNAME_SCRIPT_STATUS=$?
-        popd > /dev/null
-        
-        if [ $HOSTNAME_SCRIPT_STATUS -ne 0 ]; then
-          echo -e "${YELLOW}Warning: Hostname generation script returned non-zero status. Some VMs may have incorrect hostnames.${ENDCOLOR}"
-        else
-          echo -e "${GREEN}Hostname configurations generated successfully.${ENDCOLOR}"
-        fi
-      else
-        echo -e "${YELLOW}Warning: Hostname generation script not found or not executable. Some VMs may have incorrect hostnames.${ENDCOLOR}"
-      fi
-    fi
-
-    # Check if the subcommand is one that accepts -var-file
-    case "$tofu_subcommand" in
-      apply|plan|destroy|import|console)
-        if [ -f "$tfvars_file" ]; then
-          final_tofu_cmd_array+=("-var-file=$tfvars_file")
-          echo -e "${BLUE}Using tfvars file: $tfvars_file${ENDCOLOR}"
-        else
-          echo -e "${YELLOW}Warning: No specific tfvars file found for context '$current_ctx' at $tfvars_file. Using defaults if applicable.${ENDCOLOR}"
-        fi
-        ;;
-    esac
-
-    # Append remaining user-provided arguments
-    if [[ $# -gt 0 ]]; then
-      final_tofu_cmd_array+=("$@")
-    fi
-
-    echo -e "${BLUE}Executing: ${final_tofu_cmd_array[*]}${ENDCOLOR}"
-    "${final_tofu_cmd_array[@]}"
-    cmd_exit_code=$?
-
-    popd > /dev/null || exit 1
-
-    if [ $cmd_exit_code -ne 0 ]; then
-      echo -e "${RED}Error: '${final_tofu_cmd_array[*]}' failed with exit code $cmd_exit_code.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'.${ENDCOLOR}"
-    ;;
-
-  generate-hostnames)
-    check_secrets_loaded
-    echo -e "${GREEN}Generating node hostname snippets...${ENDCOLOR}"
-    "$REPO_PATH/scripts/generate_node_hostnames.sh"
-    ;;
-
-  run-ansible)
-    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
-      echo "Usage: cpc run-ansible <playbook_name> [ansible_options]"
-      echo ""
-      echo "Runs the specified Ansible playbook from the ansible/playbooks/ directory"
-      echo "using the current cpc context for inventory and configuration."
-      echo ""
-      echo "Key features:"
-      echo "  - Automatically uses the Tofu inventory for the current context"
-      echo "  - Sets ansible_user from ansible.cfg configuration"
-      echo "  - Passes current cluster context and Kubernetes version as variables"
-      echo "  - Uses SSH settings optimized for VM connections"
-      echo ""
-      echo "Examples:"
-      echo "  cpc run-ansible initialize_kubernetes_cluster_with_dns.yml"
-      echo "  cpc run-ansible regenerate_certificates_with_dns.yml"
-      echo "  cpc run-ansible deploy_kubernetes_cluster.yml"
-      echo "  cpc run-ansible bootstrap_master_node.yml --check"
-      echo ""
-      echo "Available playbooks (run 'ls \$REPO_PATH/ansible/playbooks/' to see all):"
-      repo_path=$(get_repo_path)
-      if [ -d "$repo_path/ansible/playbooks" ]; then
-        ls "$repo_path/ansible/playbooks"/*.yml "$repo_path/ansible/playbooks"/*.yaml 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
-      fi
-      exit 0
-    fi
-
-    playbook_name="$1"
-    shift # Remove playbook name, rest are ansible options
-
-    # Validate playbook exists
-    repo_path=$(get_repo_path)
-    playbook_path="$repo_path/ansible/playbooks/$playbook_name"
-    if [[ ! -f "$playbook_path" ]]; then
-      echo -e "${RED}Error: Playbook '$playbook_name' not found at $playbook_path${ENDCOLOR}" >&2
-      echo -e "${BLUE}Available playbooks:${ENDCOLOR}"
-      if [ -d "$repo_path/ansible/playbooks" ]; then
-        ls "$repo_path/ansible/playbooks"/*.yml "$repo_path/ansible/playbooks"/*.yaml 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
-      fi
-      exit 1
-    fi
-
-    echo -e "${GREEN}Running Ansible playbook: $playbook_name${ENDCOLOR}"
-    run_ansible_playbook "$playbook_name" "$@"
-    ;;
-
-  gen_hostnames)
-    echo "Generating node hostname configurations..."
-    if [[ -f "$REPO_PATH/scripts/generate_node_hostnames.sh" ]]; then
-      pushd "$REPO_PATH/scripts" > /dev/null
-      ./generate_node_hostnames.sh
-      HOSTNAME_SCRIPT_STATUS=$?
-      popd > /dev/null
-      
-      if [ $HOSTNAME_SCRIPT_STATUS -ne 0 ]; then
-        echo -e "${RED}Error: Hostname generation failed with status $HOSTNAME_SCRIPT_STATUS${ENDCOLOR}"
-        exit 1
-      else
-        echo -e "${GREEN}Hostname configurations generated successfully.${ENDCOLOR}"
-      fi
-    else 
-      echo -e "${RED}Hostname generation script not found at $REPO_PATH/scripts/generate_node_hostnames.sh${ENDCOLOR}"
-      exit 1
-    fi
-    ;;
-
-  start-vms)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc start-vms"
-      echo "Starts all VMs in the current cpc context by running 'tofu apply' with vm_started=true."
-      exit 0
-    fi
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${BLUE}Starting VMs for context '$current_ctx'...${ENDCOLOR}"
-    # Call the deploy command internally, passing the appropriate tofu apply options
-    # Ensure that the deploy command is in the PATH or use its full path if cpc is not installed globally
-    # Assuming cpc is in PATH for simplicity here. If not, use: "$0" deploy ...
-    "$0" deploy apply -var="vm_started=true" -auto-approve
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Error starting VMs for context '$current_ctx'.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}VMs in context '$current_ctx' should now be starting.${ENDCOLOR}"
-    ;;
-
-  configure-coredns)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc configure-coredns [--dns-server <ip>] [--domains <domain1,domain2,...>]"
-      echo ""
-      echo "Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
-      echo ""
-      echo "Options:"
-      echo "  --dns-server <ip>    Pi-hole DNS server IP (default: from dns_servers variable in Terraform)"
-      echo "  --domains <list>     Comma-separated list of domains (default: bevz.net,bevz.dev,bevz.pl)"
-      echo ""
-      echo "This command will:"
-      echo "  1. Backup current CoreDNS ConfigMap"
-      echo "  2. Add local domain forwarding blocks to CoreDNS configuration"
-      echo "  3. Restart CoreDNS deployment"
-      echo "  4. Verify DNS resolution"
-      echo ""
-      echo "Examples:"
-      echo "  cpc configure-coredns                                    # Use defaults"
-      echo "  cpc configure-coredns --dns-server 192.168.1.10         # Custom Pi-hole IP"
-      echo "  cpc configure-coredns --domains example.com,test.local  # Custom domains"
-      exit 0
-    fi
-
-    # Parse command line arguments
-    dns_server=""
-    domains=""
-    
-    while [[ $# -gt 0 ]]; do
-      case $1 in
-        --dns-server)
-          dns_server="$2"
-          shift 2
-          ;;
-        --domains)
-          domains="$2"
-          shift 2
-          ;;
-        *)
-          echo -e "${RED}Unknown option: $1${ENDCOLOR}" >&2
-          exit 1
-          ;;
-      esac
-    done
-
-    # Get DNS server from Terraform if not specified
-    if [ -z "$dns_server" ]; then
-      echo -e "${BLUE}Getting DNS server from Terraform variables...${ENDCOLOR}"
-      dns_server=$("$REPO_PATH/scripts/get_dns_server.sh")
-      
-      if [ -n "$dns_server" ] && [ "$dns_server" != "null" ]; then
-        echo -e "${GREEN}Found DNS server in Terraform: $dns_server${ENDCOLOR}"
-      else
-        dns_server="10.10.10.36"
-        echo -e "${YELLOW}Warning: Could not extract DNS server from Terraform. Using fallback: $dns_server${ENDCOLOR}"
-      fi
-    fi
-
-    # Set default domains if not specified
-    if [ -z "$domains" ]; then
-      domains="bevz.net,bevz.dev,bevz.pl"
-    fi
-
-    echo -e "${BLUE}Configuring CoreDNS for local domain resolution...${ENDCOLOR}"
-    echo -e "${BLUE}  DNS Server: $dns_server${ENDCOLOR}"
-    echo -e "${BLUE}  Domains: $domains${ENDCOLOR}"
-    
-    # Convert comma-separated domains to space-separated for Ansible
-    domains_list=$(echo "$domains" | tr ',' ' ')
-    
-    # Confirmation
-    read -r -p "Continue with CoreDNS configuration? [y/N] " response
-    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-      echo "Operation cancelled."
-      exit 0
-    fi
-
-    # Run the Ansible playbook
-    echo -e "${BLUE}Running CoreDNS configuration playbook...${ENDCOLOR}"
-    run_ansible_playbook configure_coredns_local_domains.yml -l control_plane \
-      -e "pihole_dns_server=$dns_server" \
-      -e "local_domains=[\"$(echo "$domains" | sed 's/,/","/g')\"]"
-    
-    if [ $? -eq 0 ]; then
-      echo -e "${GREEN}CoreDNS configured successfully!${ENDCOLOR}"
-      echo -e "${BLUE}Local domains ($domains) will now be forwarded to $dns_server${ENDCOLOR}"
-    else
-      echo -e "${RED}Error configuring CoreDNS${ENDCOLOR}" >&2
-      exit 1
-    fi
-    ;;
-
-  stop-vms)
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-      echo "Usage: cpc stop-vms"
-      echo "Stops all VMs in the current cpc context by running 'tofu apply' with vm_started=false."
-      exit 0
-    fi
-    current_ctx=$(get_current_cluster_context)
-    echo -e "${BLUE}Stopping VMs for context '$current_ctx'...${ENDCOLOR}"
-    read -r -p "Are you sure you want to stop all VMs in context '$current_ctx'? [y/N] " response
-    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-      echo "Operation cancelled."
-      exit 0
-    fi
-    "$0" deploy apply -var="vm_started=false" -auto-approve
-    if [ $? -ne 0 ]; then
-      echo -e "${RED}Error stopping VMs for context '$current_ctx'.${ENDCOLOR}" >&2
-      exit 1
-    fi
-    echo -e "${GREEN}VMs in context '$current_ctx' should now be stopping.${ENDCOLOR}"
-    ;;
-
-  "" | "-h" | "--help" | "help")
-    display_usage
-    ;;
-
-  scripts/*)
-    # Handle running scripts directly: ./cpc scripts/script_name.sh
-    script_path="$REPO_PATH/$COMMAND"
-    if [[ -f "$script_path" && -x "$script_path" ]]; then
-      echo -e "${BLUE}Running script: $script_path${ENDCOLOR}"
-      # Pass all remaining arguments to the script
-      "$script_path" "$@"
-    elif [[ -f "$script_path" ]]; then
-      echo -e "${RED}Error: Script $script_path exists but is not executable.${ENDCOLOR}" >&2
-      echo -e "${BLUE}Try: chmod +x $script_path${ENDCOLOR}" >&2
-      exit 1
-    else
-      echo -e "${RED}Error: Script not found at $script_path${ENDCOLOR}" >&2
-      exit 1
-    fi
-    ;;
-
-  # Legacy aliases for backward compatibility
-  add-node)
-    echo -e "${YELLOW}Warning: 'add-node' is deprecated. Use 'add-vm' instead.${ENDCOLOR}"
-    shift
-    set -- "add-vm" "$@"
-    exec "$0" "$@"
-    ;;
-
-  remove-node)
-    echo -e "${YELLOW}Warning: 'remove-node' is deprecated. Use 'remove-vm' instead.${ENDCOLOR}"
-    shift
-    set -- "remove-vm" "$@"
-    exec "$0" "$@"
-    ;;
-
-  update-pihole)
-    echo -e "${YELLOW}Warning: 'update-pihole' is deprecated. Use 'dns-pihole' instead.${ENDCOLOR}"
-    shift
-    set -- "dns-pihole" "$@"
-    exec "$0" "$@"
-    ;;
-
-  delete-node)
-    echo -e "${YELLOW}Warning: 'delete-node' is deprecated. Use 'remove-nodes' instead.${ENDCOLOR}"
-    # Pass all arguments as is to remove-nodes
-    set -- "remove-nodes" "$@"
-    exec "$0" "$@"
-    ;;
-
-  *)
+setup-cpc) # Changed from setup-ccr
+  cpc_core setup-cpc "$@"
+  ;;
+
+get-kubeconfig)
+  cpc_k8s_cluster get-kubeconfig "$@"
+  ;;
+
+add-vm)
+  cpc_proxmox add-vm "$@"
+  ;;
+
+remove-vm)
+  cpc_proxmox remove-vm "$@"
+  ;;
+
+ctx)
+  cpc_core ctx "$@"
+  ;;
+
+list-workspaces)
+  cpc_core list-workspaces "$@"
+  ;;
+
+clone-workspace)
+  cpc_core clone-workspace "$@"
+  ;;
+
+delete-workspace)
+  cpc_core delete-workspace "$@"
+  ;;
+
+template)
+  cpc_proxmox template "$@"
+  ;;
+
+load_secrets)
+  cpc_core load_secrets "$@"
+  ;;
+
+clear-cache)
+  cpc_core clear-cache "$@"
+  ;;
+
+deploy)
+  cpc_tofu deploy "$@"
+  ;;
+
+bootstrap)
+  cpc_k8s_cluster bootstrap "$@"
+  ;;
+
+run-playbook)
+  cpc_ansible run-ansible "$@"
+  ;;
+
+clear-ssh-hosts)
+  cpc_ssh clear-ssh-hosts "$@"
+  ;;
+
+clear-ssh-maps)
+  cpc_ssh clear-ssh-maps "$@"
+  ;;
+
+add-nodes)
+  cpc_k8s_nodes add "$@"
+  ;;
+
+prepare-node)
+  cpc_k8s_nodes prepare "$@"
+  ;;
+
+update-inventory)
+  cpc_ansible update-inventory "$@"
+  ;;
+
+remove-nodes)
+  cpc_k8s_nodes remove "$@"
+  ;;
+
+drain-node)
+  cpc_k8s_nodes drain "$@"
+  ;;
+
+upgrade-node)
+  cpc_k8s_nodes upgrade "$@"
+  ;;
+
+reset-node)
+  cpc_k8s_nodes reset "$@"
+  ;;
+
+reset-all-nodes)
+  cpc_k8s_nodes reset-all "$@"
+  ;;
+
+upgrade-addons)
+  cpc_cluster_ops upgrade-addons "$@"
+  ;;
+
+upgrade-k8s)
+  cpc_k8s_cluster upgrade-k8s "$@"
+  ;;
+
+status | cluster-status)
+  cpc_k8s_cluster status "$@"
+  ;;
+
+vmctl)
+  cpc_proxmox vmctl "$@"
+  ;;
+
+run-command)
+  cpc_ansible run-command "$@"
+  ;;
+
+dns-pihole)
+  cpc_dns_pihole "$@"
+  ;;
+
+cluster-info)
+  cpc_tofu cluster-info "$@"
+  ;;
+
+deploy)
+  cpc_tofu deploy "$@"
+  ;;
+
+generate-hostnames)
+  cpc_tofu generate-hostnames "$@"
+  ;;
+
+run-ansible)
+  cpc_ansible run-ansible "$@"
+  ;;
+
+gen_hostnames)
+  cpc_tofu gen_hostnames "$@"
+  ;;
+
+start-vms)
+  cpc_tofu start-vms "$@"
+  ;;
+
+configure-coredns)
+  cpc_cluster_ops configure-coredns "$@"
+  ;;
+
+# DNS/SSL commands
+regenerate-certificates | regenerate-cert)
+  cpc_dns_ssl regenerate-certificates "$@"
+  ;;
+
+test-dns | test-resolution)
+  cpc_dns_ssl test-dns "$@"
+  ;;
+
+verify-certificates | verify-cert | check-cert)
+  cpc_dns_ssl verify-certificates "$@"
+  ;;
+
+check-cluster-dns | test-cluster-dns)
+  cpc_dns_ssl check-cluster-dns "$@"
+  ;;
+
+inspect-cert | show-cert)
+  cpc_dns_ssl inspect-cert "$@"
+  ;;
+
+stop-vms)
+  cpc_tofu stop-vms "$@"
+  ;;
+
+"" | "-h" | "--help" | "help")
+  display_usage
+  ;;
+
+scripts/*)
+  # Handle running scripts directly: ./cpc scripts/script_name.sh
+  script_path="$REPO_PATH/$COMMAND"
+  if [[ -f "$script_path" && -x "$script_path" ]]; then
+    echo -e "${BLUE}Running script: $script_path${ENDCOLOR}"
+    # Pass all remaining arguments to the script
+    "$script_path" "$@"
+  elif [[ -f "$script_path" ]]; then
+    echo -e "${RED}Error: Script $script_path exists but is not executable.${ENDCOLOR}" >&2
+    echo -e "${BLUE}Try: chmod +x $script_path${ENDCOLOR}" >&2
+    exit 1
+  else
+    echo -e "${RED}Error: Script not found at $script_path${ENDCOLOR}" >&2
+    exit 1
+  fi
+  ;;
+
+# Legacy aliases for backward compatibility
+add-node)
+  echo -e "${YELLOW}Warning: 'add-node' is deprecated. Use 'add-vm' instead.${ENDCOLOR}"
+  shift
+  set -- "add-vm" "$@"
+  exec "$0" "$@"
+  ;;
+
+remove-node)
+  echo -e "${YELLOW}Warning: 'remove-node' is deprecated. Use 'remove-vm' instead.${ENDCOLOR}"
+  shift
+  set -- "remove-vm" "$@"
+  exec "$0" "$@"
+  ;;
+
+update-pihole)
+  echo -e "${YELLOW}Warning: 'update-pihole' is deprecated. Use 'dns-pihole' instead.${ENDCOLOR}"
+  shift
+  set -- "dns-pihole" "$@"
+  exec "$0" "$@"
+  ;;
+
+delete-node)
+  echo -e "${YELLOW}Warning: 'delete-node' is deprecated. Use 'remove-nodes' instead.${ENDCOLOR}"
+  # Pass all arguments as is to remove-nodes
+  set -- "remove-nodes" "$@"
+  exec "$0" "$@"
+  ;;
+
+*)
     echo -e "${RED}Unknown command: $COMMAND${ENDCOLOR}" >&2
     display_usage
     exit 1

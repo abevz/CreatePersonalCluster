@@ -1,13 +1,13 @@
 ---
 - name: Main playbook to provision servers
   hosts: all
-  become: yes
-  gather_facts: yes # Important for Ansible to know about the target systems
+  become: true
+  gather_facts: true # Important for Ansible to know about the target systems
 
   pre_tasks:
     - name: Update apt cache (for Debian/Ubuntu)
       ansible.builtin.apt:
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
       when: ansible_os_family == "Debian"
       changed_when: false # Don't report a change for cache updates
@@ -18,7 +18,7 @@
         state: present
       when: ansible_os_family == "RedHat"
 
-  roles:
+  roles: []
     # We will define roles later for Kubernetes installation
     # - role: install_kubernetes_prerequisites
     # - role: setup_kubernetes_cluster

@@ -8,11 +8,17 @@
   gather_facts: yes
 
   vars:
-    kubernetes_version: "1.31" # Specify desired Kubernetes version (e.g., 1.31, 1.30)
-    # For Debian/Ubuntu, package versions will be like {{ kubernetes_version }}.x-xx
-    # For RedHat, package versions will be like {{ kubernetes_version }}.x-x
+    kubernetes_version: "{{ KUBERNETES_SHORT_VERSION | default('1.29') }}"
+    harbor_hostname: "{{ HARBOR_HOSTNAME }}" 
+    harbor_robot_username: "{{ HARBOR_ROBOT_USER | default('k8s-puller') }}"
+    harbor_robot_token: "{{ HARBOR_ROBOT_TOKEN | default('') }}"
 
   pre_tasks:
+
+    - name: Encode data for Harbor authorization
+      ansible.builtin.set_fact:
+        harbor_auth: "{{ [harbor_robot_username,harbor_robot_token] | join(':') | b64encode }}"    
+
     - name: Update package cache (Debian/Ubuntu)
       ansible.builtin.apt:
         update_cache: yes
@@ -24,10 +30,9 @@
       ansible.builtin.dnf:
         name: epel-release
         state: present
-      when: ansible_os_family == "RedHat" # Applies to Rocky
+      when: ansible_os_family == "RedHat"
       register: epel_install
       failed_when: "epel_install.rc != 0 and 'Nothing to do' not in epel_install.stdout and 'already installed' not in epel_install.msg"
-
 
     - name: Disable swap
       ansible.builtin.command: swapoff -a
@@ -42,6 +47,7 @@
       when: ansible_swaptotal_mb > 0
 
   tasks:
+    # ... (kernel configuration and containerd installation tasks remain unchanged) ...
     - name: Load kernel modules for container runtime and networking
       ansible.builtin.modprobe:
         name: "{{ item }}"
@@ -70,7 +76,6 @@
         - { key: 'net.ipv4.ip_forward', value: '1' }
         - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
 
-    # Section: Install Containerd (Container Runtime)
     - name: Install Containerd prerequisites (common)
       ansible.builtin.package:
         name:
@@ -99,20 +104,19 @@
       ansible.builtin.get_url:
         url: https://download.docker.com/linux/centos/docker-ce.repo
         dest: /etc/yum.repos.d/docker-ce.repo
-      when: ansible_os_family == "RedHat" # Applies to Rocky
+      when: ansible_os_family == "RedHat"
 
     - name: Install containerd.io (Debian/Ubuntu)
       ansible.builtin.apt:
         name: containerd.io
         state: present
-        update_cache: yes # Run after adding repo
+        update_cache: yes
       when: ansible_os_family == "Debian"
 
     - name: Install containerd.io (Rocky Linux)
       ansible.builtin.dnf:
         name: containerd.io
         state: present
-        # disable_gpg_check: yes # May be needed if GPG key for docker repo is not automatically trusted
       when: ansible_os_family == "RedHat"
 
     - name: Create containerd config directory
@@ -121,13 +125,14 @@
         state: directory
         mode: '0755'
 
-    - name: Generate default containerd configuration and enable SystemdCgroup
-      ansible.builtin.shell: |
-        containerd config default > /etc/containerd/config.toml
-        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-        sed -i 's/disabled_plugins = \[\"cri\"\]/disabled_plugins = []/g' /etc/containerd/config.toml
-      changed_when: true # Assume it changes if it runs
-      notify: Restart containerd
+    - name: Create containerd configuration from template
+      ansible.builtin.template:
+        src: ../templates/containerd-config.toml.j2
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart containerd        
 
     - name: Enable and start containerd service
       ansible.builtin.systemd:
@@ -135,7 +140,97 @@
         state: started
         enabled: yes
 
-    # Section: Install Kubernetes components (kubelet, kubeadm, kubectl)
+# ... after the "Enable and start containerd service" task
+
+    - name: Ensure containerd certs directory exists
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "docker.io"
+        - "quay.io"
+        - "gcr.io"
+        - "registry.k8s.io"
+        - "k8s.gcr.io"
+        - "{{ harbor_hostname }}"  
+
+    - name: Configure Harbor proxy for docker.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/docker.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://docker.io"
+        proxy_project: "dockerhub-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for quay.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/quay.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://quay.io"
+        proxy_project: "quay-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for gcr.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/gcr.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://gcr.io"
+        proxy_project: "gcr-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for registry.k8s.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/registry.k8s.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://registry.k8s.io"
+        proxy_project: "k8s-proxy"
+      notify: Restart containerd
+
+    - name: Configure Harbor proxy for k8s.gcr.io
+      ansible.builtin.template:
+        src: ../templates/hosts.toml.j2
+        dest: /etc/containerd/certs.d/k8s.gcr.io/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://k8s.gcr.io"
+        proxy_project: "k8s-proxy"
+      notify: Restart containerd        
+
+    - name: Configure Harbor proxy for Harbor
+      ansible.builtin.template:
+        src: ../templates/hosts_harbor.toml.j2
+        dest: /etc/containerd/certs.d/{{ harbor_hostname }}/hosts.toml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        upstream_server: "https://{{ harbor_hostname }}"
+        proxy_project: "k8s-proxy"
+      notify: Restart containerd        
+
+    # ... next are Kubernetes installation tasks
+    # ... (other tasks for installing kubelet, kubeadm, etc. remain unchanged) ...
     - name: Add Kubernetes GPG key (Debian/Ubuntu)
       ansible.builtin.get_url:
         url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
@@ -158,36 +253,71 @@
         baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/"
         gpgkey:
           - "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/repodata/repomd.xml.key"
-          # Old key, might be needed for some setups, or use the one from repomd.xml.key
-          # - https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
         gpgcheck: yes
-        repo_gpgcheck: yes # Check metadata signature
+        repo_gpgcheck: yes
         enabled: yes
-        # exclude: kubelet kubeadm kubectl cri-tools kubernetes-cni # If you want to install specific versions later
       when: ansible_os_family == "RedHat"
 
     - name: Install kubelet, kubeadm, kubectl (Debian/Ubuntu)
       ansible.builtin.apt:
         name:
-          - kubelet #={{ kubernetes_version }}.*-00
-          - kubeadm #={{ kubernetes_version }}.*-00
-          - kubectl #={{ kubernetes_version }}.*-00
+          - "kubelet={{ KUBERNETES_LONG_VERSION | default('1.29.0') }}-1.1"
+          - "kubeadm={{ KUBERNETES_LONG_VERSION | default('1.29.0') }}-1.1"
+          - "kubectl={{ KUBERNETES_LONG_VERSION | default('1.29.0') }}-1.1"
         state: present
-        update_cache: yes # After adding repo
+        update_cache: yes
       when: ansible_os_family == "Debian"
       notify: Hold Kubernetes packages Debian
 
     - name: Install kubelet, kubeadm, kubectl (Rocky Linux)
       ansible.builtin.dnf:
         name:
-          - kubelet # kubelet-{{ kubernetes_version }}
-          - kubeadm # kubeadm-{{ kubernetes_version }}
-          - kubectl # kubectl-{{ kubernetes_version }}
+          - "kubelet-{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
+          - "kubeadm-{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
+          - "kubectl-{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
         state: present
-        disable_excludes: kubernetes # Important if you used exclude in repo definition
+        disable_excludes: kubernetes
       when: ansible_os_family == "RedHat"
       notify: Hold Kubernetes packages RedHat
 
+    - name: Install Python Kubernetes client library for all OS families
+      block:
+        - name: Install for Debian/Ubuntu
+          ansible.builtin.apt:
+            name: python3-kubernetes
+            state: present
+            update_cache: yes
+          when: ansible_os_family == "Debian"
+        - name: Install for Rocky Linux/RHEL
+          ansible.builtin.dnf:
+            name: python3-kubernetes
+            state: present
+          when: ansible_os_family == "RedHat"
+        - name: Install for SUSE/SLES
+          ansible.builtin.zypper:
+            name: python3-kubernetes
+            state: present
+          when: ansible_os_family == "Suse"
+      become: yes
+
+    - name: Install jmespath for json_query filter
+      block:
+        - name: Install for Debian/Ubuntu
+          ansible.builtin.apt:
+            name: python3-jmespath
+            state: present
+          when: ansible_os_family == "Debian"
+        - name: Install for Rocky Linux/RHEL
+          ansible.builtin.dnf:
+            name: python3-jmespath
+            state: present
+          when: ansible_os_family == "RedHat"
+        - name: Install for SUSE/SLES
+          ansible.builtin.zypper:
+            name: python3-jmespath
+            state: present
+          when: ansible_os_family == "Suse"
+      become: yes
 
     - name: Set SELinux to permissive (Rocky Linux - for simplicity, consider proper policies for production)
       ansible.builtin.selinux:
@@ -200,13 +330,13 @@
         name: kubelet
         state: started
         enabled: yes
-        # daemon_reload: yes # May be needed if unit files changed
 
     - name: Placeholder - Indicate K8s setup would start here
       ansible.builtin.debug:
         msg: "Kubernetes components (kubelet, kubeadm, kubectl) and containerd installed on {{ inventory_hostname }} ({{ ansible_os_family }}). Ready for kubeadm init/join."
 
   handlers:
+    # ... (all handlers remain unchanged) ...
     - name: Restart containerd
       ansible.builtin.systemd:
         name: containerd
@@ -228,18 +358,9 @@
       when: ansible_os_family == "Debian"
 
     - name: Hold Kubernetes packages RedHat
-      ansible.builtin.command: "dnf versionlock add {{ item }}" # or yum versionlock add
+      ansible.builtin.command: "dnf versionlock add {{ item }}"
       loop:
         - kubelet
         - kubeadm
         - kubectl
       when: ansible_os_family == "RedHat"
-      # Note: dnf versionlock plugin might need to be installed: dnf install 'dnf-command(versionlock)'
-
-# Further steps would involve:
-# 1. On control plane node(s):
-#    - kubeadm init ...
-#    - Setup kubectl for admin user
-#    - Install CNI (e.g., Calico, Flannel)
-# 2. On worker node(s):
-#    - kubeadm join ... (using token from control plane)

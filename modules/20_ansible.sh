@@ -1,0 +1,423 @@
+#!/bin/bash
+
+# modules/20_ansible.sh - Ansible Playbook Management Module
+# Part of CPC (Create Personal Cluster) - Modular Architecture
+#
+# This module provides Ansible playbook execution and inventory management functionality.
+#
+# Functions provided:
+# - cpc_ansible()              - Main entry point for ansible command
+# - ansible_run_playbook()     - Execute Ansible playbooks with proper inventory and context
+# - ansible_show_help()        - Display help for run-ansible command
+# - ansible_list_playbooks()   - List available playbooks in the repository
+# - ansible_update_inventory_cache() - Update inventory cache from Terraform state
+#
+# Dependencies:
+# - lib/logging.sh for logging functions
+# - modules/00_core.sh for core utilities like get_repo_path, get_current_cluster_context
+# - Ansible installation and proper ansible.cfg configuration
+# - Terraform/OpenTofu state for inventory generation
+
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
+#----------------------------------------------------------------------
+# Ansible Playbook Management Functions
+#----------------------------------------------------------------------
+
+# Main entry point for CPC ansible functionality
+cpc_ansible() {
+  case "${1:-}" in
+  run-ansible)
+    shift
+    ansible_run_playbook_command "$@"
+    ;;
+  run-command)
+    shift
+    if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -lt 2 ]]; then
+      ansible_show_run_command_help
+      return 0
+    fi
+    ansible_run_shell_command "$@"
+    ;;
+  update-inventory)
+    shift
+    ansible_update_inventory_cache_advanced "$@"
+    ;;
+  *)
+    log_error "Unknown ansible command: ${1:-}"
+    log_info "Available commands: run-ansible, run-command, update-inventory"
+    return 1
+    ;;
+  esac
+}
+
+# Handle the run-ansible command with help and validation
+ansible_run_playbook_command() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
+    ansible_show_help
+    return 0
+  fi
+
+  local playbook_name="$1"
+  shift # Remove playbook name, rest are ansible options
+
+  # Validate playbook exists
+  local repo_path
+  repo_path=$(get_repo_path) || return 1
+  local playbook_path="$repo_path/ansible/playbooks/$playbook_name"
+
+  if [[ ! -f "$playbook_path" ]]; then
+    log_error "Playbook '$playbook_name' not found at $playbook_path"
+    log_info "Available playbooks:"
+    ansible_list_playbooks
+    return 1
+  fi
+
+  log_info "Running Ansible playbook: $playbook_name"
+  ansible_run_playbook "$playbook_name" "$@"
+}
+
+# Display help information for the run-ansible command
+ansible_show_help() {
+  echo "Usage: cpc run-ansible <playbook_name> [ansible_options]"
+  echo ""
+  echo "Runs the specified Ansible playbook from the ansible/playbooks/ directory"
+  echo "using the current cpc context for inventory and configuration."
+  echo ""
+  echo "Key features:"
+  echo "  - Automatically uses the Tofu inventory for the current context"
+  echo "  - Sets ansible_user from ansible.cfg configuration"
+  echo "  - Passes current cluster context and Kubernetes version as variables"
+  echo "  - Uses SSH settings optimized for VM connections"
+  echo ""
+  echo "Examples:"
+  echo "  cpc run-ansible initialize_kubernetes_cluster_with_dns.yml"
+  echo "  cpc run-ansible regenerate_certificates_with_dns.yml"
+  echo "  cpc run-ansible deploy_kubernetes_cluster.yml"
+  echo "  cpc run-ansible bootstrap_master_node.yml --check"
+  echo ""
+  echo "Available playbooks (run 'ls \$REPO_PATH/ansible/playbooks/' to see all):"
+  ansible_list_playbooks
+}
+
+# List available Ansible playbooks in the repository
+ansible_list_playbooks() {
+  local repo_path
+  repo_path=$(get_repo_path) || return 1
+
+  if [ -d "$repo_path/ansible/playbooks" ]; then
+    ls "$repo_path/ansible/playbooks"/*.yml "$repo_path/ansible/playbooks"/*.yaml 2>/dev/null | xargs -n1 basename | sed 's/^/  - /' || log_warning "No playbooks found in $repo_path/ansible/playbooks"
+  else
+    log_warning "Ansible playbooks directory not found at $repo_path/ansible/playbooks"
+  fi
+}
+
+# Execute a shell command on target hosts using Ansible
+ansible_run_shell_command() {
+  if [[ $# -lt 2 ]]; then
+    ansible_show_run_command_help
+    return 1
+  fi
+
+  local target="$1"
+  local shell_cmd="$2"
+
+  log_info "Running command on $target: $shell_cmd"
+  ansible_run_playbook "pb_run_command.yml" -l "$target" -e "command_to_run=$shell_cmd"
+}
+
+# Display help information for the run-command function
+ansible_show_run_command_help() {
+  echo "Usage: cpc run-command <target_hosts_or_group> \"<shell_command_to_run>\""
+  echo ""
+  echo "Runs a shell command on specified hosts or groups using Ansible."
+  echo ""
+  echo "Parameters:"
+  echo "  target_hosts_or_group   - Target hosts or inventory groups"
+  echo "  shell_command_to_run    - Shell command to execute"
+  echo ""
+  echo "Examples:"
+  echo "  cpc run-command control_plane \"hostname -f\""
+  echo "  cpc run-command all \"sudo apt update\""
+  echo "  cpc run-command workers \"systemctl status kubelet\""
+  echo ""
+  echo "Available target groups: all, control_plane, workers"
+}
+
+# Execute Ansible playbooks with proper context and inventory
+
+# modules/20_ansible.sh
+
+function ansible_run_playbook() {
+  local playbook_name=$1
+  shift
+  local repo_root
+  repo_root=$(get_repo_path)
+  local ansible_dir="$repo_root/ansible"
+  local temp_inventory_file
+
+  # --- CHANGE 1: We create inventory only once if needed ---
+  # If there is no inventory (-i) in arguments, create temporary
+  if ! [[ "$*" =~ -i ]]; then
+    temp_inventory_file=$(ansible_create_temp_inventory)
+    if [[ $? -ne 0 || -z "$temp_inventory_file" ]]; then
+      log_error "Failed to create temporary Ansible inventory."
+      return 1
+    fi
+    # Add temporary inventory to arguments
+    set -- "$@" -i "$temp_inventory_file"
+  fi
+
+  local ansible_cmd_array=("ansible-playbook" "playbooks/$playbook_name" "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+
+  local current_ctx
+  current_ctx=$(get_current_cluster_context)
+  local env_file="$repo_root/envs/$current_ctx.env"
+
+  if [[ -f "$env_file" ]]; then
+    log_debug "Loading variables from $env_file for Ansible..."
+    while IFS= read -r line; do
+      [[ -n "$line" && ! "$line" =~ ^\s*# ]] && ansible_cmd_array+=("-e" "$line")
+    done <"$env_file"
+  fi
+
+  # --- CHANGE 2: Here IT IS! Universal block for passing secrets ---
+  # List of secrets that will be automatically passed to Ansible if they exist in the environment.
+  # They are loaded by the load_secrets function from 00_core.sh
+  local secret_vars_to_pass=(
+    "HARBOR_HOSTNAME"
+    "HARBOR_ROBOT_USERNAME"
+    "HARBOR_ROBOT_TOKEN"
+    "DOCKER_HUB_USERNAME"
+    "DOCKER_HUB_PASSWORD"
+    # Add other secrets here if needed in Ansible
+  )
+
+  log_debug "Adding secrets from environment to Ansible command..."
+  for var_name in "${secret_vars_to_pass[@]}"; do
+    # The construction ${!var_name} is an indirect reference to the variable's value.
+    if [[ -n "${!var_name}" ]]; then
+      # Pass the variable to Ansible. Ansible prefers lowercase variables.
+      local ansible_var_name
+      ansible_var_name=$(echo "$var_name" | tr '[:upper:]' '[:lower:]')
+      ansible_cmd_array+=("-e" "$ansible_var_name=${!var_name}")
+      log_debug "  -> Passing secret: $ansible_var_name"
+    fi
+  done
+  # --- END OF CHANGES BLOCK ---
+
+  local ansible_user
+  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")
+  ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
+
+  # Add all other arguments passed to the function (e.g., -i /path/to/inventory)
+  if [[ $# -gt 0 ]]; then
+    ansible_cmd_array+=("$@")
+  fi
+
+  log_info "Running: ${ansible_cmd_array[*]}"
+
+  pushd "$ansible_dir" >/dev/null || {
+    error_handle "$ERROR_EXECUTION" "Failed to change to ansible directory: $ansible_dir" "$SEVERITY_HIGH"
+    return 1
+  }
+
+  # Use recovery system for Ansible operations
+  local ansible_command="${ansible_cmd_array[*]}"
+  local recovery_result
+
+  recovery_ansible_operation "$ansible_command" "$playbook_name"
+  recovery_result=$?
+
+  popd >/dev/null
+
+  # --- CHANGE 3: Remove temporary inventory if it was created ---
+  if [[ -n "$temp_inventory_file" ]]; then
+    rm "$temp_inventory_file"
+  fi
+
+  return $recovery_result
+}
+
+# Update Ansible inventory cache from Terraform state
+ansible_update_inventory_cache() {
+  log_info "Updating inventory cache..."
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+  local cache_file="$repo_root/.ansible_inventory_cache.json"
+  local terraform_dir="$repo_root/terraform"
+
+  if [ -d "$terraform_dir" ]; then
+    pushd "$terraform_dir" >/dev/null || true
+
+    local cluster_summary
+    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null | jq -r '.value // empty')
+
+    if [ -n "$cluster_summary" ]; then
+      # Generate inventory from cluster_summary
+      local inventory_json
+      inventory_json=$(echo "$cluster_summary" | jq '{
+                "_meta": {
+                    "hostvars": (
+                        to_entries | map({
+                            key: .value.IP,
+                            value: {
+                                "ansible_host": .value.IP,
+                                "node_name": .key,
+                                "hostname": .value.hostname,
+                                "vm_id": .value.VM_ID,
+                                "k8s_role": (if (.key | contains("controlplane")) then "control-plane" else "worker" end)
+                            }
+                        }) | from_entries
+                    )
+                },
+                "all": {
+                    "children": ["control_plane", "workers"]
+                },
+                "control_plane": {
+                    "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]]
+                },
+                "workers": {
+                    "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]]
+                }
+            }')
+
+      # Write to cache file
+      echo "$inventory_json" >"$cache_file"
+      log_success "Inventory cache updated"
+    else
+      log_warning "Could not get cluster_summary from terraform, using existing cache"
+    fi
+
+    popd >/dev/null || true
+  else
+    log_warning "Terraform directory not found at $terraform_dir"
+  fi
+}
+
+# Advanced inventory cache update with comprehensive cluster information
+ansible_update_inventory_cache_advanced() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: cpc update-inventory"
+    echo ""
+    echo "Update the Ansible inventory cache from current cluster state."
+    echo "This command fetches the latest cluster information and updates"
+    echo "the inventory cache file used by Ansible playbooks."
+    echo ""
+    echo "This is automatically called before Ansible operations, but can be"
+    echo "run manually to troubleshoot inventory issues."
+    return 0
+  fi
+
+  log_info "Updating Ansible inventory cache..."
+
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+  local cache_file="$repo_root/.ansible_inventory_cache.json"
+  local terraform_dir="$repo_root/terraform"
+
+  if [ ! -d "$terraform_dir" ]; then
+    log_error "terraform directory not found at $terraform_dir"
+    return 1
+  fi
+
+  # Export AWS credentials for terraform backend (needed for tofu output)
+  export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+  export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+  export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+  # Load current cluster info using cluster-info (which handles credentials)
+  log_warning "Getting cluster information..."
+
+  # Get cluster info and extract only the JSON part (last line that starts with {)
+  local cluster_info_output
+  cluster_info_output=$(cpc_tofu cluster-info --format json 2>/dev/null)
+  local cluster_summary
+  cluster_summary=$(echo "$cluster_info_output" | grep '^{.*}$' | tail -1)
+
+  if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
+    log_error "Could not get cluster information from terraform"
+    log_info "Make sure terraform is applied and cluster is running"
+    return 1
+  fi
+
+  # Generate inventory from cluster_summary
+  local inventory_json
+  inventory_json=$(echo "$cluster_summary" | jq '{
+      "_meta": {
+        "hostvars": (
+          to_entries | reduce .[] as $item ({}; 
+            . + {
+              ($item.value.IP): {
+                "ansible_host": $item.value.IP,
+                "node_name": $item.key,
+                "hostname": $item.value.hostname,
+                "vm_id": $item.value.VM_ID,
+                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            } + {
+              ($item.value.hostname): {
+                "ansible_host": $item.value.IP,
+                "node_name": $item.key,
+                "hostname": $item.value.hostname,
+                "vm_id": $item.value.VM_ID,
+                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
+              }
+            }
+          )
+        )
+      },
+      "all": {
+        "children": ["control_plane", "workers"]
+      },
+      "control_plane": {
+        "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("controlplane")) | .value.hostname) | .[]]
+      },
+      "workers": {
+        "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("worker")) | .value.hostname) | .[]]
+      }
+    }')
+
+  # Write to cache file
+  echo "$inventory_json" >"$cache_file"
+
+  log_success "Ansible inventory cache updated at $cache_file"
+  log_info "Inventory contents:"
+  jq '.' "$cache_file"
+}
+
+#----------------------------------------------------------------------
+# Export functions for use by other modules
+#----------------------------------------------------------------------
+export -f cpc_ansible
+export -f ansible_run_playbook_command
+export -f ansible_run_shell_command
+export -f ansible_run_playbook
+export -f ansible_show_help
+export -f ansible_show_run_command_help
+export -f ansible_list_playbooks
+export -f ansible_update_inventory_cache
+export -f ansible_update_inventory_cache_advanced
+
+#----------------------------------------------------------------------
+# Module help function
+#----------------------------------------------------------------------
+ansible_help() {
+  echo "Ansible Module (modules/20_ansible.sh)"
+  echo "  run-ansible <playbook> [opts] - Execute Ansible playbook with context"
+  echo "  update-inventory              - Update inventory cache from cluster state"
+  echo ""
+  echo "Functions:"
+  echo "  cpc_ansible()                          - Main ansible command dispatcher"
+  echo "  ansible_run_playbook()                 - Execute playbooks with inventory and context"
+  echo "  ansible_show_help()                    - Display run-ansible help"
+  echo "  ansible_list_playbooks()               - List available playbooks"
+  echo "  ansible_update_inventory_cache()       - Update inventory cache from Terraform"
+  echo "  ansible_update_inventory_cache_advanced() - Advanced inventory update with cluster info"
+}
+
+export -f ansible_help
