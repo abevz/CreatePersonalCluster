@@ -1,4 +1,9 @@
 locals {
+  # VM ID calculation constants for better readability and maintainability
+  base_vm_id        = 300    # Starting VM ID for all cluster VMs
+  workspace_id_block = 100   # VM ID block size per workspace (allows 100 VMs per workspace)
+  worker_id_offset  = 20     # VM ID offset for worker nodes (control plane starts at 0)
+  
   # effective_os_type will be equal to the name of the current Tofu workspace
   effective_os_type = terraform.workspace
   hostname_template = "%s%s%s.%s"
@@ -112,8 +117,9 @@ locals {
       role              = definition.role
 
       # --- CHANGE HERE ---
-      # Replace the old, incorrect string with the restored formula
-      vm_id             = 300 + (local.workspace_ip_index * 100) + (definition.role == "c" ? 0 : 20) + definition.original_index
+      # VM ID calculation using named constants for better readability
+      # Formula: base_vm_id + (workspace_index * workspace_id_block) + (worker_offset) + node_index
+      vm_id             = local.base_vm_id + (local.workspace_ip_index * local.workspace_id_block) + (definition.role == "c" ? 0 : local.worker_id_offset) + definition.original_index
 
       # IP offset for static IP assignment using workspace block system
       ip_offset         = local.workspace_base_ip + (definition.role == "c" ? 0 : 5) + definition.original_index - 1

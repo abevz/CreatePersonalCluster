@@ -40,18 +40,22 @@ if [ -z "$RELEASE_LETTER" ]; then
     fi
   fi
 
-  # If still not found, fall back to the old mapping
+  # If still not found, require explicit definition in workspace environment
   if [ -z "$RELEASE_LETTER" ]; then
-    echo "RELEASE_LETTER not found in environment or workspace .env, falling back to mapping"
-    # Map workspace to release letter (same logic as in locals.tf)
-    case "$CURRENT_WORKSPACE" in
-    "debian") RELEASE_LETTER="d" ;;
-    "ubuntu") RELEASE_LETTER="u" ;;
-    "rocky") RELEASE_LETTER="r" ;;
-    "suse") RELEASE_LETTER="s" ;;
-    *) RELEASE_LETTER="${CURRENT_WORKSPACE:0:1}" ;; # fallback to first letter of workspace
-    esac
-    echo "Mapped workspace '$CURRENT_WORKSPACE' to RELEASE_LETTER='$RELEASE_LETTER'"
+    echo "ERROR: RELEASE_LETTER not found in environment or workspace .env file"
+    echo "This variable must be explicitly defined in envs/${CURRENT_WORKSPACE}.env to prevent hostname conflicts"
+    echo ""
+    echo "Add this line to envs/${CURRENT_WORKSPACE}.env:"
+    echo "RELEASE_LETTER=\"[single letter for this workspace]\""
+    echo ""
+    echo "Suggested values:"
+    echo "  debian -> RELEASE_LETTER=\"d\""
+    echo "  ubuntu -> RELEASE_LETTER=\"u\""
+    echo "  rocky  -> RELEASE_LETTER=\"r\""
+    echo "  suse   -> RELEASE_LETTER=\"s\""
+    echo ""
+    echo "Choose a unique letter to avoid hostname conflicts between workspaces."
+    exit 1
   fi
 fi
 
