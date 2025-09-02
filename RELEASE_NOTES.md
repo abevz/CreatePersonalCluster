@@ -41,6 +41,12 @@
 - **Memory optimization**: Better resource utilization
 - **Network efficiency**: Fewer remote state calls
 
+### 🔒 Security & Quality Improvements
+- **Kubernetes version pinning**: Fixed vulnerability where kubelet/kubeadm/kubectl versions weren't pinned
+- **Magic number elimination**: Replaced hardcoded values with named constants in terraform
+- **Hostname collision prevention**: Added mandatory RELEASE_LETTER to all environments
+- **Enhanced error handling**: Improved validation and error messages in scripts
+
 ---
 
 ## 🛠️ Breaking Changes
