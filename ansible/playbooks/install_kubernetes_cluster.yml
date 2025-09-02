@@ -261,9 +261,9 @@
     - name: Install kubelet, kubeadm, kubectl (Debian/Ubuntu)
       ansible.builtin.apt:
         name:
-          - kubelet
-          - kubeadm
-          - kubectl
+          - "kubelet={{ KUBERNETES_LONG_VERSION | default('1.29.0') }}-1.1"
+          - "kubeadm={{ KUBERNETES_LONG_VERSION | default('1.29.0') }}-1.1"
+          - "kubectl={{ KUBERNETES_LONG_VERSION | default('1.29.0') }}-1.1"
         state: present
         update_cache: yes
       when: ansible_os_family == "Debian"
@@ -272,9 +272,9 @@
     - name: Install kubelet, kubeadm, kubectl (Rocky Linux)
       ansible.builtin.dnf:
         name:
-          - kubelet
-          - kubeadm
-          - kubectl
+          - "kubelet-{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
+          - "kubeadm-{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
+          - "kubectl-{{ KUBERNETES_LONG_VERSION | default('1.29.0') }}"
         state: present
         disable_excludes: kubernetes
       when: ansible_os_family == "RedHat"
