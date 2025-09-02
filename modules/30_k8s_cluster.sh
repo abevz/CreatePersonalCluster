@@ -1,0 +1,911 @@
+#!/bin/bash
+
+# modules/30_k8s_cluster.sh - Kubernetes Cluster Lifecycle Management Module
+# Part of CPC (Create Personal Cluster) - Modular Architecture
+#
+# This module provides Kubernetes cluster lifecycle management functionality.
+#
+# Functions provided:
+# - cpc_k8s_cluster()          - Main entry point for K8s cluster commands
+# - k8s_bootstrap()            - Bootstrap complete Kubernetes cluster
+# - k8s_get_kubeconfig()       - Retrieve and merge cluster kubeconfig
+# - k8s_status()               - Check cluster status and health
+# - k8s_upgrade()              - Upgrade Kubernetes control plane
+
+# Ensure this module is not run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Error: This module should not be run directly. Use the main cpc script." >&2
+  exit 1
+fi
+
+#----------------------------------------------------------------------
+# Kubernetes Cluster Lifecycle Management Functions
+#----------------------------------------------------------------------
+
+# Main entry point for CPC kubernetes cluster functionality
+cpc_k8s_cluster() {
+  case "${1:-}" in
+  bootstrap)
+    shift
+    k8s_bootstrap "$@"
+    ;;
+  get-kubeconfig)
+    shift
+    k8s_get_kubeconfig "$@"
+    ;;
+  upgrade-k8s)
+    shift
+    k8s_upgrade "$@"
+    ;;
+  reset-all-nodes)
+    shift
+    k8s_reset_all_nodes "$@"
+    ;;
+  status | cluster-status)
+    shift
+    k8s_cluster_status "$@"
+    ;;
+  *)
+    log_error "Unknown k8s cluster command: ${1:-}"
+    log_info "Available commands: bootstrap, get-kubeconfig, upgrade-k8s, reset-all-nodes, status"
+    return 1
+    ;;
+  esac
+}
+
+# Bootstrap a complete Kubernetes cluster on deployed VMs
+#
+# In file: modules/30_k8s_cluster.sh
+
+k8s_bootstrap() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    k8s_show_bootstrap_help
+    return 0
+  fi
+
+  # Parse command line arguments
+  local skip_check=false
+  local force_bootstrap=false
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+    --skip-check)
+      skip_check=true
+      shift
+      ;;
+    --force)
+      force_bootstrap=true
+      shift
+      ;;
+    *)
+      log_error "Unknown option: $1"
+      return 1
+      ;;
+    esac
+  done
+
+  # Check if secrets are loaded
+  check_secrets_loaded || return 1
+
+  local current_ctx
+  current_ctx=$(get_current_cluster_context) || return 1
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+
+  log_info "Starting Kubernetes bootstrap for context '$current_ctx'..."
+
+  # STEP 1: Get ALL output (logs + JSON) from the working command
+  log_info "Getting all infrastructure data from Tofu..."
+  local raw_output
+  raw_output=$("$repo_root/cpc" deploy output -json 2>/dev/null)
+
+  # STEP 2: Using 'sed' to extract clean JSON from all text
+  local all_tofu_outputs_json
+  all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
+
+  if [[ -z "$all_tofu_outputs_json" ]]; then
+    log_error "Failed to extract JSON from 'cpc deploy output'. Please check for errors."
+    return 1
+  fi
+
+  # STEP 3: Extract 'cluster_summary' for VM verification
+  local cluster_summary_json
+  cluster_summary_json=$(echo "$all_tofu_outputs_json" | jq '.cluster_summary.value')
+
+  if [ "$skip_check" = false ]; then
+    log_info "Checking VM existence and connectivity..."
+    if ! tofu_update_node_info "$cluster_summary_json"; then
+      log_error "No VMs found in Tofu output. Please deploy VMs first with 'cpc deploy apply'"
+      return 1
+    fi
+    log_success "VM check passed. Found ${#TOFU_NODE_NAMES[@]} nodes."
+  fi
+
+  # STEP 4: Extract 'ansible_inventory' and CONVERT it to STATIC JSON
+  log_info "Generating temporary static JSON inventory for Ansible..."
+  local dynamic_inventory_json
+  dynamic_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
+
+  local temp_inventory_file
+  temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
+
+  # Using jq to transform dynamic JSON to static, which Ansible will understand
+  jq '
+    . as $inv |
+    {
+      "all": {
+        "children": {
+          "control_plane": {
+            "hosts": ($inv.control_plane.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
+          },
+          "workers": {
+            "hosts": ($inv.workers.hosts // []) | map({(.): $inv._meta.hostvars[.]}) | add
+          }
+        }
+      }
+    }
+  ' <<<"$dynamic_inventory_json" >"$temp_inventory_file"
+
+  log_success "Temporary static JSON inventory created at $temp_inventory_file"
+
+  # Check if cluster is already initialized (unless forced)
+  if [ "$force_bootstrap" = false ]; then
+    local control_plane_ip
+    control_plane_ip=$(echo "$cluster_summary_json" | jq -r 'to_entries[] | select(.key | contains("controlplane")) | .value.IP' | head -1)
+
+    if [ -n "$control_plane_ip" ] && [ "$control_plane_ip" != "null" ]; then
+      local ansible_dir="$repo_root/ansible"
+      local remote_user
+      remote_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg" 2>/dev/null || echo 'root')
+
+      if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
+        "${remote_user}@${control_plane_ip}" \
+        "test -f /etc/kubernetes/admin.conf" 2>/dev/null; then
+        log_warning "Kubernetes cluster appears to already be initialized on $control_plane_ip"
+        log_warning "Use --force to bootstrap anyway (this will reset the cluster)"
+        rm -f "$temp_inventory_file"
+        return 1
+      fi
+    fi
+  fi
+
+  # Run the bootstrap playbooks
+  log_success "Starting Kubernetes cluster bootstrap..."
+
+  local ansible_extra_args=("-i" "$temp_inventory_file")
+
+  # CONNECTION CHECK with error handling
+  log_info "Testing Ansible connectivity to all nodes..."
+  if ! error_validate_command "ansible all \"${ansible_extra_args[@]}\" -m ping --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\"" \
+                            "Failed to connect to all nodes via Ansible"; then
+    rm -f "$temp_inventory_file"
+    return 1
+  fi
+  log_success "Ansible connectivity test passed"
+
+  # Step 1: Install Kubernetes components with recovery
+  log_info "Step 1: Installing Kubernetes components..."
+  if ! recovery_execute \
+       "ansible_run_playbook \"install_kubernetes_cluster.yml\" \"${ansible_extra_args[@]}\"" \
+       "install_kubernetes" \
+       "log_warning 'Kubernetes installation failed, manual cleanup may be needed'" \
+       "ansible all \"${ansible_extra_args[@]}\" -m shell -a 'which kubelet' --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\""; then
+    log_error "Failed to install Kubernetes components"
+    rm -f "$temp_inventory_file"
+    return 1
+  fi
+
+  # Step 2: Initialize cluster with recovery
+  log_info "Step 2: Initializing Kubernetes cluster..."
+  if ! recovery_execute \
+       "ansible_run_playbook \"initialize_kubernetes_cluster_with_dns.yml\" \"${ansible_extra_args[@]}\"" \
+       "initialize_kubernetes" \
+       "log_warning 'Kubernetes initialization failed, manual cleanup may be needed'" \
+       "ansible all \"${ansible_extra_args[@]}\" -m shell -a 'test -f /etc/kubernetes/admin.conf' --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\""; then
+    log_error "Failed to initialize Kubernetes cluster"
+    rm -f "$temp_inventory_file"
+    return 1
+  fi
+
+  # Step 3: Validate cluster
+  #
+  log_info "Step 3: Validating cluster installation..."
+  if ! ansible_run_playbook "validate_cluster.yml" -l control_plane "${ansible_extra_args[@]}"; then
+    log_warning "Cluster validation failed, but continuing..."
+  fi
+
+  # Remove temporary file
+  rm -f "$temp_inventory_file"
+
+  log_success "Kubernetes cluster bootstrap completed successfully!"
+  log_info "Next steps:"
+  log_info "  1. Get cluster access: cpc get-kubeconfig"
+  log_info "  2. Install addons: cpc upgrade-addons"
+  log_info "  3. Verify cluster: kubectl get nodes -o wide"
+}
+
+#
+# Version: 9.0 (Final - with robust cleanup)
+#
+# Retrieve and merge Kubernetes cluster config into local kubeconfig
+k8s_get_kubeconfig() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    k8s_show_kubeconfig_help
+    return 0
+  fi
+
+  log_step "Retrieving kubeconfig from the cluster..."
+
+  local current_ctx
+  current_ctx=$(get_current_cluster_context)
+  if [[ -z "$current_ctx" ]]; then
+    log_error "No active workspace context is set. Use 'cpc ctx <workspace_name>'."
+    return 1
+  fi
+
+  # --- Get control plane IP address ---
+  log_info "Getting infrastructure data from Terraform..."
+  local raw_output
+  raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null | sed -n '/^{$/,/^}$/p')
+
+  if [[ -z "$raw_output" ]]; then
+    log_error "Failed to get Terraform outputs. Please ensure the cluster is deployed."
+    return 1
+  fi
+
+  local control_plane_ip
+  control_plane_ip=$(echo "$raw_output" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.IP | select(. != null)' | head -n 1)
+
+  if [[ -z "$control_plane_ip" ]]; then
+    log_error "Could not determine the control plane IP address from Terraform outputs."
+    return 1
+  fi
+
+  log_info "Control plane IP found: ${control_plane_ip}"
+
+  # --- Download and process kubeconfig ---
+  local temp_kubeconfig
+  temp_kubeconfig=$(mktemp)
+  trap 'rm -f -- "$temp_kubeconfig"' EXIT
+
+  log_info "Fetching kubeconfig from ${control_plane_ip}..."
+  if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    "${ANSIBLE_REMOTE_USER:-$VM_USERNAME}@${control_plane_ip}" \
+    "sudo cat /etc/kubernetes/admin.conf" >"${temp_kubeconfig}"; then
+    log_error "Failed to fetch kubeconfig file from the control plane node."
+    return 1
+  fi
+
+  if [[ ! -s "${temp_kubeconfig}" ]]; then
+    log_error "Fetched kubeconfig file is empty. Check sudo permissions on the control plane node."
+    return 1
+  fi
+
+  log_success "Kubeconfig file fetched successfully."
+
+  # --- Modify the temporary kubeconfig ---
+  local cluster_name="$current_ctx"
+  local user_name="${current_ctx}-admin"
+  local context_name="$current_ctx"
+
+  sed -i \
+    -e "s/name: kubernetes-admin@kubernetes/name: ${context_name}/g" \
+    -e "s/name: kubernetes-admin/name: ${user_name}/g" \
+    -e "s/user: kubernetes-admin/user: ${user_name}/g" \
+    -e "s/name: kubernetes/name: ${cluster_name}/g" \
+    -e "s/cluster: kubernetes/cluster: ${cluster_name}/g" \
+    -e "s|server: https://.*:6443|server: https://${control_plane_ip}:6443|g" \
+    -e "s/current-context: .*/current-context: ${context_name}/g" \
+    "${temp_kubeconfig}"
+
+  # --- Cleanup and Merge ---
+  local kubeconfig_path="${KUBECONFIG:-$HOME/.kube/config}"
+
+  log_info "Cleaning up any stale entries for '${context_name}' using yq..."
+  if [[ -f "$kubeconfig_path" ]] && command -v yq &>/dev/null; then
+    # Using yq is much safer for parsing and editing YAML
+    yq -i "del(.clusters[] | select(.name == \"${cluster_name}\"))" "$kubeconfig_path"
+    yq -i "del(.contexts[] | select(.name == \"${context_name}\"))" "$kubeconfig_path"
+    yq -i "del(.users[] | select(.name == \"${user_name}\"))" "$kubeconfig_path"
+  fi
+
+  log_info "Merging into ${kubeconfig_path}"
+  mkdir -p "$(dirname "${kubeconfig_path}")"
+
+  # Create a backup just in case
+  if [[ -f "$kubeconfig_path" ]]; then
+    cp "${kubeconfig_path}" "${kubeconfig_path}.bak.$(date +%s)"
+  fi
+
+  KUBECONFIG="${kubeconfig_path}:${temp_kubeconfig}" kubectl config view --flatten >"${kubeconfig_path}.merged"
+  mv "${kubeconfig_path}.merged" "${kubeconfig_path}"
+  chmod 600 "${kubeconfig_path}"
+
+  kubectl config use-context "${context_name}"
+
+  log_success "Kubeconfig has been updated successfully."
+  log_info "Current context is now set to '${context_name}'."
+}
+
+# Upgrade Kubernetes control plane components
+k8s_upgrade() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    k8s_show_upgrade_help
+    return 0
+  fi
+
+  # Parse command line arguments
+  local target_version=""
+  local skip_etcd_backup="false"
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+    --target-version)
+      target_version="$2"
+      shift 2
+      ;;
+    --skip-etcd-backup)
+      skip_etcd_backup="true"
+      shift
+      ;;
+    *)
+      log_error "Unknown option: $1"
+      return 1
+      ;;
+    esac
+  done
+
+  # Confirmation prompt
+  local current_ctx
+  current_ctx=$(get_current_cluster_context) || return 1
+
+  log_warning "This will upgrade the Kubernetes control plane for context '$current_ctx'."
+  read -r -p "Are you sure you want to continue? [y/N] " response
+  if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    log_info "Operation cancelled."
+    return 0
+  fi
+
+  log_info "Upgrading Kubernetes control plane..."
+
+  local extra_args=()
+  extra_args+=("-e" "skip_etcd_backup=$skip_etcd_backup")
+
+  if [ -n "$target_version" ]; then
+    extra_args+=("-e" "target_k8s_version=$target_version")
+  fi
+
+  ansible_run_playbook "pb_upgrade_k8s_control_plane.yml" -l control_plane "${extra_args[@]}"
+}
+
+# Reset all nodes in the cluster
+k8s_reset_all_nodes() {
+  local current_ctx
+  current_ctx=$(get_current_cluster_context) || return 1
+
+  read -r -p "Are you sure you want to reset Kubernetes on ALL nodes in context '$current_ctx'? [y/N] " response
+  if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    log_warning "Resetting all Kubernetes nodes..."
+    ansible_run_playbook "pb_reset_all_nodes.yml"
+  else
+    log_info "Operation cancelled."
+  fi
+}
+
+#----------------------------------------------------------------------
+# Help Functions
+#----------------------------------------------------------------------
+
+# Display help for bootstrap command
+k8s_show_bootstrap_help() {
+  echo "Usage: cpc bootstrap [--skip-check] [--force]"
+  echo ""
+  echo "Bootstrap a complete Kubernetes cluster on the deployed VMs."
+  echo ""
+  echo "The bootstrap process includes:"
+  echo "  1. Install Kubernetes components (kubelet, kubeadm, kubectl, containerd)"
+  echo "  2. Initialize control plane with kubeadm"
+  echo "  3. Install Calico CNI plugin"
+  echo "  4. Join worker nodes to the cluster"
+  echo "  5. Configure kubectl access for the cluster"
+  echo ""
+  echo "Options:"
+  echo "  --skip-check   Skip VM connectivity check before starting"
+  echo "  --force        Force bootstrap even if cluster appears already initialized"
+  echo ""
+  echo "Prerequisites:"
+  echo "  - VMs must be deployed and accessible (use 'cpc deploy apply')"
+  echo "  - SSH access configured to all nodes"
+  echo "  - SOPS secrets loaded for VM authentication"
+  echo ""
+  echo "Example workflow:"
+  echo "  cpc ctx ubuntu           # Set context"
+  echo "  cpc deploy apply         # Deploy VMs"
+  echo "  cpc bootstrap           # Bootstrap Kubernetes cluster"
+  echo "  cpc get-kubeconfig      # Get cluster access"
+}
+
+# Display help for get-kubeconfig command
+k8s_show_kubeconfig_help() {
+  echo "Usage: cpc get-kubeconfig"
+  echo ""
+  echo "Retrieve and merge Kubernetes cluster config into local kubeconfig."
+  echo ""
+  echo "This command will:"
+  echo "  1. Connect to the control plane node"
+  echo "  2. Download the admin kubeconfig"
+  echo "  3. Update server address to use control plane IP"
+  echo "  4. Merge with existing ~/.kube/config (backing up original)"
+  echo "  5. Set the current context to the cluster"
+  echo ""
+  echo "Prerequisites:"
+  echo "  - Kubernetes cluster must be bootstrapped ('cpc bootstrap')"
+  echo "  - SSH access to control plane node"
+  echo "  - kubectl command available locally"
+  echo ""
+  echo "Example:"
+  echo "  cpc get-kubeconfig      # Get cluster access"
+  echo "  kubectl get nodes       # Test cluster access"
+}
+
+# Display help for upgrade-k8s command
+k8s_show_upgrade_help() {
+  echo "Usage: cpc upgrade-k8s [--target-version <version>] [--skip-etcd-backup]"
+  echo ""
+  echo "Upgrade Kubernetes control plane components."
+  echo ""
+  echo "Options:"
+  echo "  --target-version <version>  Target Kubernetes version (default: from environment)"
+  echo "  --skip-etcd-backup         Skip etcd backup before upgrade"
+  echo ""
+  echo "The upgrade process will:"
+  echo "  1. Backup etcd (unless --skip-etcd-backup is specified)"
+  echo "  2. Upgrade control plane components on each control plane node"
+  echo "  3. Verify cluster health after upgrade"
+  echo ""
+  echo "Warning: This will upgrade the control plane. Ensure you have backups!"
+}
+
+# Check Kubernetes cluster status and health
+k8s_cluster_status() {
+  local quick_mode=false
+  local fast_mode=false
+  
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --quick|-q)
+        quick_mode=true
+        shift
+        ;;
+      --fast|-f)
+        quick_mode=true
+        fast_mode=true
+        shift
+        ;;
+      -h|--help)
+        k8s_show_status_help
+        return 0
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        k8s_show_status_help
+        return 1
+        ;;
+    esac
+  done
+
+  local current_ctx
+  current_ctx=$(get_current_cluster_context) 
+  
+  if [[ "$quick_mode" == true ]]; then
+    log_info "=== Quick Cluster Status ==="
+    log_info "Workspace: ${current_ctx}"
+    
+    # Fast mode: Skip VM checks, only show basic info
+    if [[ "$fast_mode" == true ]]; then
+      log_info "Running in fast mode (VM checks skipped)..."
+      
+      # Quick K8s check only
+      if kubectl cluster-info &>/dev/null; then
+        local nodes
+        nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+        echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
+      else
+        echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
+      fi
+      
+      return 0
+    fi
+    
+    # Quick VM check with caching
+    local cache_file="/tmp/cpc_status_cache_${current_ctx}"
+    local cluster_data=""
+    local use_cache=false
+    
+    # Check if cache exists and is less than 30 seconds old
+    if [[ -f "$cache_file" ]]; then
+      local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+      if [[ $cache_age -lt 30 ]]; then
+        use_cache=true
+        cluster_data=$(cat "$cache_file" 2>/dev/null)
+      fi
+    fi
+    
+    # Get fresh data if cache is stale or doesn't exist
+    if [[ "$use_cache" != true ]]; then
+      local tf_dir="${REPO_PATH}/terraform"
+      
+      # Try to get data directly from terraform state first (faster)
+      pushd "$tf_dir" >/dev/null || return 1
+      tofu workspace select "${current_ctx}" >/dev/null 2>&1
+      
+      # Use direct tofu output without CPC wrapper for speed
+      cluster_data=$(tofu output -json cluster_summary 2>/dev/null)
+      local tofu_exit_code=$?
+      popd >/dev/null || return 1
+      
+      # Cache the result if successful
+      if [[ $tofu_exit_code -eq 0 && "$cluster_data" != "null" && -n "$cluster_data" ]]; then
+        echo "$cluster_data" > "$cache_file" 2>/dev/null
+      fi
+    fi
+    
+    if [[ -n "$cluster_data" && "$cluster_data" != "null" ]]; then
+      local vm_count
+      vm_count=$(echo "$cluster_data" | jq '. | length' 2>/dev/null || echo "0")
+      echo -e "${GREEN}VMs deployed: $vm_count${ENDCOLOR}"
+      
+      # Quick SSH check with caching for speed
+      if [[ $vm_count -gt 0 ]]; then
+        local ssh_cache_file="/tmp/cpc_ssh_cache_${current_ctx}"
+        local ssh_result=""
+        local use_ssh_cache=false
+        
+        # Check if SSH cache exists and is less than 10 seconds old
+        if [[ -f "$ssh_cache_file" ]]; then
+          local ssh_cache_age=$(($(date +%s) - $(stat -c %Y "$ssh_cache_file" 2>/dev/null || echo 0)))
+          if [[ $ssh_cache_age -lt 10 ]]; then
+            use_ssh_cache=true
+            ssh_result=$(cat "$ssh_cache_file" 2>/dev/null)
+          fi
+        fi
+        
+        if [[ "$use_ssh_cache" == true && -n "$ssh_result" ]]; then
+          echo -e "${GREEN}$ssh_result${ENDCOLOR}"
+        else
+          # Extract IPs into an array
+          local ips_array
+          mapfile -t ips_array < <(echo "$cluster_data" | jq -r 'to_entries[] | .value.IP' 2>/dev/null)
+          
+          local reachable=0
+          local total=${#ips_array[@]}
+          
+          # Process each IP sequentially for reliability
+          for ip in "${ips_array[@]}"; do
+            if [[ -n "$ip" && "$ip" != "null" ]]; then
+              if ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=no "$ip" "exit 0" 2>/dev/null; then
+                ((reachable++))
+              fi
+            fi
+          done
+          
+          ssh_result="SSH reachable: $reachable/$total"
+          echo -e "${GREEN}$ssh_result${ENDCOLOR}"
+          
+          # Cache the SSH result
+          echo "$ssh_result" > "$ssh_cache_file" 2>/dev/null
+        fi
+      else
+        echo -e "${YELLOW}SSH reachable: No VMs to check${ENDCOLOR}"
+      fi
+    else
+      echo -e "${YELLOW}VMs deployed: 0 (workspace not deployed)${ENDCOLOR}"
+      echo -e "${YELLOW}SSH reachable: No VMs to check${ENDCOLOR}"
+    fi
+    
+    # Quick K8s check
+    if kubectl cluster-info &>/dev/null; then
+      local nodes
+      nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+      echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
+    else
+      echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
+    fi
+    
+    return 0
+  fi
+
+  log_info "=== Kubernetes Cluster Status Check ==="
+  log_info "Workspace: ${current_ctx}"
+  echo
+
+  log_info "📋 1. Checking VM infrastructure..."
+  local tf_dir="${REPO_PATH}/terraform"
+  local cluster_data=""
+
+  # Switch to the Terraform directory to ensure context is correct
+  pushd "$tf_dir" >/dev/null || {
+    log_error "Failed to switch to Terraform directory."
+    return 1
+  }
+
+  # Ensure the correct workspace is selected
+  tofu workspace select "${current_ctx}" >/dev/null
+
+  # Get the cluster summary output
+  cluster_data=$(tofu output -json cluster_summary)
+  local exit_code=$?
+
+  popd >/dev/null || {
+    log_error "Failed to switch back from Terraform directory."
+    return 1
+  }
+
+  if [[ $exit_code -eq 0 && "$cluster_data" != "null" && -n "$cluster_data" ]]; then
+    local vm_count
+    vm_count=$(echo "$cluster_data" | jq '. | length')
+
+    if [[ $vm_count -gt 0 ]]; then
+      log_success "VMs deployed: ${vm_count}"
+      echo
+      echo -e "${GREEN}Cluster VMs:${ENDCOLOR}"
+      echo "$cluster_data" | jq -r 'to_entries[] | "  ✓ \(.key) (\(.value.hostname)) - \(.value.IP)"'
+      
+      # Check VM status in Proxmox
+      echo
+      log_info "🔍 Checking VM status in Proxmox..."
+      check_proxmox_vm_status "$cluster_data"
+    else
+      log_warning "No VMs found in the current workspace."
+    fi
+  else
+    log_error "Failed to retrieve VM information from Terraform."
+    log_info "Is the cluster deployed? Try running 'cpc deploy apply'."
+  fi
+  echo
+
+  # --- Start of Fix ---
+  log_info "🔗 2. Testing SSH connectivity..."
+  if [[ -z "$cluster_data" || "$cluster_data" == "null" ]]; then
+    log_warning "Cannot test SSH connectivity because VM data is unavailable."
+  else
+    local ssh_results=""
+    local total_hosts=0
+    local reachable_hosts=0
+    
+    echo "$cluster_data" | jq -r 'to_entries[] | "\(.key) \(.value.IP)"' | while read -r vm_key ip; do
+      ((total_hosts++))
+      echo -n "  Testing $vm_key ($ip)... "
+      
+      # Test SSH connection with detailed output
+      if ssh -o ConnectTimeout=5 \
+             -o BatchMode=yes \
+             -o StrictHostKeyChecking=no \
+             -o UserKnownHostsFile=/dev/null \
+             "$ip" "echo 'SSH OK'" 2>/dev/null; then
+        echo -e "${GREEN}✓ Reachable${ENDCOLOR}"
+        ((reachable_hosts++))
+      else
+        # Try to determine the reason for failure
+        local error_reason="Unknown error"
+        if timeout 5 bash -c "</dev/tcp/$ip/22" 2>/dev/null; then
+          error_reason="Authentication failed"
+        else
+          error_reason="Connection timeout/Port 22 closed"
+        fi
+        echo -e "${RED}✗ $error_reason${ENDCOLOR}"
+      fi
+    done
+    
+    echo
+    if [[ $reachable_hosts -eq $total_hosts ]]; then
+      log_success "All $total_hosts nodes are reachable via SSH"
+    elif [[ $reachable_hosts -gt 0 ]]; then
+      log_warning "$reachable_hosts/$total_hosts nodes reachable via SSH"
+    else
+      log_error "No nodes are reachable via SSH"
+      log_info "💡 Try: 'cpc start-vms' to start VMs or check network connectivity"
+    fi
+  fi
+  # --- End of Fix ---
+  echo
+
+  log_info "⚙️ 3. Checking Kubernetes cluster status..."
+  if ! command -v kubectl &>/dev/null; then
+    log_error "'kubectl' command not found. Please install it first."
+    log_info "💡 Install kubectl: https://kubernetes.io/docs/tasks/tools/"
+  elif ! kubectl cluster-info &>/dev/null; then
+    log_error "Cannot connect to Kubernetes cluster."
+    log_info "💡 Try: 'cpc k8s-cluster get-kubeconfig' to retrieve cluster config"
+    log_info "💡 Or run: 'cpc bootstrap' to create a new cluster"
+  else
+    log_success "Successfully connected to Kubernetes cluster."
+    
+    # Quick health check
+    echo
+    log_info "🔍 Quick cluster health check:"
+    
+    # Check control plane status
+    echo -n "  Control plane: "
+    if kubectl get nodes --selector='node-role.kubernetes.io/control-plane' &>/dev/null; then
+      local control_nodes
+      control_nodes=$(kubectl get nodes --selector='node-role.kubernetes.io/control-plane' --no-headers | wc -l)
+      echo -e "${GREEN}✓ $control_nodes control plane node(s)${ENDCOLOR}"
+    else
+      echo -e "${RED}✗ No control plane nodes found${ENDCOLOR}"
+    fi
+    
+    # Check worker nodes
+    echo -n "  Worker nodes: "
+    local worker_nodes
+    worker_nodes=$(kubectl get nodes --selector='!node-role.kubernetes.io/control-plane' --no-headers 2>/dev/null | wc -l)
+    if [[ $worker_nodes -gt 0 ]]; then
+      echo -e "${GREEN}✓ $worker_nodes worker node(s)${ENDCOLOR}"
+    else
+      echo -e "${YELLOW}⚠ No dedicated worker nodes${ENDCOLOR}"
+    fi
+    
+    # Check core services
+    echo -n "  CoreDNS: "
+    if kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers &>/dev/null; then
+      local coredns_pods
+      coredns_pods=$(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | grep Running | wc -l)
+      local total_coredns
+      total_coredns=$(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | wc -l)
+      if [[ $coredns_pods -eq $total_coredns ]]; then
+        echo -e "${GREEN}✓ Running ($coredns_pods/$total_coredns)${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}⚠ Partially running ($coredns_pods/$total_coredns)${ENDCOLOR}"
+      fi
+    else
+      echo -e "${RED}✗ Not found${ENDCOLOR}"
+    fi
+    
+    # Check CNI
+    echo -n "  CNI (Calico): "
+    if kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers &>/dev/null; then
+      local calico_pods
+      calico_pods=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | grep Running | wc -l)
+      local total_calico
+      total_calico=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | wc -l)
+      if [[ $calico_pods -eq $total_calico ]]; then
+        echo -e "${GREEN}✓ Running ($calico_pods/$total_calico)${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}⚠ Partially running ($calico_pods/$total_calico)${ENDCOLOR}"
+      fi
+    else
+      echo -e "${RED}✗ Not found${ENDCOLOR}"
+    fi
+    
+    echo
+    kubectl cluster-info
+  fi
+}
+
+# Check VM status in Proxmox
+check_proxmox_vm_status() {
+  local cluster_data="$1"
+  
+  if ! command -v qm &>/dev/null; then
+    log_warning "Proxmox CLI (qm) not found. Skipping VM status check."
+    return 1
+  fi
+  
+  echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+    if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+      log_debug "Checking status for VM $vm_id ($hostname)"
+      
+      # Get VM status
+      local vm_status
+      vm_status=$(sudo qm status "$vm_id" 2>/dev/null | grep "status:" | awk '{print $2}')
+      
+      if [[ -z "$vm_status" ]]; then
+        echo -e "  ${RED}✗${ENDCOLOR} $vm_key ($hostname) - VM $vm_id: Status unknown"
+        continue
+      fi
+      
+      # Get additional VM info
+      local vm_uptime=""
+      local cpu_usage=""
+      local mem_usage=""
+      
+      if [[ "$vm_status" == "running" ]]; then
+        # Get uptime
+        vm_uptime=$(sudo qm status "$vm_id" 2>/dev/null | grep "uptime:" | awk '{print $2}')
+        if [[ -n "$vm_uptime" ]]; then
+          # Convert seconds to human readable format
+          local uptime_days=$((vm_uptime / 86400))
+          local uptime_hours=$(( (vm_uptime % 86400) / 3600 ))
+          local uptime_mins=$(( (vm_uptime % 3600) / 60 ))
+          vm_uptime="${uptime_days}d ${uptime_hours}h ${uptime_mins}m"
+        fi
+        
+        # Get CPU and memory usage (if available)
+        local vm_monitor
+        vm_monitor=$(sudo qm monitor "$vm_id" 2>/dev/null | head -10)
+        cpu_usage=$(echo "$vm_monitor" | grep "CPU usage:" | awk '{print $3}' | sed 's/%//')
+        mem_usage=$(echo "$vm_monitor" | grep "memory:" | awk '{print $2}' | sed 's/%//')
+      fi
+      
+      # Display status with color coding
+      case "$vm_status" in
+        "running")
+          echo -e "  ${GREEN}✓${ENDCOLOR} $vm_key ($hostname) - ${GREEN}Running${ENDCOLOR}"
+          [[ -n "$vm_uptime" ]] && echo -e "    Uptime: $vm_uptime"
+          [[ -n "$cpu_usage" ]] && echo -e "    CPU: ${cpu_usage}%"
+          [[ -n "$mem_usage" ]] && echo -e "    Memory: ${mem_usage}%"
+          ;;
+        "stopped")
+          echo -e "  ${RED}✗${ENDCOLOR} $vm_key ($hostname) - ${RED}Stopped${ENDCOLOR}"
+          ;;
+        "suspended")
+          echo -e "  ${YELLOW}⏸${ENDCOLOR} $vm_key ($hostname) - ${YELLOW}Suspended${ENDCOLOR}"
+          ;;
+        *)
+          echo -e "  ${YELLOW}?${ENDCOLOR} $vm_key ($hostname) - ${YELLOW}$vm_status${ENDCOLOR}"
+          ;;
+      esac
+    fi
+  done
+}
+
+# Show help for status command
+k8s_show_status_help() {
+  echo "Kubernetes Cluster Status Check"
+  echo
+  echo "Usage: cpc status [options]"
+  echo
+  echo "Options:"
+  echo "  --quick, -q    Quick status check (VMs, SSH, K8s connectivity)"
+  echo "  --help, -h     Show this help message"
+  echo
+  echo "Without options, performs comprehensive status check including:"
+  echo "  • VM infrastructure status"
+  echo "  • Proxmox VM status and resources"
+  echo "  • SSH connectivity testing"
+  echo "  • Kubernetes cluster health"
+  echo "  • Core services status (CoreDNS, CNI)"
+  echo "  • Node and pod information"
+  echo
+  echo "Examples:"
+  echo "  cpc status           # Full status check"
+  echo "  cpc status --quick   # Quick overview"
+  echo "  cpc status -q        # Same as --quick"
+}
+
+#----------------------------------------------------------------------
+# Export functions for use by other modules
+#----------------------------------------------------------------------
+export -f cpc_k8s_cluster
+export -f k8s_bootstrap
+export -f k8s_get_kubeconfig
+export -f k8s_upgrade
+export -f k8s_reset_all_nodes
+export -f k8s_cluster_status
+export -f k8s_show_bootstrap_help
+export -f k8s_show_kubeconfig_help
+export -f k8s_show_upgrade_help
+export -f k8s_show_status_help
+
+#----------------------------------------------------------------------
+# Module help function
+#----------------------------------------------------------------------
+k8s_cluster_help() {
+  echo "Kubernetes Cluster Module (modules/30_k8s_cluster.sh)"
+  echo "  bootstrap [opts]           - Bootstrap complete Kubernetes cluster"
+  echo "  get-kubeconfig            - Retrieve and merge cluster kubeconfig"
+  echo "  upgrade-k8s [opts]        - Upgrade Kubernetes control plane"
+  echo "  reset-all-nodes           - Reset all nodes in cluster"
+  echo "  status|cluster-status     - Check cluster status and health"
+  echo ""
+  echo "Functions:"
+  echo "  cpc_k8s_cluster()         - Main cluster command dispatcher"
+  echo "  k8s_bootstrap()           - Complete cluster bootstrap process"
+  echo "  k8s_get_kubeconfig()      - Retrieve and merge kubeconfig"
+  echo "  k8s_upgrade()             - Upgrade control plane components"
+  echo "  k8s_reset_all_nodes()     - Reset all cluster nodes"
+  echo "  k8s_cluster_status()      - Check cluster status and health"
+}
+
+export -f k8s_cluster_help

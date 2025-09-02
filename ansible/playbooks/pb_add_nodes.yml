@@ -18,7 +18,6 @@
     - name: Set control plane endpoint
       set_fact:
         control_plane_endpoint: "{{ hostvars[groups['control_plane'][0]]['ansible_default_ipv4']['address'] + ':6443' }}"
-      run_once: true
 
     - name: Generate join token if not provided
       delegate_to: "{{ groups['control_plane'][0] }}"
@@ -32,7 +31,6 @@
         join_token: "{{ join_command_output.stdout.split(' ')[4] }}"
         discovery_token_ca_cert_hash: "{{ join_command_output.stdout.split(' ')[6] }}"
       when: join_command_output is defined and join_command_output.stdout is defined
-      run_once: true
 
     - name: Display join information
       debug:
@@ -41,17 +39,34 @@
           - "Discovery Hash: {{ discovery_token_ca_cert_hash }}"
           - "Control Plane Endpoint: {{ control_plane_endpoint }}"
 
+    - name: Remove containerd config if it exists
+      file:
+        path: /etc/containerd/config.toml
+        state: absent
+
+    - name: Restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+        daemon_reload: yes
+
     - name: Check if node is already part of cluster
       shell: kubectl get nodes --no-headers | grep -w "{{ inventory_hostname }}" || true
       delegate_to: "{{ groups['control_plane'][0] }}"
       register: node_exists
       changed_when: false
 
+    - name: Check kubelet service status
+      command: systemctl is-active kubelet
+      register: kubelet_status
+      changed_when: false
+      ignore_errors: true
+
     - name: Reset node if it exists in cluster but kubelet is not running
       shell: kubeadm reset --force
-      when: 
+      when:
         - node_exists.stdout != ""
-        - not ansible_facts.services['kubelet.service'].state == 'running'
+        - kubelet_status.rc != 0
 
     - name: Join node to Kubernetes cluster
       shell: |
@@ -63,8 +78,8 @@
 
     - name: Display join result
       debug:
-        var: join_result.stdout_lines
-      when: join_result is defined
+        var: join_result
+      when: join_result is defined and join_result.stdout_lines is defined
 
     - name: Verify node joined successfully
       shell: kubectl get nodes --no-headers | grep -w "{{ inventory_hostname }}"
@@ -111,7 +126,7 @@
       run_once: true
 
     - name: Approve pending kubelet serving CSRs for new nodes
-      shell: kubectl get csr -o name | grep "kubelet-serving" | xargs kubectl certificate approve
+      shell: kubectl get csr -o name | grep "kubelet-serving" | xargs -r kubectl certificate approve
       delegate_to: "{{ groups['control_plane'][0] }}"
       when: pending_csr_count_after_join.stdout|int > 0
       register: csr_approval_result_add_nodes

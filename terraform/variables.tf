@@ -127,4 +127,36 @@ variable "additional_controlplanes" {
   default     = ""
 }
 
+# Static IP configuration variables
+variable "static_ip_base" {
+  description = "Base IP address for static IP assignment (e.g., '10.10.10.' - note the trailing dot)"
+  type        = string
+  default     = ""
+}
+
+variable "static_ip_gateway" {
+  description = "Gateway IP address for static IP configuration"
+  type        = string
+  default     = ""
+}
+
+variable "static_ip_start" {
+  description = "Starting IP address offset for static IP assignment"
+  type        = number
+  default     = 100
+}
+
+# Advanced IP block system variables
+variable "network_cidr" {
+  description = "Base network CIDR (e.g., '10.10.10.0/24')"
+  type        = string
+  default     = "10.10.10.0/24"
+}
+
+variable "workspace_ip_block_size" {
+  description = "Number of IP addresses allocated per workspace"
+  type        = number
+  default     = 10
+}
+
 

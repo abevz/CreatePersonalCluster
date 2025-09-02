@@ -348,72 +348,44 @@ def delete_dns_record(pihole_ip, sid, csrf_token, domain, ip_address, debug=Fals
         print(f"An unexpected error occurred during Pi-hole DNS API call (delete): {e}", file=sys.stderr)
         return False
 
-def get_terraform_outputs(tf_dir, debug=False): # Add debug parameter
-    """Runs 'tofu output -json' in the specified directory and returns the parsed JSON."""
+def get_terraform_outputs(tf_dir):
+    """
+    Executes 'tofu output -json' in the specified directory to retrieve VM details.
+
+    Args:
+        tf_dir (str): The path to the Terraform directory.
+
+    Returns:
+        tuple: A tuple containing two lists: VM IPv4 addresses and VM FQDNs.
+               Returns (None, None) if the command fails or outputs are empty.
+    """
     try:
-        # Ensure tf_dir is an absolute path
-        if not os.path.isabs(tf_dir):
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            tf_dir = os.path.abspath(os.path.join(script_dir, tf_dir))
-
-        if debug: print(f"DEBUG: [get_terraform_outputs] Terraform directory: {tf_dir}") # Conditional print
-        
-        # Check if the Terraform directory exists
-        if not os.path.isdir(tf_dir):
-            error_msg = f"Terraform directory not found: {tf_dir}"
-            print(f"ERROR: [get_terraform_outputs] {error_msg}")
-            return False, error_msg
-
-        # Check for .terraform directory and terraform.tfstate
-        if not os.path.exists(os.path.join(tf_dir, ".terraform")):
-            # error_msg = f".terraform directory not found in {tf_dir}. Make sure to run 'terraform init'." # Original
-            # if debug: print(f"DEBUG: [get_terraform_outputs] {error_msg}") # Conditional print for the original message
-            pass # Allow tofu to report this error
-        if not os.path.exists(os.path.join(tf_dir, "terraform.tfstate")):
-            # error_msg = f"terraform.tfstate not found in {tf_dir}. Make sure to run 'terraform apply'." # Original
-            # if debug: print(f"DEBUG: [get_terraform_outputs] {error_msg}") # Conditional print for the original message
-            pass # Allow tofu to report this error
-
-        command = ["tofu", "output", "-json"]
-        if debug: print(f"DEBUG: [get_terraform_outputs] Running command: {' '.join(command)} in {tf_dir}") # Conditional print
-
-        process = subprocess.run(
-            command,
-            cwd=tf_dir,      # Run the command in the Terraform directory
+        result = subprocess.run(
+            ["tofu", "output", "-json"],
+            cwd=tf_dir,
             capture_output=True,
             text=True,
-            check=False      # Set to False to inspect output even on error
+            check=True
         )
+        terraform_output_json = json.loads(result.stdout)
 
-        if debug: # Conditional block for multiple prints
-            print(f"DEBUG: [get_terraform_outputs] tofu command return code: {process.returncode}")
-            print(f"DEBUG: [get_terraform_outputs] tofu command stdout: {process.stdout.strip()[:500]}...") # Print first 500 chars
-            if process.stderr:
-                print(f"DEBUG: [get_terraform_outputs] tofu command stderr: {process.stderr.strip()}")
-
-        if process.returncode != 0:
-            error_msg = f"Error running 'tofu output -json'. Return code: {process.returncode}. Stderr: {process.stderr.strip()}"
-            print(f"ERROR: [get_terraform_outputs] {error_msg}")
-            return False, error_msg
+        cluster_summary = terraform_output_json.get("cluster_summary", {}).get("value", {})
         
-        if not process.stdout.strip():
-            error_msg = "'tofu output -json' produced no output."
-            print(f"ERROR: [get_terraform_outputs] {error_msg}")
-            return False, error_msg
+        if not cluster_summary:
+            print_error("'cluster_summary' output is empty or not found in Terraform output.")
+            return None, None
 
-        try:
-            outputs = json.loads(process.stdout)
-            if debug: print(f"DEBUG: [get_terraform_outputs] Successfully parsed JSON output.") # Conditional print
-            return True, outputs
-        except json.JSONDecodeError as e:
-            error_msg = f"Failed to decode JSON from tofu output: {e}. Output was: {process.stdout.strip()[:500]}..."
-            print(f"ERROR: [get_terraform_outputs] {error_msg}")
-            return False, error_msg
+        vm_ipv4_addresses_output = [node['IP'] for node in cluster_summary.values()]
+        vm_fqdns_output = [node['hostname'] for node in cluster_summary.values()]
 
-    except Exception as e:
-        error_msg = f"An unexpected error occurred in get_terraform_outputs: {e}"
-        print(f"ERROR: [get_terraform_outputs] {error_msg}")
-        return False, error_msg
+        if not vm_ipv4_addresses_output or not vm_fqdns_output:
+            print_error("vm_ipv4_addresses_output or vm_fqdns_output is empty after extracting from Terraform output.")
+            return None, None
+
+        return vm_ipv4_addresses_output, vm_fqdns_output
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
+        print_error(f"Failed to get Terraform outputs: {e}")
+        return None, None
 
 def load_sops_secrets(custom_secrets_file_path=None, debug=False): # Add debug parameter
     """Loads secrets from the SOPS file.
@@ -545,16 +517,12 @@ def main():
         sys.exit(0)
 
     # Get Terraform outputs
-    success, tf_outputs = get_terraform_outputs(args.tf_dir, debug=args.debug) # Pass debug flag
-    if not success:
-        print(f"Failed to get Terraform outputs: {tf_outputs}", file=sys.stderr)
-        sys.exit(1)
+# Get Terraform outputs
+    vm_ipv4_addresses_output, vm_fqdns_output = get_terraform_outputs(args.tf_dir)
 
-    if args.debug: # Conditional print
-        print(f"DEBUG: Terraform outputs: {json.dumps(tf_outputs, indent=2)}")
-
-    vm_ipv4_addresses_output = tf_outputs.get('k8s_node_ips', {}).get('value')
-    vm_fqdns_output = tf_outputs.get('k8s_node_names', {}).get('value')
+    if vm_ipv4_addresses_output is None or vm_fqdns_output is None:
+       # Error message is already printed inside the function
+       sys.exit(1)
 
     if args.debug:
         print(f"DEBUG: Extracted vm_ipv4_addresses_output: {vm_ipv4_addresses_output} (type: {type(vm_ipv4_addresses_output)})")
@@ -566,50 +534,12 @@ def main():
     
     # Handle both list and dict types for outputs
     # If they are dicts, we assume keys match between FQDNs and IPs
+
     terraform_records = []
-
-    if isinstance(vm_fqdns_output, dict) and isinstance(vm_ipv4_addresses_output, dict):
-        if args.debug:
-            print(f"DEBUG: Processing FQDNs and IPs as dictionaries. Matching based on shared keys.")
-        
-        # Ensure the dictionaries have the same set of keys for reliable matching
-        if set(vm_fqdns_output.keys()) != set(vm_ipv4_addresses_output.keys()):
-            print("Warning: Keys in vm_fqdns_output and vm_ipv4_addresses_output do not match. This may lead to incorrect DNS entries.")
-            if args.debug:
-                print(f"DEBUG: FQDN keys: {sorted(list(vm_fqdns_output.keys()))}")
-                print(f"DEBUG: IP keys: {sorted(list(vm_ipv4_addresses_output.keys()))}")
-        
-        for key, fqdn_string in vm_fqdns_output.items():
-            ip_address = vm_ipv4_addresses_output.get(key)
-            if fqdn_string and ip_address: # Ensure both FQDN and IP are not None or empty
-                terraform_records.append({"domain": fqdn_string, "ip": ip_address})
-                if args.debug:
-                    print(f"DEBUG: Matched from dict: Key \'{key}\' -> FQDN \'{fqdn_string}\' with IP \'{ip_address}\'.")
-            elif args.debug:
-                print(f"DEBUG: Skipping record for key \'{key}\': FQDN=\'{fqdn_string}\', IP=\'{ip_address}\' (one or both are missing/empty).")
-
-    elif isinstance(vm_fqdns_output, list) and isinstance(vm_ipv4_addresses_output, list):
-        if args.debug:
-            print(f"DEBUG: Processing FQDNs and IPs as lists. Matching based on order (index).")
-        if len(vm_fqdns_output) != len(vm_ipv4_addresses_output):
-            print(f"Warning: vm_fqdns_output (len {len(vm_fqdns_output)}) and vm_ipv4_addresses_output (len {len(vm_ipv4_addresses_output)}) have different lengths. Records might be mismatched or skipped.")
-
-        for i, fqdn_string in enumerate(vm_fqdns_output):
-            if i < len(vm_ipv4_addresses_output):
-                ip_address = vm_ipv4_addresses_output[i]
-                if fqdn_string and ip_address: # Ensure both FQDN and IP are not None or empty
-                    terraform_records.append({"domain": fqdn_string, "ip": ip_address})
-                    if args.debug:
-                        print(f"DEBUG: Matched from list: Index {i} -> FQDN \'{fqdn_string}\' with IP \'{ip_address}\'.")
-                elif args.debug:
-                    print(f"DEBUG: Skipping record at index {i}: FQDN=\'{fqdn_string}\', IP=\'{ip_address}\' (one or both are missing/empty).")
-
-            else:
-                if args.debug:
-                    print(f"DEBUG: No corresponding IP address found for FQDN \'{fqdn_string}\' at index {i} (IP list is shorter). Skipping.")
-    else:
-        print(f"ERROR: vm_fqdns_output (type: {type(vm_fqdns_output)}) and vm_ipv4_addresses_output (type: {type(vm_ipv4_addresses_output)}) are of incompatible or mixed types. Both must be lists or both must be dictionaries.")
-        sys.exit(1)
+    for ip, domain in zip(vm_ipv4_addresses_output, vm_fqdns_output):
+        terraform_records.append({"domain": domain, "ip": ip})
+    #    print(f"ERROR: vm_fqdns_output (type: {type(vm_fqdns_output)}) and vm_ipv4_addresses_output (type: {type(vm_ipv4_addresses_output)}) are of incompatible or mixed types. Both must be lists or both must be dictionaries.")
+    #    sys.exit(1)
     
     # Compare Terraform records with Pi-hole records
     if not terraform_records:
