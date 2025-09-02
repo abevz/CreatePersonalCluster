@@ -15,9 +15,9 @@ else
     SCRIPT_DIR="$(dirname "$0")"
     
     # Debug: Show current directory and script location
-    echo "Debug: Current directory: $(pwd)"
-    echo "Debug: Script directory: $SCRIPT_DIR"
-    echo "Debug: Looking for common_functions.sh at: $SCRIPT_DIR/../shared/common_functions.sh"
+    # echo "Debug: Current directory: $(pwd)"
+    # echo "Debug: Script directory: $SCRIPT_DIR"
+    # echo "Debug: Looking for common_functions.sh at: $SCRIPT_DIR/../shared/common_functions.sh"
     
     # Check if common_functions.sh exists in expected location
     if [[ -f "$SCRIPT_DIR/../shared/common_functions.sh" ]]; then
@@ -25,11 +25,11 @@ else
         SCRIPT_BASE_PATH="$SCRIPT_DIR/.."
     else
         # Try alternative paths
-        echo "Debug: Trying alternative paths..."
+        # echo "Debug: Trying alternative paths..."
         
         # Look for common_functions.sh in current directory tree
         for possible_path in "shared/common_functions.sh" "../shared/common_functions.sh" "../../shared/common_functions.sh"; do
-            echo "Debug: Checking $possible_path"
+            # echo "Debug: Checking $possible_path"
             if [[ -f "$possible_path" ]]; then
                 source "$possible_path"
                 SCRIPT_BASE_PATH="$(dirname "$possible_path")"

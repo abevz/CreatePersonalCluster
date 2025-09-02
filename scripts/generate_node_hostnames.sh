@@ -137,7 +137,8 @@ echo "# Generated on $(date)" >>$REPO_PATH/terraform/snippets/summary.txt
 echo "# Node count: ${#ROLES[@]}" >>$REPO_PATH/terraform/snippets/summary.txt
 
 # Copy snippets to Proxmox host
-echo "Debug: PROXMOX_HOST='$PROXMOX_HOST', PROXMOX_USERNAME='$PROXMOX_USERNAME', PROXMOX_SSH_USERNAME='$PROXMOX_SSH_USERNAME'"
+# echo "Debug: PROXMOX_HOST='$PROXMOX_HOST', PROXMOX_USERNAME='$PROXMOX_USERNAME', PROXMOX_SSH_USERNAME='$PROXMOX_SSH_USERNAME'"
+log_debug "Proxmox connection details: HOST='$PROXMOX_HOST', USERNAME='$PROXMOX_USERNAME', SSH_USERNAME='$PROXMOX_SSH_USERNAME'"
 if [ -n "$PROXMOX_HOST" ] && [ -n "$PROXMOX_SSH_USERNAME" ]; then
   echo "Copying snippets to Proxmox host..."
 

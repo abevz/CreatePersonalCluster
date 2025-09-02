@@ -5,11 +5,17 @@
 # =============================================================================
 # Enhanced with modular architecture for better maintainability
 
+# CPC Version
+export CPC_VERSION="1.1.0"
+
 # Color definitions (kept for backward compatibility)
 export GREEN='\033[32m'
 export RED='\033[0;31m'
 export YELLOW='\033[0;33m'
 export BLUE='\033[1;34m'
+export PURPLE='\033[0;35m'
+export CYAN='\033[0;36m'
+export WHITE='\033[1;37m'
 export ENDCOLOR='\033[0m'
 
 # --- Load Modular Architecture ---
@@ -38,12 +44,6 @@ CONFIG_DIR="$HOME/.config/cpc" # Updated for CreatePersonalCluster project
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
 CPC_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 CPC_ENV_FILE="cpc.env" # Expect this in the repo root, Changed from CCR_ENV_FILE and ccr.env
-
-# Read current cluster context and set CPC_WORKSPACE
-if [ -f "$CPC_CONTEXT_FILE" ]; then
-  CPC_WORKSPACE=$(cat "$CPC_CONTEXT_FILE" 2>/dev/null)
-  export CPC_WORKSPACE
-fi
 
 # --- Initialize Error Handling Systems ---
 error_init
@@ -120,6 +120,7 @@ display_usage() {
   echo "Commands:"
   echo "  setup-cpc                      Initial setup for cpc command."
   echo "  ctx [<cluster_name>]           Get or set the current cluster context (Tofu workspace)."
+  echo "  list-workspaces                List all available workspaces."
   echo "  clone-workspace <src> <dst>    Clone a workspace environment to create a new one."
   echo "  delete-workspace <n>           Delete a workspace environment."
   echo "  template                       Creates a VM template for Kubernetes"
@@ -128,11 +129,12 @@ display_usage() {
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
   echo "  clear-ssh-maps                 Clear SSH control sockets and connections for VMs"
   echo "  load_secrets                   Load and display secrets from SOPS configuration"
+  echo "  clear-cache                    Clear all cached secrets and status data."
   echo "  dns-pihole <action>            Manage Pi-hole DNS records. Actions: list, add, unregister-dns, interactive-add, interactive-unregister."
   echo "  generate-hostnames             Generate hostname configurations for VMs in Proxmox"
   echo "  scripts/<script_name>          Run any script from the scripts directory"
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
-  echo "  cluster-info                   Show simplified cluster information (VM_ID, hostname, IP)."
+  echo "  cluster-info [--quick|-q]         Show simplified cluster information (VM_ID, hostname, IP). Use --quick for cached data."
   echo ""
   echo "VM Management:"
   echo "  add-vm                         Interactively add a new VM (worker or control plane)."
@@ -156,6 +158,7 @@ display_usage() {
   echo "  configure-coredns              Configure CoreDNS to forward local domain queries to Pi-hole DNS server."
   echo "  upgrade-k8s                    Upgrade Kubernetes control plane."
   echo "  status|cluster-status          Check Kubernetes cluster status and health."
+  echo "  quick-status|qs                Fast status check (K8s only, no VM/SSH checks)."
   echo ""
   echo "DNS/SSL Management:"
   echo "  regenerate-certificates        Regenerate Kubernetes certificates with DNS hostname support"
@@ -163,6 +166,11 @@ display_usage() {
   echo "  verify-certificates            Verify SSL certificate validity and SANs"
   echo "  check-cluster-dns              Comprehensive cluster DNS functionality check"
   echo "  inspect-cert <cert-path>       Inspect specific certificate file details"
+  echo ""
+  echo "Global Options:"
+  echo "  --debug, -d                   Enable debug output for troubleshooting"
+  echo "  --verbose, -v                Enable verbose output"
+  echo "  --help, -h                   Show this help message"
   echo ""
   echo "Use 'cpc <command> --help' for more details on a specific command."
 }
@@ -175,8 +183,98 @@ mkdir -p "$CONFIG_DIR"
 # Check for essential commands early
 check_required_commands "ansible-playbook" "ansible-inventory" "tofu" "kubectl" "jq"
 
+# Parse global flags first
+DEBUG_FLAG=""
+VERBOSE_FLAG=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --debug|-d)
+      export CPC_DEBUG=true
+      DEBUG_FLAG="--debug"
+      shift
+      ;;
+    --verbose|-v)
+      export CPC_VERBOSE=true
+      VERBOSE_FLAG="--verbose"
+      shift
+      ;;
+    --help|-h)
+      display_usage
+      exit 0
+      ;;
+    --version)
+      echo "CPC (Create Personal Cluster) v${CPC_VERSION}"
+      echo "Infrastructure as Code Kubernetes Cluster Management"
+      echo "Built with Terraform/OpenTofu + Ansible + Proxmox VE"
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 COMMAND="$1"
 shift # Remove command from arguments, rest are options
+
+# Handle quick-status early to avoid secrets loading
+if [[ "$COMMAND" == "quick-status" || "$COMMAND" == "qs" ]]; then
+  echo -e "${CYAN}=== Quick Status (No Secrets) ===${ENDCOLOR}"
+  current_workspace=""
+  if [[ -f "$CPC_CONTEXT_FILE" ]]; then
+    current_workspace=$(cat "$CPC_CONTEXT_FILE")
+    echo "Workspace: ${current_workspace}"
+  else
+    echo "Workspace: Not set"
+  fi
+  
+  # Quick K8s check only
+  if kubectl cluster-info &>/dev/null; then
+    nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
+  else
+    echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
+  fi
+  exit 0
+fi
+
+# Handle cluster-info --quick early to avoid secrets loading
+if [[ "$COMMAND" == "cluster-info" && ("$1" == "--quick" || "$1" == "-q") ]]; then
+  current_ctx=""
+  if [[ -f "$CPC_CONTEXT_FILE" ]]; then
+    current_ctx=$(cat "$CPC_CONTEXT_FILE")
+  else
+    echo "Error: No cluster context set. Use 'cpc ctx <workspace>' first."
+    exit 1
+  fi
+
+  cache_file="/tmp/cpc_status_cache_${current_ctx}"
+  cluster_summary=""
+  
+  if [[ -f "$cache_file" ]]; then
+    cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+    if [[ $cache_age -lt 300 ]]; then  # 5 minute cache for quick mode
+      cluster_summary=$(cat "$cache_file" 2>/dev/null)
+      echo "=== Quick Cluster Information (Cached) ==="
+    fi
+  fi
+  
+  if [[ -z "$cluster_summary" || "$cluster_summary" == "null" ]]; then
+    echo "⚠️  No cached cluster data available. Run 'cpc cluster-info' first or 'cpc status' to populate cache."
+    exit 1
+  fi
+  
+  # Display cached data
+  echo
+  printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
+  printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
+  echo "$cluster_summary" | jq -r 'to_entries[] | [.key, .value.VM_ID, .value.hostname, .value.IP] | @tsv' | \
+    while IFS=$'\t' read -r node vm_id hostname ip; do
+      printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
+    done
+  echo
+  exit 0
+fi
 
 # Load REPO_PATH if not doing setup
 if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$COMMAND" != "--help" && "$COMMAND" != "help" ]]; then # Changed from setup-ccr
@@ -207,6 +305,10 @@ ctx)
   cpc_core ctx "$@"
   ;;
 
+list-workspaces)
+  cpc_core list-workspaces "$@"
+  ;;
+
 clone-workspace)
   cpc_core clone-workspace "$@"
   ;;
@@ -220,8 +322,15 @@ template)
   ;;
 
 load_secrets)
-  # Load secrets and show status
   cpc_core load_secrets "$@"
+  ;;
+
+clear-cache)
+  cpc_core clear-cache "$@"
+  ;;
+
+deploy)
+  cpc_tofu deploy "$@"
   ;;
 
 bootstrap)

@@ -248,6 +248,34 @@ kubectl get nodes
 ./cpc upgrade-addons --addon all
 ```
 
+### 🔍 Debug Mode
+
+CPC supports debug mode for troubleshooting and development:
+
+```bash
+# Enable debug output for any command
+./cpc --debug deploy plan
+./cpc --debug ctx
+./cpc --debug bootstrap
+
+# Short form
+./cpc -d deploy apply
+
+# Debug shows:
+# - Secret loading details
+# - Template variable processing
+# - Command execution steps
+# - Detailed error information
+```
+
+**When to use debug mode:**
+- Troubleshooting deployment issues
+- Understanding command execution flow
+- Development and testing
+- Investigating configuration problems
+
+**Note:** Debug mode displays sensitive information like secrets and credentials. Use only when necessary and avoid in production environments.
+
 ### 🌐 DNS & SSL Management
 
 ```bash
@@ -378,6 +406,13 @@ CreatePersonalCluster/
 │   ├── variables.tf           # Variable definitions
 │   ├── outputs.tf             # Output definitions
 │   └── locals.tf              # Local values
+├── bashtest/                   # Bash unit tests
+│   ├── run_all_tests.sh       # Master test runner
+│   ├── bash_test_framework.sh # Testing framework
+│   └── test_*.sh              # Module-specific tests
+├── tests/                      # Python integration tests
+│   ├── unit/                  # Unit tests
+│   └── integration/           # Integration tests
 ├── scripts/                   # Utility scripts
 ├── docs/                      # Documentation
 └── lib/                       # Shared libraries
@@ -482,6 +517,20 @@ VM_USERNAME="ubuntu"
 ## 🧪 Testing & Validation
 
 > 📖 **Detailed Testing Guide**: See [Testing Documentation](docs/testing_guide.md) for comprehensive testing instructions, examples, and best practices.
+
+### 🔧 Automated Testing
+
+```bash
+# Run all bash unit tests
+./bashtest/run_all_tests.sh
+
+# Run Python integration tests
+python -m pytest tests/
+
+# Run specific test modules
+./bashtest/test_core_module.sh
+./bashtest/test_k8s_cluster_module.sh
+```
 
 ### ✅ Cluster Health Checks
 

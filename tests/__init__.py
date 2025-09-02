@@ -16,7 +16,7 @@ class TestFramework:
         self.project_root = Path(__file__).parent.parent
 
     @staticmethod
-    def run_command(cmd, cwd=None, env=None, timeout=30):
+    def run_command(cmd, cwd=None, env=None, timeout=30, input_text=None):
         """Run shell command and return result"""
         try:
             result = subprocess.run(
@@ -24,6 +24,7 @@ class TestFramework:
                 shell=True,
                 cwd=cwd or Path(__file__).parent.parent,
                 env=env,
+                input=input_text,
                 capture_output=True,
                 text=True,
                 timeout=timeout

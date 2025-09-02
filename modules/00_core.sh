@@ -37,9 +37,17 @@ cpc_core() {
     shift
     core_load_secrets_command "$@"
     ;;
+  clear-cache)
+    shift
+    core_clear_cache "$@"
+    ;;
+  list-workspaces)
+    shift
+    core_list_workspaces "$@"
+    ;;
   *)
     log_error "Unknown core command: ${1:-}"
-    log_info "Available commands: setup-cpc, ctx, clone-workspace, delete-workspace, load_secrets"
+    log_info "Available commands: setup-cpc, ctx, clone-workspace, delete-workspace, load_secrets, clear-cache, list-workspaces"
     return 1
     ;;
   esac
@@ -55,8 +63,66 @@ get_repo_path() {
   dirname "$script_dir"
 }
 
-# Load secrets from SOPS
-load_secrets() {
+# Cached secrets loading system
+load_secrets_cached() {
+  local cache_file="/tmp/cpc_secrets_cache"
+  local cache_env_file="/tmp/cpc_env_cache.sh"
+  local secrets_file
+  local repo_root
+  
+  if ! repo_root=$(get_repo_path); then
+    error_handle "$ERROR_CONFIG" "Failed to determine repository path" "$SEVERITY_CRITICAL" "abort"
+    return 1
+  fi
+  
+  secrets_file="$repo_root/terraform/secrets.sops.yaml"
+  
+  # Check if cache exists and is fresh
+  if [[ -f "$cache_env_file" && -f "$secrets_file" ]]; then
+    local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_env_file" 2>/dev/null || echo 0)))
+    local secrets_age=$(($(date +%s) - $(stat -c %Y "$secrets_file" 2>/dev/null || echo 0)))
+    
+    # Use cache if it's newer than secrets file and less than 5 minutes old
+    if [[ $cache_age -lt 300 && $cache_age -lt $secrets_age ]]; then
+      log_info "Using cached secrets (age: ${cache_age}s)"
+      source "$cache_env_file"
+      return 0
+    fi
+  fi
+  
+  # Load fresh secrets and cache them
+  log_info "Loading fresh secrets..."
+  if load_secrets_fresh; then
+    # Cache only the secret environment variables
+    {
+      echo "# CPC Secrets Cache - Generated $(date)"
+      echo "export PROXMOX_HOST='$PROXMOX_HOST'"
+      echo "export PROXMOX_USERNAME='$PROXMOX_USERNAME'"
+      echo "export VM_USERNAME='$VM_USERNAME'"
+      echo "export VM_SSH_KEY='$VM_SSH_KEY'"
+      [[ -n "${PROXMOX_PASSWORD:-}" ]] && echo "export PROXMOX_PASSWORD='$PROXMOX_PASSWORD'"
+      [[ -n "${VM_PASSWORD:-}" ]] && echo "export VM_PASSWORD='$VM_PASSWORD'"
+      [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && echo "export AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID'"
+      [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY'"
+      [[ -n "${DOCKER_HUB_USERNAME:-}" ]] && echo "export DOCKER_HUB_USERNAME='$DOCKER_HUB_USERNAME'"
+      [[ -n "${DOCKER_HUB_PASSWORD:-}" ]] && echo "export DOCKER_HUB_PASSWORD='$DOCKER_HUB_PASSWORD'"
+      [[ -n "${HARBOR_HOSTNAME:-}" ]] && echo "export HARBOR_HOSTNAME='$HARBOR_HOSTNAME'"
+      [[ -n "${HARBOR_ROBOT_USERNAME:-}" ]] && echo "export HARBOR_ROBOT_USERNAME='$HARBOR_ROBOT_USERNAME'"
+      [[ -n "${HARBOR_ROBOT_TOKEN:-}" ]] && echo "export HARBOR_ROBOT_TOKEN='$HARBOR_ROBOT_TOKEN'"
+      [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]] && echo "export CLOUDFLARE_DNS_API_TOKEN='$CLOUDFLARE_DNS_API_TOKEN'"
+      [[ -n "${CLOUDFLARE_EMAIL:-}" ]] && echo "export CLOUDFLARE_EMAIL='$CLOUDFLARE_EMAIL'"
+    } > "$cache_env_file"
+    
+    chmod 600 "$cache_env_file"  # Secure the cache file
+    log_debug "Secrets cached successfully"
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Fresh secrets loading (renamed from load_secrets)
+load_secrets_fresh() {
   # Create temporary file for environment variables
   local env_file="/tmp/cpc_env_vars.sh"
   rm -f "$env_file"
@@ -126,7 +192,7 @@ load_secrets() {
       printf "export %s='%s'\n" "$env_var" "$value" >> /tmp/cpc_env_vars.sh
       export "$env_var=$value"
       declare -g "$env_var=$value"
-      echo "DEBUG: Loaded secret: $env_var = $value" >&2
+      # echo "DEBUG: Loaded secret: $env_var = $value" >&2
       log_debug "Loaded secret: $env_var = $value"
     fi
   done
@@ -171,8 +237,8 @@ load_env_vars() {
   local repo_root
   repo_root=$(get_repo_path)
 
-  # Load secrets first
-  load_secrets
+  # Load secrets with caching
+  load_secrets_cached
 
   if [ -f "$repo_root/$CPC_ENV_FILE" ]; then
     set -a # Automatically export all variables
@@ -415,6 +481,9 @@ core_ctx() {
   fi
   popd >/dev/null || return 1
 
+  # Clear cache when switching workspaces to ensure fresh data
+  core_clear_cache
+
   # Update template variables for the new workspace context
   set_workspace_template_vars "$cluster_name"
 }
@@ -597,6 +666,9 @@ function core_delete_workspace() {
   fi
   log_success "All resources for '$workspace_name' have been destroyed."
 
+  # Clear cache after destroying resources to ensure fresh data
+  core_clear_cache
+
   # 3. Switch to a SAFE context BEFORE deletion.
   #    If we are deleting a different context, return to it.
   #    Otherwise, switch to 'ubuntu' (or 'default' if 'ubuntu' is not available).
@@ -633,19 +705,108 @@ function core_delete_workspace() {
     log_info "Removed entries for '$workspace_name' from locals.tf."
   fi
 
+  # Clear cache after workspace deletion to ensure clean state
+  core_clear_cache
+
   log_success "Workspace '$workspace_name' has been successfully deleted."
 }
 
 # Command wrapper for load_secrets function
 core_load_secrets_command() {
-  log_step "Loading secrets from SOPS..."
-  load_secrets
-  log_success "Secrets loaded successfully!"
-  log_info "Available variables:"
-  log_info "  PROXMOX_HOST: $PROXMOX_HOST"
-  log_info "  PROXMOX_USERNAME: $PROXMOX_USERNAME"
-  log_info "  VM_USERNAME: $VM_USERNAME"
-  log_info "  VM_SSH_KEY: ${VM_SSH_KEY:0:20}..."
+  log_info "Reloading secrets from SOPS..."
+  load_secrets_fresh
+  log_success "Secrets reloaded successfully"
+}
+
+# Clear secrets and status cache
+core_clear_cache() {
+  local cache_files=(
+    "/tmp/cpc_secrets_cache"
+    "/tmp/cpc_env_cache.sh"
+    "/tmp/cpc_status_cache_*"
+    "/tmp/cpc_ssh_cache_*"
+    "/tmp/cpc_tofu_output_cache_*"
+    "/tmp/cpc_workspace_cache"
+  )
+  
+  log_info "Clearing CPC cache files..."
+  
+  for pattern in "${cache_files[@]}"; do
+    if [[ "$pattern" == *"*"* ]]; then
+      # Handle wildcard patterns
+      for file in $pattern; do
+        if [[ -f "$file" ]]; then
+          rm -f "$file"
+          log_debug "Removed cache file: $file"
+        fi
+      done
+    else
+      # Handle specific files
+      if [[ -f "$pattern" ]]; then
+        rm -f "$pattern"
+        log_debug "Removed cache file: $pattern"
+      fi
+    fi
+  done
+  
+  log_success "Cache cleared successfully"
+}
+
+# List all available workspaces
+core_list_workspaces() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "Usage: cpc list-workspaces"
+    echo "Lists all available workspaces (Tofu workspaces and environment files)."
+    return 0
+  fi
+
+  local repo_root
+  repo_root=$(get_repo_path)
+  
+  log_info "Available Workspaces:"
+  echo
+  
+  # Show current workspace
+  local current_workspace=""
+  if [[ -f "$CPC_CONTEXT_FILE" ]]; then
+    current_workspace=$(cat "$CPC_CONTEXT_FILE")
+    log_info "Current workspace: $current_workspace"
+  else
+    log_warning "No current workspace set"
+  fi
+  
+  echo
+  
+  # List Tofu workspaces
+  log_info "Tofu workspaces:"
+  if [[ -d "$repo_root/terraform" ]]; then
+    pushd "$repo_root/terraform" >/dev/null || return 1
+    if command -v tofu &>/dev/null; then
+      tofu workspace list
+    else
+      log_warning "OpenTofu not available - cannot list Tofu workspaces"
+    fi
+    popd >/dev/null || return 1
+  else
+    log_warning "Terraform directory not found"
+  fi
+  
+  echo
+  echo
+  
+  # List environment files
+  log_info "Environment files:"
+  if [[ -d "$repo_root/envs" ]]; then
+    for env_file in "$repo_root/envs"/*.env; do
+      if [[ -f "$env_file" ]]; then
+        local env_name
+        env_name=$(basename "$env_file" .env)
+        echo "  $env_name"
+      fi
+    done
+  else
+    log_warning "Environment directory not found"
+  fi
 }
 
 # Setup CPC project
@@ -765,8 +926,8 @@ function ansible_create_temp_inventory() {
 }
 
 # Export core functions
-export -f get_repo_path load_secrets load_env_vars set_workspace_template_vars
+export -f get_repo_path load_secrets_fresh load_secrets_cached load_env_vars set_workspace_template_vars
 export -f get_current_cluster_context set_cluster_context validate_workspace_name
 export -f cpc_setup cpc_core
-export -f core_setup_cpc core_ctx core_clone_workspace core_delete_workspace core_load_secrets_command
+export -f core_setup_cpc core_ctx core_clone_workspace core_delete_workspace core_load_secrets_command core_clear_cache core_list_workspaces
 export -f _get_terraform_outputs_json _get_hostname_by_ip ansible_create_temp_inventory

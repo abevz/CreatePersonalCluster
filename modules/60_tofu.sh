@@ -288,8 +288,8 @@ function tofu_deploy() {
       # Check if stdin is connected to a terminal
       if [ -t 0 ]; then
         # Interactive mode - let user input confirmation manually without timeout
-        # Use exec to replace current process and avoid signal issues
-        exec "${final_tofu_cmd_array[@]}"
+        "${final_tofu_cmd_array[@]}"
+        cmd_exit_code=$?
       else
         # Non-interactive mode - auto-approve changes
         printf "yes\n" | timeout "$cmd_timeout" "${final_tofu_cmd_array[@]}"
@@ -417,6 +417,7 @@ function tofu_stop_vms() {
 # Display cluster information in table or JSON format
 function tofu_show_cluster_info() {
   local format="table" # default format
+  local quick_mode=false
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -428,6 +429,10 @@ function tofu_show_cluster_info() {
     --format)
       format="$2"
       shift 2
+      ;;
+    --quick|-q)
+      quick_mode=true
+      shift
       ;;
     *)
       error_handle "$ERROR_INPUT" "Unknown option: $1" "$SEVERITY_LOW" "abort"
@@ -448,6 +453,44 @@ function tofu_show_cluster_info() {
   if ! current_ctx=$(get_current_cluster_context); then
     error_handle "$ERROR_CONFIG" "Failed to get current cluster context" "$SEVERITY_HIGH" "abort"
     return 1
+  fi
+
+  # Quick mode: Skip heavy operations, use only cache
+  if [[ "$quick_mode" == true ]]; then
+    local cache_file="/tmp/cpc_status_cache_${current_ctx}"
+    local cluster_summary=""
+    
+    if [[ -f "$cache_file" ]]; then
+      local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+      if [[ $cache_age -lt 300 ]]; then  # 5 minute cache for quick mode
+        cluster_summary=$(cat "$cache_file" 2>/dev/null)
+        if [ "$format" != "json" ]; then
+          echo "=== Quick Cluster Information (Cached) ==="
+        fi
+      fi
+    fi
+    
+    if [[ -z "$cluster_summary" || "$cluster_summary" == "null" ]]; then
+      if [ "$format" != "json" ]; then
+        echo "⚠️  No cached cluster data available. Run 'cpc cluster-info' first or 'cpc status' to populate cache."
+      fi
+      return 1
+    fi
+    
+    # Process and display cached data
+    if [[ "$format" == "json" ]]; then
+      echo "$cluster_summary"
+    else
+      echo
+      printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
+      printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
+      echo "$cluster_summary" | jq -r 'to_entries[] | [.key, .value.VM_ID, .value.hostname, .value.IP] | @tsv' | \
+        while IFS=$'\t' read -r node vm_id hostname ip; do
+          printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
+        done
+      echo
+    fi
+    return 0
   fi
 
   tf_dir="$REPO_PATH/terraform"
@@ -474,23 +517,87 @@ function tofu_show_cluster_info() {
     return 1
   fi
 
-  # Ensure we're in the correct workspace
-  if ! tofu workspace select "$current_ctx" &>/dev/null; then
-    error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx'" "$SEVERITY_HIGH" "retry"
-    # Retry once more
+  # Check current workspace first (fast operation)
+  if current_terraform_workspace=$(tofu workspace show 2>/dev/null); then
+    if [[ "$current_terraform_workspace" != "$current_ctx" ]]; then
+      # Switch workspace
+      if ! tofu workspace select "$current_ctx" &>/dev/null; then
+        error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx'" "$SEVERITY_HIGH" "retry"
+        # Retry once more
+        if ! tofu workspace select "$current_ctx" &>/dev/null; then
+          error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx' after retry" "$SEVERITY_CRITICAL" "abort"
+          popd >/dev/null
+          return 1
+        fi
+      fi
+    fi
+  else
+    # Fallback if workspace show fails
     if ! tofu workspace select "$current_ctx" &>/dev/null; then
-      error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx' after retry" "$SEVERITY_CRITICAL" "abort"
-      popd >/dev/null
-      return 1
+      error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx'" "$SEVERITY_HIGH" "retry"
+      # Retry once more
+      if ! tofu workspace select "$current_ctx" &>/dev/null; then
+        error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx' after retry" "$SEVERITY_CRITICAL" "abort"
+        popd >/dev/null
+        return 1
+      fi
     fi
   fi
 
-  # Get the simplified cluster summary
-  local cluster_summary
-  if ! cluster_summary=$(tofu output -json cluster_summary 2>/dev/null); then
-    error_handle "$ERROR_EXECUTION" "Failed to get cluster summary from tofu output" "$SEVERITY_HIGH" "abort"
-    popd >/dev/null
-    return 1
+  # Get the simplified cluster summary with caching
+  local cache_file="/tmp/cpc_status_cache_${current_ctx}"
+  local tofu_cache_file="/tmp/cpc_tofu_output_cache_${current_ctx}"
+  local cluster_summary=""
+  local use_cache=false
+  
+  # Check if cache exists and is less than 30 seconds old
+  if [[ -f "$cache_file" ]]; then
+    local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+    if [[ $cache_age -lt 30 ]]; then
+      use_cache=true
+      cluster_summary=$(cat "$cache_file" 2>/dev/null)
+      if [ "$format" != "json" ]; then
+        log_debug "Using cached cluster data (age: ${cache_age}s)"
+      fi
+    fi
+  fi
+  
+  # Get fresh data if cache is stale or doesn't exist
+  if [[ "$use_cache" != true ]]; then
+    if [ "$format" != "json" ]; then
+      log_debug "Loading fresh cluster data..."
+    fi
+    
+    # Check if we have a tofu-specific cache that's fresh (5 minutes)
+    local tofu_use_cache=false
+    if [[ -f "$tofu_cache_file" ]]; then
+      local tofu_cache_age=$(($(date +%s) - $(stat -c %Y "$tofu_cache_file" 2>/dev/null || echo 0)))
+      if [[ $tofu_cache_age -lt 300 ]]; then  # 5 minutes for tofu output cache
+        tofu_use_cache=true
+        cluster_summary=$(cat "$tofu_cache_file" 2>/dev/null)
+        if [ "$format" != "json" ]; then
+          log_debug "Using tofu output cache (age: ${tofu_cache_age}s)"
+        fi
+      fi
+    fi
+    
+    if [[ "$tofu_use_cache" != true ]]; then
+      if ! cluster_summary=$(tofu output -json cluster_summary 2>/dev/null); then
+        error_handle "$ERROR_EXECUTION" "Failed to get cluster summary from tofu output" "$SEVERITY_HIGH" "abort"
+        popd >/dev/null
+        return 1
+      fi
+      
+      # Cache the tofu output result if successful
+      if [[ "$cluster_summary" != "null" && -n "$cluster_summary" ]]; then
+        echo "$cluster_summary" > "$tofu_cache_file" 2>/dev/null
+      fi
+    fi
+    
+    # Also update the short-term cache for subsequent quick calls
+    if [[ "$cluster_summary" != "null" && -n "$cluster_summary" ]]; then
+      echo "$cluster_summary" > "$cache_file" 2>/dev/null
+    fi
   fi
 
   if [ "$cluster_summary" = "null" ] || [ -z "$cluster_summary" ]; then

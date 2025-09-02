@@ -153,7 +153,8 @@ download_image() {
                 local remote_timestamp=$(date -d "$remote_date" +%s 2>/dev/null || echo "0")
                 local local_timestamp=$(stat -c%Y "$image_path" 2>/dev/null || echo "0")
                 
-                echo -e "${BLUE}Debug: Remote timestamp: ${remote_timestamp}, Local timestamp: ${local_timestamp}${ENDCOLOR}"
+                # Commenting out debug message showing timestamps
+                # echo -e "${BLUE}Debug: Remote timestamp: ${remote_timestamp}, Local timestamp: ${local_timestamp}${ENDCOLOR}"
                 
                 if [[ "$remote_timestamp" != "0" && "$local_timestamp" != "0" ]]; then
                     local time_diff=$((remote_timestamp - local_timestamp))

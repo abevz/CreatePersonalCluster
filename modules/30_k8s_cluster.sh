@@ -468,13 +468,154 @@ k8s_show_upgrade_help() {
 
 # Check Kubernetes cluster status and health
 k8s_cluster_status() {
-  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    k8s_show_status_help
+  local quick_mode=false
+  local fast_mode=false
+  
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --quick|-q)
+        quick_mode=true
+        shift
+        ;;
+      --fast|-f)
+        quick_mode=true
+        fast_mode=true
+        shift
+        ;;
+      -h|--help)
+        k8s_show_status_help
+        return 0
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        k8s_show_status_help
+        return 1
+        ;;
+    esac
+  done
+
+  local current_ctx
+  current_ctx=$(get_current_cluster_context) 
+  
+  if [[ "$quick_mode" == true ]]; then
+    log_info "=== Quick Cluster Status ==="
+    log_info "Workspace: ${current_ctx}"
+    
+    # Fast mode: Skip VM checks, only show basic info
+    if [[ "$fast_mode" == true ]]; then
+      log_info "Running in fast mode (VM checks skipped)..."
+      
+      # Quick K8s check only
+      if kubectl cluster-info &>/dev/null; then
+        local nodes
+        nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+        echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
+      else
+        echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
+      fi
+      
+      return 0
+    fi
+    
+    # Quick VM check with caching
+    local cache_file="/tmp/cpc_status_cache_${current_ctx}"
+    local cluster_data=""
+    local use_cache=false
+    
+    # Check if cache exists and is less than 30 seconds old
+    if [[ -f "$cache_file" ]]; then
+      local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+      if [[ $cache_age -lt 30 ]]; then
+        use_cache=true
+        cluster_data=$(cat "$cache_file" 2>/dev/null)
+      fi
+    fi
+    
+    # Get fresh data if cache is stale or doesn't exist
+    if [[ "$use_cache" != true ]]; then
+      local tf_dir="${REPO_PATH}/terraform"
+      
+      # Try to get data directly from terraform state first (faster)
+      pushd "$tf_dir" >/dev/null || return 1
+      tofu workspace select "${current_ctx}" >/dev/null 2>&1
+      
+      # Use direct tofu output without CPC wrapper for speed
+      cluster_data=$(tofu output -json cluster_summary 2>/dev/null)
+      local tofu_exit_code=$?
+      popd >/dev/null || return 1
+      
+      # Cache the result if successful
+      if [[ $tofu_exit_code -eq 0 && "$cluster_data" != "null" && -n "$cluster_data" ]]; then
+        echo "$cluster_data" > "$cache_file" 2>/dev/null
+      fi
+    fi
+    
+    if [[ -n "$cluster_data" && "$cluster_data" != "null" ]]; then
+      local vm_count
+      vm_count=$(echo "$cluster_data" | jq '. | length' 2>/dev/null || echo "0")
+      echo -e "${GREEN}VMs deployed: $vm_count${ENDCOLOR}"
+      
+      # Quick SSH check with caching for speed
+      if [[ $vm_count -gt 0 ]]; then
+        local ssh_cache_file="/tmp/cpc_ssh_cache_${current_ctx}"
+        local ssh_result=""
+        local use_ssh_cache=false
+        
+        # Check if SSH cache exists and is less than 10 seconds old
+        if [[ -f "$ssh_cache_file" ]]; then
+          local ssh_cache_age=$(($(date +%s) - $(stat -c %Y "$ssh_cache_file" 2>/dev/null || echo 0)))
+          if [[ $ssh_cache_age -lt 10 ]]; then
+            use_ssh_cache=true
+            ssh_result=$(cat "$ssh_cache_file" 2>/dev/null)
+          fi
+        fi
+        
+        if [[ "$use_ssh_cache" == true && -n "$ssh_result" ]]; then
+          echo -e "${GREEN}$ssh_result${ENDCOLOR}"
+        else
+          # Extract IPs into an array
+          local ips_array
+          mapfile -t ips_array < <(echo "$cluster_data" | jq -r 'to_entries[] | .value.IP' 2>/dev/null)
+          
+          local reachable=0
+          local total=${#ips_array[@]}
+          
+          # Process each IP sequentially for reliability
+          for ip in "${ips_array[@]}"; do
+            if [[ -n "$ip" && "$ip" != "null" ]]; then
+              if ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=no "$ip" "exit 0" 2>/dev/null; then
+                ((reachable++))
+              fi
+            fi
+          done
+          
+          ssh_result="SSH reachable: $reachable/$total"
+          echo -e "${GREEN}$ssh_result${ENDCOLOR}"
+          
+          # Cache the SSH result
+          echo "$ssh_result" > "$ssh_cache_file" 2>/dev/null
+        fi
+      else
+        echo -e "${YELLOW}SSH reachable: No VMs to check${ENDCOLOR}"
+      fi
+    else
+      echo -e "${YELLOW}VMs deployed: 0 (workspace not deployed)${ENDCOLOR}"
+      echo -e "${YELLOW}SSH reachable: No VMs to check${ENDCOLOR}"
+    fi
+    
+    # Quick K8s check
+    if kubectl cluster-info &>/dev/null; then
+      local nodes
+      nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+      echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
+    else
+      echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
+    fi
+    
     return 0
   fi
 
-  local current_ctx
-  current_ctx=$(get_current_cluster_context)
   log_info "=== Kubernetes Cluster Status Check ==="
   log_info "Workspace: ${current_ctx}"
   echo
@@ -510,6 +651,11 @@ k8s_cluster_status() {
       echo
       echo -e "${GREEN}Cluster VMs:${ENDCOLOR}"
       echo "$cluster_data" | jq -r 'to_entries[] | "  ✓ \(.key) (\(.value.hostname)) - \(.value.IP)"'
+      
+      # Check VM status in Proxmox
+      echo
+      log_info "🔍 Checking VM status in Proxmox..."
+      check_proxmox_vm_status "$cluster_data"
     else
       log_warning "No VMs found in the current workspace."
     fi
@@ -524,19 +670,43 @@ k8s_cluster_status() {
   if [[ -z "$cluster_data" || "$cluster_data" == "null" ]]; then
     log_warning "Cannot test SSH connectivity because VM data is unavailable."
   else
-    local all_hosts_reachable=true
-    local host_ips
-    host_ips=$(echo "$cluster_data" | jq -r '.[].IP')
-
-    for ip in $host_ips; do
-      if ssh_test_connection "$ip"; then
-        log_success "SSH connection to ${ip} successful."
+    local ssh_results=""
+    local total_hosts=0
+    local reachable_hosts=0
+    
+    echo "$cluster_data" | jq -r 'to_entries[] | "\(.key) \(.value.IP)"' | while read -r vm_key ip; do
+      ((total_hosts++))
+      echo -n "  Testing $vm_key ($ip)... "
+      
+      # Test SSH connection with detailed output
+      if ssh -o ConnectTimeout=5 \
+             -o BatchMode=yes \
+             -o StrictHostKeyChecking=no \
+             -o UserKnownHostsFile=/dev/null \
+             "$ip" "echo 'SSH OK'" 2>/dev/null; then
+        echo -e "${GREEN}✓ Reachable${ENDCOLOR}"
+        ((reachable_hosts++))
       else
-        log_error "SSH connection to ${ip} failed."
-        all_hosts_reachable=false
+        # Try to determine the reason for failure
+        local error_reason="Unknown error"
+        if timeout 5 bash -c "</dev/tcp/$ip/22" 2>/dev/null; then
+          error_reason="Authentication failed"
+        else
+          error_reason="Connection timeout/Port 22 closed"
+        fi
+        echo -e "${RED}✗ $error_reason${ENDCOLOR}"
       fi
     done
-    [[ "$all_hosts_reachable" == true ]] && log_success "All nodes are reachable via SSH."
+    
+    echo
+    if [[ $reachable_hosts -eq $total_hosts ]]; then
+      log_success "All $total_hosts nodes are reachable via SSH"
+    elif [[ $reachable_hosts -gt 0 ]]; then
+      log_warning "$reachable_hosts/$total_hosts nodes reachable via SSH"
+    else
+      log_error "No nodes are reachable via SSH"
+      log_info "💡 Try: 'cpc start-vms' to start VMs or check network connectivity"
+    fi
   fi
   # --- End of Fix ---
   echo
@@ -544,25 +714,164 @@ k8s_cluster_status() {
   log_info "⚙️ 3. Checking Kubernetes cluster status..."
   if ! command -v kubectl &>/dev/null; then
     log_error "'kubectl' command not found. Please install it first."
+    log_info "💡 Install kubectl: https://kubernetes.io/docs/tasks/tools/"
   elif ! kubectl cluster-info &>/dev/null; then
     log_error "Cannot connect to Kubernetes cluster."
-    log_info "Try running 'cpc k8s-cluster get-kubeconfig' to retrieve cluster config."
+    log_info "💡 Try: 'cpc k8s-cluster get-kubeconfig' to retrieve cluster config"
+    log_info "💡 Or run: 'cpc bootstrap' to create a new cluster"
   else
     log_success "Successfully connected to Kubernetes cluster."
+    
+    # Quick health check
+    echo
+    log_info "🔍 Quick cluster health check:"
+    
+    # Check control plane status
+    echo -n "  Control plane: "
+    if kubectl get nodes --selector='node-role.kubernetes.io/control-plane' &>/dev/null; then
+      local control_nodes
+      control_nodes=$(kubectl get nodes --selector='node-role.kubernetes.io/control-plane' --no-headers | wc -l)
+      echo -e "${GREEN}✓ $control_nodes control plane node(s)${ENDCOLOR}"
+    else
+      echo -e "${RED}✗ No control plane nodes found${ENDCOLOR}"
+    fi
+    
+    # Check worker nodes
+    echo -n "  Worker nodes: "
+    local worker_nodes
+    worker_nodes=$(kubectl get nodes --selector='!node-role.kubernetes.io/control-plane' --no-headers 2>/dev/null | wc -l)
+    if [[ $worker_nodes -gt 0 ]]; then
+      echo -e "${GREEN}✓ $worker_nodes worker node(s)${ENDCOLOR}"
+    else
+      echo -e "${YELLOW}⚠ No dedicated worker nodes${ENDCOLOR}"
+    fi
+    
+    # Check core services
+    echo -n "  CoreDNS: "
+    if kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers &>/dev/null; then
+      local coredns_pods
+      coredns_pods=$(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | grep Running | wc -l)
+      local total_coredns
+      total_coredns=$(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | wc -l)
+      if [[ $coredns_pods -eq $total_coredns ]]; then
+        echo -e "${GREEN}✓ Running ($coredns_pods/$total_coredns)${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}⚠ Partially running ($coredns_pods/$total_coredns)${ENDCOLOR}"
+      fi
+    else
+      echo -e "${RED}✗ Not found${ENDCOLOR}"
+    fi
+    
+    # Check CNI
+    echo -n "  CNI (Calico): "
+    if kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers &>/dev/null; then
+      local calico_pods
+      calico_pods=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | grep Running | wc -l)
+      local total_calico
+      total_calico=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | wc -l)
+      if [[ $calico_pods -eq $total_calico ]]; then
+        echo -e "${GREEN}✓ Running ($calico_pods/$total_calico)${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}⚠ Partially running ($calico_pods/$total_calico)${ENDCOLOR}"
+      fi
+    else
+      echo -e "${RED}✗ Not found${ENDCOLOR}"
+    fi
+    
+    echo
     kubectl cluster-info
   fi
-  echo
+}
 
-  log_info "📊 4. Cluster Summary:"
-  if ! kubectl get nodes &>/dev/null; then
-    log_error "Kubernetes cluster not accessible or no nodes found."
-  else
-    kubectl get nodes -o wide
-    echo
-    log_info "Pods status:"
-    kubectl get pods -A
+# Check VM status in Proxmox
+check_proxmox_vm_status() {
+  local cluster_data="$1"
+  
+  if ! command -v qm &>/dev/null; then
+    log_warning "Proxmox CLI (qm) not found. Skipping VM status check."
+    return 1
   fi
+  
+  echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+    if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+      log_debug "Checking status for VM $vm_id ($hostname)"
+      
+      # Get VM status
+      local vm_status
+      vm_status=$(sudo qm status "$vm_id" 2>/dev/null | grep "status:" | awk '{print $2}')
+      
+      if [[ -z "$vm_status" ]]; then
+        echo -e "  ${RED}✗${ENDCOLOR} $vm_key ($hostname) - VM $vm_id: Status unknown"
+        continue
+      fi
+      
+      # Get additional VM info
+      local vm_uptime=""
+      local cpu_usage=""
+      local mem_usage=""
+      
+      if [[ "$vm_status" == "running" ]]; then
+        # Get uptime
+        vm_uptime=$(sudo qm status "$vm_id" 2>/dev/null | grep "uptime:" | awk '{print $2}')
+        if [[ -n "$vm_uptime" ]]; then
+          # Convert seconds to human readable format
+          local uptime_days=$((vm_uptime / 86400))
+          local uptime_hours=$(( (vm_uptime % 86400) / 3600 ))
+          local uptime_mins=$(( (vm_uptime % 3600) / 60 ))
+          vm_uptime="${uptime_days}d ${uptime_hours}h ${uptime_mins}m"
+        fi
+        
+        # Get CPU and memory usage (if available)
+        local vm_monitor
+        vm_monitor=$(sudo qm monitor "$vm_id" 2>/dev/null | head -10)
+        cpu_usage=$(echo "$vm_monitor" | grep "CPU usage:" | awk '{print $3}' | sed 's/%//')
+        mem_usage=$(echo "$vm_monitor" | grep "memory:" | awk '{print $2}' | sed 's/%//')
+      fi
+      
+      # Display status with color coding
+      case "$vm_status" in
+        "running")
+          echo -e "  ${GREEN}✓${ENDCOLOR} $vm_key ($hostname) - ${GREEN}Running${ENDCOLOR}"
+          [[ -n "$vm_uptime" ]] && echo -e "    Uptime: $vm_uptime"
+          [[ -n "$cpu_usage" ]] && echo -e "    CPU: ${cpu_usage}%"
+          [[ -n "$mem_usage" ]] && echo -e "    Memory: ${mem_usage}%"
+          ;;
+        "stopped")
+          echo -e "  ${RED}✗${ENDCOLOR} $vm_key ($hostname) - ${RED}Stopped${ENDCOLOR}"
+          ;;
+        "suspended")
+          echo -e "  ${YELLOW}⏸${ENDCOLOR} $vm_key ($hostname) - ${YELLOW}Suspended${ENDCOLOR}"
+          ;;
+        *)
+          echo -e "  ${YELLOW}?${ENDCOLOR} $vm_key ($hostname) - ${YELLOW}$vm_status${ENDCOLOR}"
+          ;;
+      esac
+    fi
+  done
+}
+
+# Show help for status command
+k8s_show_status_help() {
+  echo "Kubernetes Cluster Status Check"
   echo
+  echo "Usage: cpc status [options]"
+  echo
+  echo "Options:"
+  echo "  --quick, -q    Quick status check (VMs, SSH, K8s connectivity)"
+  echo "  --help, -h     Show this help message"
+  echo
+  echo "Without options, performs comprehensive status check including:"
+  echo "  • VM infrastructure status"
+  echo "  • Proxmox VM status and resources"
+  echo "  • SSH connectivity testing"
+  echo "  • Kubernetes cluster health"
+  echo "  • Core services status (CoreDNS, CNI)"
+  echo "  • Node and pod information"
+  echo
+  echo "Examples:"
+  echo "  cpc status           # Full status check"
+  echo "  cpc status --quick   # Quick overview"
+  echo "  cpc status -q        # Same as --quick"
 }
 
 #----------------------------------------------------------------------
@@ -577,6 +886,7 @@ export -f k8s_cluster_status
 export -f k8s_show_bootstrap_help
 export -f k8s_show_kubeconfig_help
 export -f k8s_show_upgrade_help
+export -f k8s_show_status_help
 
 #----------------------------------------------------------------------
 # Module help function
