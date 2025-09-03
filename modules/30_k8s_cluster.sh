@@ -674,8 +674,25 @@ k8s_cluster_status() {
     local total_hosts=0
     local reachable_hosts=0
     
-    echo "$cluster_data" | jq -r 'to_entries[] | "\(.key) \(.value.IP)"' | while read -r vm_key ip; do
-      ((total_hosts++))
+    # Create arrays for VM data
+    local vm_keys=()
+    local vm_ips=()
+    
+    # Parse cluster data into arrays
+    while IFS= read -r line; do
+      local vm_key=$(echo "$line" | cut -d' ' -f1)
+      local vm_ip=$(echo "$line" | cut -d' ' -f2)
+      vm_keys+=("$vm_key")
+      vm_ips+=("$vm_ip")
+    done < <(echo "$cluster_data" | jq -r 'to_entries[] | "\(.key) \(.value.IP)"')
+    
+    local total_hosts=${#vm_keys[@]}
+    
+    # Test each host
+    for ((i=0; i<${#vm_keys[@]}; i++)); do
+      local vm_key="${vm_keys[i]}"
+      local ip="${vm_ips[i]}"
+      
       echo -n "  Testing $vm_key ($ip)... "
       
       # Test SSH connection with detailed output
@@ -764,12 +781,24 @@ k8s_cluster_status() {
     
     # Check CNI
     echo -n "  CNI (Calico): "
-    if kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers &>/dev/null; then
+    # First try calico-system namespace (newer Calico installs)
+    if kubectl get pods -n calico-system --no-headers 2>/dev/null | grep -q calico-node; then
       local calico_pods
-      calico_pods=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | grep Running | wc -l)
+      calico_pods=$(kubectl get pods -n calico-system --no-headers 2>/dev/null | grep calico-node | grep Running | wc -l)
       local total_calico
-      total_calico=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | wc -l)
-      if [[ $calico_pods -eq $total_calico ]]; then
+      total_calico=$(kubectl get pods -n calico-system --no-headers 2>/dev/null | grep calico-node | wc -l)
+      if [[ $calico_pods -eq $total_calico && $total_calico -gt 0 ]]; then
+        echo -e "${GREEN}✓ Running ($calico_pods/$total_calico)${ENDCOLOR}"
+      else
+        echo -e "${YELLOW}⚠ Partially running ($calico_pods/$total_calico)${ENDCOLOR}"
+      fi
+    # Fallback to kube-system namespace (older Calico installs)
+    elif kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -q .; then
+      local calico_pods
+      calico_pods=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep Running | wc -l)
+      local total_calico
+      total_calico=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | wc -l)
+      if [[ $calico_pods -eq $total_calico && $total_calico -gt 0 ]]; then
         echo -e "${GREEN}✓ Running ($calico_pods/$total_calico)${ENDCOLOR}"
       else
         echo -e "${YELLOW}⚠ Partially running ($calico_pods/$total_calico)${ENDCOLOR}"
@@ -787,65 +816,89 @@ k8s_cluster_status() {
 check_proxmox_vm_status() {
   local cluster_data="$1"
   
-  if ! command -v qm &>/dev/null; then
-    log_warning "Proxmox CLI (qm) not found. Skipping VM status check."
-    return 1
+  # Check if we have Proxmox credentials
+  if [[ -z "$PROXMOX_HOST" || -z "$PROXMOX_USERNAME" || -z "$PROXMOX_PASSWORD" ]]; then
+    log_warning "Proxmox credentials not available. Showing basic VM info."
+    # Show at least the VM IDs from cluster data
+    echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+      if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+        echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown (no API access)${ENDCOLOR}"
+      fi
+    done
+    return 0
+  fi
+  
+  # Extract hostname from full API endpoint
+  # PROXMOX_HOST contains: https://homelab.bevz.net:8006/api2/json
+  # We need: homelab.bevz.net
+  local clean_host
+  clean_host=$(echo "$PROXMOX_HOST" | sed -E 's|https?://([^:/]+)(:[0-9]+)?(/.*)?|\1|')
+  
+  # Use username as-is (it already contains @pve)
+  local auth_url="https://${clean_host}:8006/api2/json/access/ticket"
+  
+  local auth_response
+  auth_response=$(curl -s -k -X POST \
+    "$auth_url" \
+    -d "username=${PROXMOX_USERNAME}&password=${PROXMOX_PASSWORD}" 2>/dev/null)
+  
+  if [[ $? -ne 0 || -z "$auth_response" ]]; then
+    log_warning "Failed to authenticate with Proxmox API. Showing basic VM info."
+    # Show basic VM info even without API access
+    echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+      if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+        echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown (API auth failed)${ENDCOLOR}"
+      fi
+    done
+    return 0
+  fi
+  
+  local ticket
+  local csrf_token
+  ticket=$(echo "$auth_response" | jq -r '.data.ticket // empty' 2>/dev/null)
+  csrf_token=$(echo "$auth_response" | jq -r '.data.CSRFPreventionToken // empty' 2>/dev/null)
+  
+  if [[ -z "$ticket" || -z "$csrf_token" ]]; then
+    log_warning "Failed to get Proxmox authentication tokens. Showing basic VM info."
+    # Show basic VM info even without tokens
+    echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+      if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+        echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown (token failed)${ENDCOLOR}"
+      fi
+    done
+    return 0
   fi
   
   echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
     if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
-      log_debug "Checking status for VM $vm_id ($hostname)"
+      # Get VM status via API
+      local vm_status_response
+      vm_status_response=$(curl -s -k \
+        -H "Authorization: PVEAuthCookie=$ticket" \
+        -H "CSRFPreventionToken: $csrf_token" \
+        "https://${clean_host}:8006/api2/json/nodes/${PROXMOX_NODE}/qemu/${vm_id}/status/current" 2>/dev/null)
       
-      # Get VM status
-      local vm_status
-      vm_status=$(sudo qm status "$vm_id" 2>/dev/null | grep "status:" | awk '{print $2}')
-      
-      if [[ -z "$vm_status" ]]; then
-        echo -e "  ${RED}✗${ENDCOLOR} $vm_key ($hostname) - VM $vm_id: Status unknown"
-        continue
-      fi
-      
-      # Get additional VM info
-      local vm_uptime=""
-      local cpu_usage=""
-      local mem_usage=""
-      
-      if [[ "$vm_status" == "running" ]]; then
-        # Get uptime
-        vm_uptime=$(sudo qm status "$vm_id" 2>/dev/null | grep "uptime:" | awk '{print $2}')
-        if [[ -n "$vm_uptime" ]]; then
-          # Convert seconds to human readable format
-          local uptime_days=$((vm_uptime / 86400))
-          local uptime_hours=$(( (vm_uptime % 86400) / 3600 ))
-          local uptime_mins=$(( (vm_uptime % 3600) / 60 ))
-          vm_uptime="${uptime_days}d ${uptime_hours}h ${uptime_mins}m"
-        fi
+      if [[ $? -eq 0 && -n "$vm_status_response" ]]; then
+        local vm_status
+        vm_status=$(echo "$vm_status_response" | jq -r '.data.status // "unknown"' 2>/dev/null)
         
-        # Get CPU and memory usage (if available)
-        local vm_monitor
-        vm_monitor=$(sudo qm monitor "$vm_id" 2>/dev/null | head -10)
-        cpu_usage=$(echo "$vm_monitor" | grep "CPU usage:" | awk '{print $3}' | sed 's/%//')
-        mem_usage=$(echo "$vm_monitor" | grep "memory:" | awk '{print $2}' | sed 's/%//')
+        case "$vm_status" in
+          "running")
+            echo -e "  VM $vm_id ($hostname): ${GREEN}✓ Running${ENDCOLOR}"
+            ;;
+          "stopped")
+            echo -e "  VM $vm_id ($hostname): ${RED}✗ Stopped${ENDCOLOR}"
+            ;;
+          "paused")
+            echo -e "  VM $vm_id ($hostname): ${YELLOW}⏸ Paused${ENDCOLOR}"
+            ;;
+          *)
+            echo -e "  VM $vm_id ($hostname): ${YELLOW}? $vm_status${ENDCOLOR}"
+            ;;
+        esac
+      else
+        echo -e "  VM $vm_id ($hostname): ${YELLOW}? API Error${ENDCOLOR}"
       fi
-      
-      # Display status with color coding
-      case "$vm_status" in
-        "running")
-          echo -e "  ${GREEN}✓${ENDCOLOR} $vm_key ($hostname) - ${GREEN}Running${ENDCOLOR}"
-          [[ -n "$vm_uptime" ]] && echo -e "    Uptime: $vm_uptime"
-          [[ -n "$cpu_usage" ]] && echo -e "    CPU: ${cpu_usage}%"
-          [[ -n "$mem_usage" ]] && echo -e "    Memory: ${mem_usage}%"
-          ;;
-        "stopped")
-          echo -e "  ${RED}✗${ENDCOLOR} $vm_key ($hostname) - ${RED}Stopped${ENDCOLOR}"
-          ;;
-        "suspended")
-          echo -e "  ${YELLOW}⏸${ENDCOLOR} $vm_key ($hostname) - ${YELLOW}Suspended${ENDCOLOR}"
-          ;;
-        *)
-          echo -e "  ${YELLOW}?${ENDCOLOR} $vm_key ($hostname) - ${YELLOW}$vm_status${ENDCOLOR}"
-          ;;
-      esac
     fi
   done
 }
