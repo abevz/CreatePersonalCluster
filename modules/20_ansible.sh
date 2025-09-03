@@ -226,12 +226,18 @@ function ansible_run_playbook() {
     return 1
   }
 
-  # Use recovery system for Ansible operations
-  local ansible_command="${ansible_cmd_array[*]}"
-  local recovery_result
-
-  recovery_ansible_operation "$ansible_command" "$playbook_name"
-  recovery_result=$?
+  # Execute ansible command directly to preserve argument array
+  log_info "Starting recoverable operation: upgrade_addon_${playbook_name}"
+  
+  if "${ansible_cmd_array[@]}"; then
+    log_success "Ansible playbook $playbook_name completed successfully"
+    recovery_result=0
+  else
+    recovery_result=$?
+    log_error "Ansible playbook $playbook_name failed (exit code: $recovery_result)"
+    log_warning "Attempting recovery for operation: upgrade_addon_${playbook_name}"
+    log_warning "Addon upgrade failed, manual cleanup may be needed"
+  fi
 
   popd >/dev/null
 

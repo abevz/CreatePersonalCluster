@@ -138,7 +138,7 @@ cluster_ops_upgrade_addons() {
   log_step "Preparing environment and loading secrets..."
 
   # Load secrets with error handling
-  if ! load_secrets; then
+  if ! load_secrets_cached; then
     error_handle "$ERROR_CONFIG" "Failed to load secrets. Aborting addon upgrade." "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
