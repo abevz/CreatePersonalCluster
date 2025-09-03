@@ -838,9 +838,9 @@ check_proxmox_vm_status() {
   local auth_url="https://${clean_host}:8006/api2/json/access/ticket"
   
   local auth_response
-  auth_response=$(curl -s -k -X POST \
+  auth_response=$(echo "username=${PROXMOX_USERNAME}&password=${PROXMOX_PASSWORD}" | curl -s -k -X POST \
     "$auth_url" \
-    -d "username=${PROXMOX_USERNAME}&password=${PROXMOX_PASSWORD}" 2>/dev/null)
+    --data @- 2>/dev/null)
   
   if [[ $? -ne 0 || -z "$auth_response" ]]; then
     log_warning "Failed to authenticate with Proxmox API. Showing basic VM info."
