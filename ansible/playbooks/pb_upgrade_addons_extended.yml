@@ -404,6 +404,120 @@
           changed_when: false
 
     # ===========================
+    # INGRES NGINX
+    # ===========================
+    - name: Check current ingress-nginx version
+      shell: kubectl get deployment -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_ingress_nginx_version
+      when: addon_name in ['ingress-nginx', 'all']
+      ignore_errors: true
+
+    - name: Install/Upgrade ingress-nginx
+      block:
+        - name: Apply ingress-nginx
+          shell: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{ ingress_nginx_target_version }}/deploy/static/provider/baremetal/deploy.yaml
+
+        - name: Wait for ingress-nginx pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=controller -n ingress-nginx --timeout=300s
+
+        - name: Verify ingress-nginx installation
+          shell: kubectl get deployment -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_ingress_nginx_version
+
+        - name: Display ingress-nginx installation result
+          debug:
+            msg:
+              - "ingress-nginx installation completed"
+              - "Previous version: {{ current_ingress_nginx_version.stdout | default('not installed') }}"
+              - "Current version: {{ new_ingress_nginx_version.stdout }}"
+
+      when: addon_name in ['ingress-nginx', 'all']
+
+    # ===========================
+    # TRAEFIK
+    # ===========================
+    - name: Install Traefik Gateway
+      block:
+        - name: Ensure Helm is installed on the control plane
+          shell: |
+            if ! command -v helm &> /dev/null; then
+              echo "Helm not found. Installing..."
+              curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+              chmod 700 get_helm.sh
+              ./get_helm.sh
+              rm ./get_helm.sh
+            else
+              echo "Helm is already installed."
+            fi
+          register: helm_install_check
+          changed_when: "'Helm not found' in helm_install_check.stdout"
+
+        - name: Add Traefik Helm repository
+          shell: helm repo add traefik https://helm.traefik.io/traefik && helm repo update
+          register: helm_repo_add_result
+          changed_when: "'Adding existing repo' not in helm_repo_add_result.stdout"
+
+        - name: Install Gateway API CRDs
+          shell: kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_target_version }}/standard-install.yaml
+
+        - name: Install/Upgrade Traefik
+          shell: |
+            echo "{{ lookup('file', 'traefik-values.yaml') }}" | helm upgrade --install traefik traefik/traefik \
+              --namespace traefik \
+              --create-namespace \
+              --version {{ traefik_gateway_target_version }} \
+              -f -
+          register: helm_install_result
+          changed_when: "'already exists' not in helm_install_result.stderr"
+
+        - name: Wait for Traefik pods to be ready
+          shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=traefik -n traefik --timeout=300s
+
+        - name: Verify Traefik installation
+          shell: helm list -n traefik -f traefik -o json | jq -r '.[0].app_version'
+          register: new_traefik_gateway_version
+
+        - name: Display Traefik installation result
+          debug:
+            msg:
+              - "Traefik Gateway installation completed"
+              - "Current version: {{ new_traefik_gateway_version.stdout }}"
+
+      when: addon_name in ['traefik-gateway', 'all']          
+
+    # ===========================
+    # CoreDNS
+    # ===========================
+    - name: Check current CoreDNS version
+      shell: kubectl get deployment -n kube-system coredns -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_coredns_version
+      when: addon_name in ['coredns', 'all']
+      ignore_errors: true
+
+    - name: Upgrade CoreDNS
+      when: addon_name in ['coredns', 'all'] and current_coredns_version is not failed
+      block:
+        - name: Update CoreDNS image
+          shell: |
+            kubectl set image deployment/coredns -n kube-system \
+              coredns=registry.k8s.io/coredns/coredns:{{ coredns_target_version }}
+
+        - name: Wait for CoreDNS rollout to complete
+          shell: kubectl rollout status deployment/coredns -n kube-system --timeout=300s
+
+        - name: Verify CoreDNS upgrade
+          shell: kubectl get deployment -n kube-system coredns -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+          register: new_coredns_version
+
+        - name: Display CoreDNS upgrade result
+          debug:
+            msg:
+              - "CoreDNS upgrade completed"
+              - "Previous version: {{ current_coredns_version.stdout | default('unknown') }}"
+              - "Current version: {{ new_coredns_version.stdout }}"
+
+
+    # ===========================
     # CLEANUP
     # ===========================
     - name: Cleanup temporary files

@@ -768,7 +768,7 @@ function tofu_generate_hostnames() {
   recovery_checkpoint "tofu_generate_hostnames_start" "Starting hostname generation operation"
 
   # Load secrets first (required for hostname generation)
-  if ! load_secrets; then
+  if ! load_secrets_cached; then
     error_handle "$ERROR_AUTH" "Failed to load secrets required for hostname generation" "$SEVERITY_CRITICAL" "abort"
     return 1
   fi

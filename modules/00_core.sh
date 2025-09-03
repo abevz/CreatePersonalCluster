@@ -887,35 +887,67 @@ _get_hostname_by_ip() {
 # @return 1 on failure.
 
 function ansible_create_temp_inventory() {
-  log_debug "Creating temporary static Ansible inventory from Terraform output..."
+  log_debug "Creating temporary static Ansible inventory from cached cluster data..."
 
-  local raw_output
-  if ! raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null) || [[ -z "$raw_output" ]]; then
-    log_error "Command 'cpc deploy output -json' failed or returned empty."
-    return 1
+  # Get cached cluster summary data (reuses the caching logic from tofu module)
+  local current_ctx
+  current_ctx=$(get_current_cluster_context) || return 1
+  
+  local cache_file="/tmp/cpc_status_cache_${current_ctx}"
+  local dynamic_inventory_json=""
+  
+  # Try to get data from cache first
+  if [[ -f "$cache_file" ]]; then
+    local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+    if [[ $cache_age -lt 30 ]]; then
+      local cached_data
+      cached_data=$(cat "$cache_file" 2>/dev/null)
+      if [[ -n "$cached_data" && "$cached_data" != "null" ]]; then
+        # Check if cached data has .value or is direct JSON
+        if echo "$cached_data" | jq -e '.value' >/dev/null 2>&1; then
+          dynamic_inventory_json=$(echo "$cached_data" | jq -r '.value')
+        else
+          dynamic_inventory_json="$cached_data"
+        fi
+        log_debug "Using cached cluster data for inventory (age: ${cache_age}s)"
+      fi
+    fi
   fi
-
-  local all_tofu_outputs_json
-  all_tofu_outputs_json=$(echo "$raw_output" | sed -n '/^{$/,/^}$/p')
-  if [[ -z "$all_tofu_outputs_json" ]]; then
-    log_error "Failed to extract JSON from Terraform output."
-    return 1
-  fi
-
-  local dynamic_inventory_json
-  # First extract the JSON string, then parse it as JSON (fromjson)
-  dynamic_inventory_json=$(echo "$all_tofu_outputs_json" | jq -r '.ansible_inventory.value | fromjson')
+  
+  # Fall back to direct tofu call if no cache or cache is stale
   if [[ -z "$dynamic_inventory_json" || "$dynamic_inventory_json" == "null" ]]; then
-    log_error "Ansible inventory data is empty or invalid in Terraform outputs."
-    return 1
+    log_debug "Cache unavailable, getting fresh cluster data..."
+    local raw_output
+    if ! raw_output=$("$REPO_PATH/cpc" deploy output -json cluster_summary 2>/dev/null) || [[ -z "$raw_output" ]]; then
+      log_error "Command 'cpc deploy output -json cluster_summary' failed or returned empty."
+      return 1
+    fi
+    
+    # Extract JSON data from the output
+    dynamic_inventory_json=$(echo "$raw_output" | grep '^{.*}$' | tail -1)
+    if [[ -z "$dynamic_inventory_json" || "$dynamic_inventory_json" == "null" ]]; then
+      log_error "Cluster summary data is empty or invalid."
+      return 1
+    fi
   fi
 
   local temp_inventory_file
-  temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.json)
+  temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.ini)
 
-  # Transform the dynamic JSON into a static one that Ansible will understand
-  if ! jq -r 'to_entries[] | select(.value != null) | "\(.key) ansible_host=\(.value.IP) \(.value.labels // empty | to_entries[] | \"\(.key)=\(.value)\" )"' <<<"$dynamic_inventory_json" >"$temp_inventory_file"; then
-    log_error "Failed to create static inventory file using jq."
+  # Transform the cluster data into Ansible inventory INI format with groups
+  if ! cat >"$temp_inventory_file" << EOF
+[control_plane]
+$(echo "$dynamic_inventory_json" | jq -r 'to_entries[] | select(.key | contains("controlplane")) | "\(.value.hostname) ansible_host=\(.value.IP)"')
+
+[workers]
+$(echo "$dynamic_inventory_json" | jq -r 'to_entries[] | select(.key | contains("worker")) | "\(.value.hostname) ansible_host=\(.value.IP)"')
+
+[all:vars]
+ansible_user=abevz
+ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+EOF
+  then
+    log_error "Failed to create static inventory file."
     rm -f "$temp_inventory_file"
     return 1
   fi
