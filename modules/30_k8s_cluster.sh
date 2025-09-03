@@ -679,9 +679,7 @@ k8s_cluster_status() {
     local vm_ips=()
     
     # Parse cluster data into arrays
-    while IFS= read -r line; do
-      local vm_key=$(echo "$line" | cut -d' ' -f1)
-      local vm_ip=$(echo "$line" | cut -d' ' -f2)
+    while read -r vm_key vm_ip; do
       vm_keys+=("$vm_key")
       vm_ips+=("$vm_ip")
     done < <(echo "$cluster_data" | jq -r 'to_entries[] | "\(.key) \(.value.IP)"')
