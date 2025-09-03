@@ -810,6 +810,18 @@ k8s_cluster_status() {
   fi
 }
 
+# Helper function to show basic VM info when Proxmox API is not available
+show_basic_vm_info() {
+  local cluster_data="$1"
+  local reason="$2"
+  
+  echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+    if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+      echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown ($reason)${ENDCOLOR}"
+    fi
+  done
+}
+
 # Check VM status in Proxmox
 check_proxmox_vm_status() {
   local cluster_data="$1"
@@ -817,12 +829,7 @@ check_proxmox_vm_status() {
   # Check if we have Proxmox credentials
   if [[ -z "$PROXMOX_HOST" || -z "$PROXMOX_USERNAME" || -z "$PROXMOX_PASSWORD" ]]; then
     log_warning "Proxmox credentials not available. Showing basic VM info."
-    # Show at least the VM IDs from cluster data
-    echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
-      if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
-        echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown (no API access)${ENDCOLOR}"
-      fi
-    done
+    show_basic_vm_info "$cluster_data" "no API access"
     return 0
   fi
   
@@ -842,12 +849,7 @@ check_proxmox_vm_status() {
   
   if [[ $? -ne 0 || -z "$auth_response" ]]; then
     log_warning "Failed to authenticate with Proxmox API. Showing basic VM info."
-    # Show basic VM info even without API access
-    echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
-      if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
-        echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown (API auth failed)${ENDCOLOR}"
-      fi
-    done
+    show_basic_vm_info "$cluster_data" "API auth failed"
     return 0
   fi
   
@@ -858,12 +860,7 @@ check_proxmox_vm_status() {
   
   if [[ -z "$ticket" || -z "$csrf_token" ]]; then
     log_warning "Failed to get Proxmox authentication tokens. Showing basic VM info."
-    # Show basic VM info even without tokens
-    echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
-      if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
-        echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown (token failed)${ENDCOLOR}"
-      fi
-    done
+    show_basic_vm_info "$cluster_data" "token failed"
     return 0
   fi
   
