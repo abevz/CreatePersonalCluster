@@ -1,0 +1,200 @@
+# Description: BOM (Bill of Materials) scanner for software supply chain security
+# Category: security
+# Version: 0.6.0
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade BOM Scanner
+  when: addon_name in ['bom', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set BOM version
+      ansible.builtin.set_fact:
+        bom_target_version: >-
+          {{ requested_version if requested_version != '' else (bom_version | default('0.6.0')) }}
+
+    - name: Download BOM CLI
+      ansible.builtin.shell: |
+        if [ ! -f "/usr/local/bin/bom" ]; then
+          ARCH=$(uname -m)
+          case $ARCH in
+            x86_64) ARCH="amd64" ;;
+            aarch64) ARCH="arm64" ;;
+            armv7l) ARCH="arm" ;;
+          esac
+          curl -L "https://github.com/kubernetes-sigs/bom/releases/download/v{{ bom_target_version }}/bom-${ARCH}-linux" -o /usr/local/bin/bom
+          chmod +x /usr/local/bin/bom
+        fi
+      register: bom_download
+      changed_when: "'bom' not in bom_download.stdout"
+
+    - name: Create BOM namespace
+      ansible.builtin.shell: kubectl create namespace bom-system
+      register: bom_namespace
+      changed_when: "'created' in bom_namespace.stdout"
+      failed_when: 
+        - bom_namespace.rc != 0
+        - "'already exists' not in bom_namespace.stderr"
+
+    - name: Install SPDX-tools for BOM processing
+      ansible.builtin.package:
+        name:
+          - python3-pip
+        state: present
+
+    - name: Install Python SPDX tools
+      ansible.builtin.pip:
+        name:
+          - spdx-tools
+          - cyclonedx-bom
+        state: present
+
+    - name: Create BOM scanning service account
+      ansible.builtin.shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: bom-scanner
+          namespace: bom-system
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: bom-scanner
+        rules:
+        - apiGroups: [""]
+          resources: ["pods", "nodes", "namespaces"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["batch"]
+          resources: ["jobs", "cronjobs"]
+          verbs: ["get", "list", "watch"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: bom-scanner
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: bom-scanner
+        subjects:
+        - kind: ServiceAccount
+          name: bom-scanner
+          namespace: bom-system
+        EOF
+      register: bom_rbac
+      changed_when: "'configured' in bom_rbac.stdout or 'created' in bom_rbac.stdout"
+
+    - name: Create BOM scanning job template
+      ansible.builtin.copy:
+        content: |
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: cluster-bom-scan
+            namespace: bom-system
+          spec:
+            template:
+              spec:
+                serviceAccountName: bom-scanner
+                containers:
+                - name: bom-scanner
+                  image: alpine:latest
+                  command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    apk add --no-cache curl
+                    curl -L "https://github.com/kubernetes-sigs/bom/releases/download/v{{ bom_target_version }}/bom-amd64-linux" -o /usr/local/bin/bom
+                    chmod +x /usr/local/bin/bom
+                    
+                    echo "Scanning cluster for software components..."
+                    
+                    # Get all running images
+                    kubectl get pods --all-namespaces -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort -u > /tmp/cluster-images.txt
+                    
+                    echo "Found images:"
+                    cat /tmp/cluster-images.txt
+                    
+                    # Generate SPDX document for cluster
+                    /usr/local/bin/bom generate -o /tmp/cluster-bom.spdx.json --format json /tmp/cluster-images.txt || true
+                    
+                    echo "BOM scan completed. Results:"
+                    if [ -f /tmp/cluster-bom.spdx.json ]; then
+                      cat /tmp/cluster-bom.spdx.json
+                    fi
+                    
+                    sleep 30
+                restartPolicy: Never
+            backoffLimit: 3
+        dest: /tmp/bom-scan-job.yaml
+        mode: '0644'
+
+    - name: Create BOM analysis script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          # Kubernetes Cluster Bill of Materials Generator
+          
+          NAMESPACE="${1:-default}"
+          OUTPUT_DIR="${2:-/tmp/bom-reports}"
+          
+          mkdir -p "$OUTPUT_DIR"
+          
+          echo "Generating BOM for namespace: $NAMESPACE"
+          
+          # Get all unique images in namespace
+          kubectl get pods -n "$NAMESPACE" -o jsonpath='{.items[*].spec.containers[*].image}' | \
+            tr ' ' '\n' | sort -u > "$OUTPUT_DIR/images-$NAMESPACE.txt"
+          
+          echo "Found $(wc -l < "$OUTPUT_DIR/images-$NAMESPACE.txt") unique images"
+          
+          # Generate SPDX BOM
+          if command -v bom >/dev/null 2>&1; then
+            echo "Generating SPDX document..."
+            bom generate -o "$OUTPUT_DIR/bom-$NAMESPACE.spdx.json" \
+              --format json "$OUTPUT_DIR/images-$NAMESPACE.txt" || true
+          fi
+          
+          # Generate human-readable report
+          echo "# Bill of Materials Report for namespace: $NAMESPACE" > "$OUTPUT_DIR/report-$NAMESPACE.md"
+          echo "Generated: $(date)" >> "$OUTPUT_DIR/report-$NAMESPACE.md"
+          echo "" >> "$OUTPUT_DIR/report-$NAMESPACE.md"
+          echo "## Container Images" >> "$OUTPUT_DIR/report-$NAMESPACE.md"
+          while read -r image; do
+            echo "- $image" >> "$OUTPUT_DIR/report-$NAMESPACE.md"
+          done < "$OUTPUT_DIR/images-$NAMESPACE.txt"
+          
+          echo "Reports generated in: $OUTPUT_DIR"
+          ls -la "$OUTPUT_DIR"
+        dest: /usr/local/bin/k8s-bom-scan
+        mode: '0755'
+
+    - name: Verify BOM installation
+      ansible.builtin.shell: bom version
+      register: bom_version_check
+      changed_when: false
+
+    - name: Run initial cluster scan
+      ansible.builtin.shell: /usr/local/bin/k8s-bom-scan kube-system /tmp/bom-initial
+      register: initial_scan
+      changed_when: false
+
+    - name: Display BOM installation result
+      ansible.builtin.debug:
+        msg:
+          - "BOM (Bill of Materials) scanner installation completed"
+          - "Version: {{ bom_version_check.stdout }}"
+          - "Target version: {{ bom_target_version }}"
+          - "BOM CLI installed: /usr/local/bin/bom"
+          - "Scan script: /usr/local/bin/k8s-bom-scan"
+          - "Job template: /tmp/bom-scan-job.yaml"
+          - "Initial scan completed for kube-system namespace"
+          - "Usage: k8s-bom-scan <namespace> [output-dir]"
+          - "Run cluster scan: kubectl apply -f /tmp/bom-scan-job.yaml"
+          - "View job logs: kubectl logs -n bom-system job/cluster-bom-scan"

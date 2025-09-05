@@ -1,0 +1,81 @@
+# Description: Calico CNI networking solution with advanced network policies
+# Category: networking
+# Version: v3.28.0
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Calico CNI
+  when: addon_name in ['calico', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Calico version
+      ansible.builtin.set_fact:
+        calico_target_version: >-
+          {{ requested_version if requested_version != '' else (calico_version | default('v3.28.0')) }}
+
+    - name: Check current Calico version
+      ansible.builtin.shell: kubectl get pods -n calico-system -o jsonpath='{.items[0].spec.containers[0].image}' | cut -d':' -f2
+      register: current_calico_version
+      ignore_errors: true
+
+    - name: Download Calico operator manifest
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_target_version }}/manifests/tigera-operator.yaml"
+        dest: "/tmp/tigera-operator-{{ calico_target_version }}.yaml"
+        mode: '0644'
+
+    - name: Download Calico custom resources
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_target_version }}/manifests/custom-resources.yaml"
+        dest: "/tmp/calico-custom-resources-{{ calico_target_version }}.yaml"
+        mode: '0644'
+
+    - name: Check if Calico is already running and healthy
+      ansible.builtin.shell: kubectl get pods -n calico-system --no-headers 2>/dev/null | grep -c "Running" || echo "0"
+      register: calico_running_pods
+      ignore_errors: true
+
+    - name: Check if exact same version is already installed
+      ansible.builtin.shell: kubectl get pods -n calico-system -o jsonpath='{.items[*].spec.containers[0].image}' | grep -o "{{ calico_target_version }}"
+      register: calico_version_check
+      ignore_errors: true
+      when: calico_running_pods.stdout | int > 0
+
+    - name: Display Calico version check result
+      ansible.builtin.debug:
+        msg:
+          - "Current Calico pods running: {{ calico_running_pods.stdout }}"
+          - "Target version: {{ calico_target_version }}"
+          - "Version match: {{ 'Yes' if calico_version_check.rc == 0 else 'No' }}"
+
+    - name: Apply Calico operator
+      ansible.builtin.shell: kubectl apply -f /tmp/tigera-operator-{{ calico_target_version }}.yaml
+      register: calico_operator_result
+      changed_when: "'configured' in calico_operator_result.stdout or 'created' in calico_operator_result.stdout"
+
+    - name: Wait for tigera operator to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l k8s-app=tigera-operator -n tigera-operator --timeout=300s
+      changed_when: false
+
+    - name: Apply Calico custom resources
+      ansible.builtin.shell: kubectl apply -f /tmp/calico-custom-resources-{{ calico_target_version }}.yaml
+      register: calico_resources_result
+      changed_when: "'configured' in calico_resources_result.stdout or 'created' in calico_resources_result.stdout"
+
+    - name: Wait for Calico pods to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=600s
+      changed_when: false
+
+    - name: Verify Calico installation
+      ansible.builtin.shell: kubectl get pods -n calico-system --no-headers | grep -c "Running"
+      register: calico_final_check
+      changed_when: false
+
+    - name: Display Calico installation result
+      ansible.builtin.debug:
+        msg:
+          - "Calico installation completed"
+          - "Previous version: {{ current_calico_version.stdout | default('unknown') }}"
+          - "Current version: {{ calico_target_version }}"
+          - "Running pods: {{ calico_final_check.stdout }}"

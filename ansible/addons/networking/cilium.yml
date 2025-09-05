@@ -1,0 +1,88 @@
+# Description: Cilium eBPF-based networking and security for cloud native workloads
+# Category: networking
+# Version: 1.16.5
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Cilium CNI
+  when: addon_name in ['cilium', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Cilium version
+      ansible.builtin.set_fact:
+        cilium_target_version: >-
+          {{ requested_version if requested_version != '' else (cilium_version | default('1.16.5')) }}
+
+    - name: Download Cilium CLI
+      ansible.builtin.shell: |
+        if [ ! -f "/usr/local/bin/cilium" ]; then
+          CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+          CLI_ARCH=amd64
+          if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+          curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+          sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+          sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+          rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+        fi
+      register: cilium_cli_download
+      changed_when: "'cilium' not in cilium_cli_download.stdout"
+
+    - name: Add Cilium Helm repository
+      ansible.builtin.shell: helm repo add cilium https://helm.cilium.io/ && helm repo update
+      register: cilium_repo_result
+      changed_when: "'already exists' not in cilium_repo_result.stdout"
+
+    - name: Install/Upgrade Cilium
+      ansible.builtin.shell: |
+        helm upgrade --install cilium cilium/cilium \
+          --version {{ cilium_target_version }} \
+          --namespace kube-system \
+          --set operator.replicas=1 \
+          --set hubble.relay.enabled=true \
+          --set hubble.ui.enabled=true \
+          --set prometheus.enabled=true \
+          --set operator.prometheus.enabled=true \
+          --set hubble.enabled=true \
+          --set hubble.metrics.enabled="{dns,drop,tcp,flow,port-distribution,icmp,http}"
+      register: cilium_install_result
+      changed_when: "'installed' in cilium_install_result.stdout or 'upgraded' in cilium_install_result.stdout"
+
+    - name: Wait for Cilium to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l k8s-app=cilium -n kube-system --timeout=300s
+      changed_when: false
+
+    - name: Install Hubble CLI
+      ansible.builtin.shell: |
+        if [ ! -f "/usr/local/bin/hubble" ]; then
+          HUBBLE_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/hubble/master/stable.txt)
+          HUBBLE_ARCH=amd64
+          if [ "$(uname -m)" = "aarch64" ]; then HUBBLE_ARCH=arm64; fi
+          curl -L --fail --remote-name-all https://github.com/cilium/hubble/releases/download/$HUBBLE_VERSION/hubble-linux-${HUBBLE_ARCH}.tar.gz{,.sha256sum}
+          sha256sum --check hubble-linux-${HUBBLE_ARCH}.tar.gz.sha256sum
+          sudo tar xzvfC hubble-linux-${HUBBLE_ARCH}.tar.gz /usr/local/bin
+          rm hubble-linux-${HUBBLE_ARCH}.tar.gz{,.sha256sum}
+        fi
+      register: hubble_cli_download
+      changed_when: "'hubble' not in hubble_cli_download.stdout"
+
+    - name: Verify Cilium installation
+      ansible.builtin.shell: cilium status --wait
+      register: cilium_status
+      changed_when: false
+
+    - name: Get Cilium pod count
+      ansible.builtin.shell: kubectl get pods -n kube-system -l k8s-app=cilium --no-headers | grep -c "Running"
+      register: cilium_pod_count
+      changed_when: false
+
+    - name: Display Cilium installation result
+      ansible.builtin.debug:
+        msg:
+          - "Cilium eBPF networking installation completed"
+          - "Version: {{ cilium_target_version }}"
+          - "Running Cilium pods: {{ cilium_pod_count.stdout }}"
+          - "Hubble observability enabled"
+          - "Prometheus metrics enabled"
+          - "Access Hubble UI: kubectl port-forward svc/hubble-ui 12000:80 -n kube-system"
+          - "Use 'cilium status' and 'hubble status' for monitoring"

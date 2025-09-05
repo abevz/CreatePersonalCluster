@@ -1,0 +1,81 @@
+# Description: CoreDNS cluster DNS server upgrade and configuration
+# Category: dns
+# Version: 1.11.1
+# Dependencies: kubernetes
+# Maintainer: CPC Team
+
+---
+- name: Upgrade CoreDNS
+  when: addon_name in ['coredns', 'dns', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Get current CoreDNS version
+      ansible.builtin.shell: kubectl get deployment coredns -n kube-system -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_coredns_version
+      changed_when: false
+      failed_when: false
+
+    - name: Set target CoreDNS version
+      ansible.builtin.set_fact:
+        coredns_target_version: >-
+          {{ requested_version if requested_version != '' else (coredns_version | default('1.11.1')) }}
+
+    - name: Check if upgrade is needed
+      ansible.builtin.set_fact:
+        coredns_upgrade_needed: "{{ current_coredns_version.stdout != coredns_target_version }}"
+
+    - name: Backup current CoreDNS ConfigMap
+      ansible.builtin.shell: kubectl get configmap coredns -n kube-system -o yaml > /tmp/coredns-backup-$(date +%Y%m%d-%H%M%S).yaml
+      when: coredns_upgrade_needed
+      changed_when: true
+
+    - name: Update CoreDNS deployment image
+      ansible.builtin.shell: |
+        kubectl patch deployment coredns -n kube-system -p '{
+          "spec": {
+            "template": {
+              "spec": {
+                "containers": [{
+                  "name": "coredns",
+                  "image": "registry.k8s.io/coredns/coredns:v{{ coredns_target_version }}"
+                }]
+              }
+            }
+          }
+        }'
+      when: coredns_upgrade_needed
+      register: coredns_patch_result
+      changed_when: "'patched' in coredns_patch_result.stdout"
+
+    - name: Wait for CoreDNS rollout to complete
+      ansible.builtin.shell: kubectl rollout status deployment/coredns -n kube-system --timeout=300s
+      when: coredns_upgrade_needed
+      changed_when: false
+
+    - name: Verify CoreDNS pods are running
+      ansible.builtin.shell: kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | grep -c "Running"
+      register: coredns_pod_count
+      changed_when: false
+
+    - name: Test DNS resolution
+      ansible.builtin.shell: |
+        kubectl run dns-test --image=busybox --rm -it --restart=Never -- nslookup kubernetes.default.svc.cluster.local
+      register: dns_test_result
+      changed_when: false
+      failed_when: false
+
+    - name: Get final CoreDNS version
+      ansible.builtin.shell: kubectl get deployment coredns -n kube-system -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: final_coredns_version
+      changed_when: false
+
+    - name: Display CoreDNS upgrade result
+      ansible.builtin.debug:
+        msg:
+          - "CoreDNS upgrade completed"
+          - "Previous version: {{ current_coredns_version.stdout | default('Unknown') }}"
+          - "Current version: {{ final_coredns_version.stdout }}"
+          - "Target version: v{{ coredns_target_version }}"
+          - "Running pods: {{ coredns_pod_count.stdout }}"
+          - "DNS test result: {{ 'PASSED' if dns_test_result.rc == 0 else 'FAILED' }}"
+          - "Upgrade needed: {{ coredns_upgrade_needed }}"

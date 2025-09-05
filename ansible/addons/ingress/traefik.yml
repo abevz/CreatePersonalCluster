@@ -1,0 +1,77 @@
+# Description: Traefik Gateway Controller with Gateway API support
+# Category: ingress
+# Version: 37.0.0
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Traefik Gateway
+  when: addon_name in ['traefik-gateway', 'traefik', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Traefik version
+      ansible.builtin.set_fact:
+        traefik_gateway_target_version: >-
+          {{ requested_version if requested_version != '' else (traefik_gateway_version | default('37.0.0')) }}
+        gateway_api_target_version: >-
+          {{ gateway_api_version | default('v1.1.0') }}
+
+    - name: Ensure Helm is installed on the control plane
+      ansible.builtin.shell: |
+        if ! command -v helm &> /dev/null; then
+          echo "Helm not found. Installing..."
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh
+          rm ./get_helm.sh
+        else
+          echo "Helm is already installed."
+        fi
+      register: helm_install_check
+      changed_when: "'Helm not found' in helm_install_check.stdout"
+
+    - name: Add Traefik Helm repository
+      ansible.builtin.shell: helm repo add traefik https://helm.traefik.io/traefik && helm repo update
+      register: helm_repo_add_result
+      changed_when: "'Adding existing repo' not in helm_repo_add_result.stdout"
+
+    - name: Install Gateway API CRDs
+      ansible.builtin.shell: >
+        kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_target_version }}/standard-install.yaml
+      register: gateway_api_result
+      changed_when: "'configured' in gateway_api_result.stdout or 'created' in gateway_api_result.stdout"
+
+    - name: Create Traefik values file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../addons/ingress/traefik-values.yaml"
+        dest: /tmp/traefik-values.yaml
+        mode: '0644'
+
+    - name: Install/Upgrade Traefik
+      ansible.builtin.shell: |
+        helm upgrade --install traefik traefik/traefik \
+          --namespace traefik \
+          --create-namespace \
+          --version {{ traefik_gateway_target_version }} \
+          -f /tmp/traefik-values.yaml
+      register: helm_install_result
+      changed_when: "'already exists' not in helm_install_result.stderr"
+
+    - name: Wait for Traefik pods to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=traefik -n traefik --timeout=300s
+      changed_when: false
+
+    - name: Verify Traefik installation
+      ansible.builtin.shell: helm list -n traefik -f traefik -o json | jq -r '.[0].app_version'
+      register: new_traefik_gateway_version
+      changed_when: false
+
+    - name: Display Traefik installation result
+      ansible.builtin.debug:
+        msg:
+          - "Traefik Gateway installation completed"
+          - "Helm chart version: {{ traefik_gateway_target_version }}"
+          - "App version: {{ new_traefik_gateway_version.stdout }}"
+          - "Gateway API version: {{ gateway_api_target_version }}"
+          - "Using values file: ansible/addons/ingress/traefik-values.yaml"
+          - "Gateway API and Traefik ready for modern ingress"
