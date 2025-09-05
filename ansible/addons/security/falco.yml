@@ -1,0 +1,117 @@
+# Description: Falco runtime security monitoring for Kubernetes
+# Category: security
+# Version: latest
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Falco
+  when: addon_name in ['falco', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Falco version
+      ansible.builtin.set_fact:
+        falco_target_version: >-
+          {{ requested_version if requested_version != '' else (falco_version | default('latest')) }}
+
+    - name: Add Falco Helm repository
+      ansible.builtin.shell: helm repo add falcosecurity https://falcosecurity.github.io/charts
+      register: falco_repo_result
+      changed_when: "'already exists' not in falco_repo_result.stderr"
+
+    - name: Update Helm repositories
+      ansible.builtin.shell: helm repo update
+      changed_when: false
+
+    - name: Create falco namespace
+      ansible.builtin.shell: kubectl create namespace falco
+      register: falco_ns_result
+      changed_when: "'created' in falco_ns_result.stdout"
+      failed_when: "'already exists' not in falco_ns_result.stderr and falco_ns_result.rc != 0"
+
+    - name: Install/Upgrade Falco with Helm
+      ansible.builtin.shell: |
+        helm upgrade --install falco falcosecurity/falco \
+          --namespace falco \
+          --set falco.grpc.enabled=true \
+          --set falco.grpcOutput.enabled=true \
+          --set falco.httpOutput.enabled=true \
+          --set falco.jsonOutput=true \
+          --set falco.jsonIncludeOutputProperty=true \
+          --set falco.logLevel=info \
+          --set falco.syscallEventDrops.actions[0]=log \
+          --set falco.syscallEventDrops.rate=0.03333 \
+          --set falco.syscallEventDrops.maxBurst=1000 \
+          --set driver.kind=modern-ebpf \
+          --set collectors.enabled=true \
+          --set collectors.docker.enabled=false \
+          --set collectors.containerd.enabled=true \
+          --set collectors.containerd.socket=/run/containerd/containerd.sock \
+          --set falco.rulesFile[0]=/etc/falco/falco_rules.yaml \
+          --set falco.rulesFile[1]=/etc/falco/falco_rules.local.yaml \
+          --set falco.rulesFile[2]=/etc/falco/k8s_audit_rules.yaml
+      register: falco_install_result
+      changed_when: "'installed' in falco_install_result.stdout or 'upgraded' in falco_install_result.stdout"
+
+    - name: Wait for Falco pods to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=falco -n falco --timeout=300s
+      changed_when: false
+
+    - name: Create Falco custom rules ConfigMap
+      ansible.builtin.shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: falco-custom-rules
+          namespace: falco
+        data:
+          custom_rules.yaml: |
+            - rule: Kubernetes Secret Access
+              desc: Detect access to Kubernetes secrets
+              condition: >
+                ka and
+                ka.verb in (get, list) and
+                ka.objectResource.resource=secrets
+              output: >
+                Kubernetes secret accessed (user=%ka.user.name verb=%ka.verb 
+                resource=%ka.target.resource object=%ka.target.name namespace=%ka.target.namespace)
+              priority: WARNING
+              
+            - rule: Container Privilege Escalation
+              desc: Detect containers running with privilege escalation
+              condition: >
+                spawned_process and
+                proc.name in (sudo, su, doas) and
+                container
+              output: >
+                Privilege escalation in container (user=%user.name command=%proc.cmdline 
+                container=%container.name image=%container.image.repository)
+              priority: HIGH
+              
+            - rule: Sensitive File Access
+              desc: Detect access to sensitive files
+              condition: >
+                open_read and
+                fd.name in (/etc/passwd, /etc/shadow, /etc/sudoers, /root/.ssh/authorized_keys)
+              output: >
+                Sensitive file accessed (user=%user.name command=%proc.cmdline file=%fd.name 
+                container=%container.name)
+              priority: WARNING
+        EOF
+      register: falco_rules_result
+      changed_when: "'configured' in falco_rules_result.stdout or 'created' in falco_rules_result.stdout"
+
+    - name: Verify Falco installation
+      ansible.builtin.shell: kubectl get pods -n falco --no-headers | grep -c "Running"
+      register: falco_final_check
+      changed_when: false
+
+    - name: Display Falco installation result
+      ansible.builtin.debug:
+        msg:
+          - "Falco runtime security monitoring installed"
+          - "Version: {{ falco_target_version }}"
+          - "Running pods: {{ falco_final_check.stdout }}"
+          - "Falco is monitoring for security events"
+          - "View logs: kubectl logs -n falco -l app.kubernetes.io/name=falco"

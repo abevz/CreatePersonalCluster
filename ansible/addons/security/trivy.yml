@@ -1,0 +1,100 @@
+# Description: Trivy vulnerability scanner for container images and Kubernetes
+# Category: security
+# Version: latest
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Trivy vulnerability scanner
+  when: addon_name in ['trivy', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Trivy version
+      ansible.builtin.set_fact:
+        trivy_target_version: >-
+          {{ requested_version if requested_version != '' else (trivy_version | default('latest')) }}
+
+    - name: Create trivy namespace
+      ansible.builtin.shell: kubectl create namespace trivy-system
+      register: trivy_ns_result
+      changed_when: "'created' in trivy_ns_result.stdout"
+      failed_when: "'already exists' not in trivy_ns_result.stderr and trivy_ns_result.rc != 0"
+
+    - name: Install Trivy operator
+      ansible.builtin.shell: |
+        kubectl apply -f https://raw.githubusercontent.com/aquasecurity/trivy-operator/main/deploy/static/trivy-operator.yaml
+      register: trivy_operator_result
+      changed_when: "'configured' in trivy_operator_result.stdout or 'created' in trivy_operator_result.stdout"
+
+    - name: Wait for Trivy operator to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=trivy-operator -n trivy-system --timeout=300s
+      changed_when: false
+
+    - name: Create Trivy cluster vulnerability scan
+      ansible.builtin.shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: trivy-cluster-scan
+          namespace: trivy-system
+        spec:
+          template:
+            spec:
+              serviceAccountName: trivy-operator
+              containers:
+              - name: trivy
+                image: aquasec/trivy:{{ trivy_target_version }}
+                command:
+                - trivy
+                args:
+                - k8s
+                - --report
+                - summary
+                - cluster
+                volumeMounts:
+                - name: kubeconfig
+                  mountPath: /root/.kube
+                  readOnly: true
+              volumes:
+              - name: kubeconfig
+                secret:
+                  secretName: trivy-operator
+              restartPolicy: Never
+        EOF
+      register: trivy_scan_result
+      changed_when: "'configured' in trivy_scan_result.stdout or 'created' in trivy_scan_result.stdout"
+      ignore_errors: true
+
+    - name: Create Trivy ConfigMap for configuration
+      ansible.builtin.shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: trivy-operator
+          namespace: trivy-system
+        data:
+          trivy.repository: "aquasec/trivy"
+          trivy.tag: "{{ trivy_target_version }}"
+          vulnerability.scanner.enabled: "true"
+          configAudit.scanner.enabled: "true"
+          rbacAssessment.scanner.enabled: "true"
+          infraAssessment.scanner.enabled: "true"
+        EOF
+      register: trivy_config_result
+      changed_when: "'configured' in trivy_config_result.stdout or 'created' in trivy_config_result.stdout"
+
+    - name: Verify Trivy installation
+      ansible.builtin.shell: kubectl get pods -n trivy-system --no-headers | grep -c "Running"
+      register: trivy_final_check
+      changed_when: false
+
+    - name: Display Trivy installation result
+      ansible.builtin.debug:
+        msg:
+          - "Trivy vulnerability scanner installed"
+          - "Version: {{ trivy_target_version }}"
+          - "Running pods: {{ trivy_final_check.stdout }}"
+          - "Trivy will automatically scan workloads for vulnerabilities"
+          - "View reports: kubectl get vulnerabilityreports -A"

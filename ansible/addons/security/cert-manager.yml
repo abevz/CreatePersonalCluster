@@ -1,0 +1,94 @@
+# Description: Certificate manager for automatic SSL/TLS certificate provisioning
+# Category: security
+# Version: v1.16.2
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade cert-manager
+  when: addon_name in ['cert-manager', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set cert-manager version
+      ansible.builtin.set_fact:
+        cert_manager_target_version: >-
+          {{ requested_version if requested_version != '' else (cert_manager_version | default('v1.16.2')) }}
+
+    - name: Check current cert-manager version
+      ansible.builtin.shell: kubectl get pods -n cert-manager -o jsonpath='{.items[0].spec.containers[0].image}' | cut -d':' -f2
+      register: current_cert_manager_version
+      ignore_errors: true
+
+    - name: Add cert-manager Helm repository
+      ansible.builtin.shell: helm repo add jetstack https://charts.jetstack.io
+      register: cert_manager_repo_result
+      changed_when: "'already exists' not in cert_manager_repo_result.stderr"
+
+    - name: Update Helm repositories
+      ansible.builtin.shell: helm repo update
+      changed_when: false
+
+    - name: Apply cert-manager with Gateway API support
+      ansible.builtin.shell: |
+        helm upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --version {{ cert_manager_target_version }} \
+          --set crds.enabled=true \
+          --set global.leaderElection.namespace=cert-manager \
+          --set extraArgs[0]="--enable-gateway-api"
+      register: cert_manager_install_result
+      changed_when: "'installed' in cert_manager_install_result.stdout or 'upgraded' in cert_manager_install_result.stdout"
+
+    - name: Wait for cert-manager pods to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=cert-manager -n cert-manager --timeout=300s
+      changed_when: false
+
+    - name: Create Cloudflare API token secret
+      ansible.builtin.shell: |
+        kubectl create secret generic cloudflare-api-token \
+          --from-literal=api-token="{{ cloudflare_api_token }}" \
+          -n cert-manager
+      register: cloudflare_secret_result
+      changed_when: "'created' in cloudflare_secret_result.stdout"
+      failed_when: "'already exists' not in cloudflare_secret_result.stderr and cloudflare_secret_result.rc != 0"
+      when: cloudflare_api_token != ""
+
+    - name: Create Cloudflare ClusterIssuer
+      ansible.builtin.shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: cert-manager.io/v1
+        kind: ClusterIssuer
+        metadata:
+          name: letsencrypt-cloudflare
+        spec:
+          acme:
+            server: {{ letsencrypt_server }}
+            email: {{ cloudflare_email }}
+            privateKeySecretRef:
+              name: letsencrypt-cloudflare
+            solvers:
+              - dns01:
+                  cloudflare:
+                    email: {{ cloudflare_email }}
+                    apiTokenSecretRef:
+                      name: cloudflare-api-token
+                      key: api-token
+        EOF
+      register: issuer_result
+      changed_when: "'created' in issuer_result.stdout or 'configured' in issuer_result.stdout"
+      when: cloudflare_api_token != "" and cloudflare_email != ""
+
+    - name: Verify cert-manager installation
+      ansible.builtin.shell: kubectl get pods -n cert-manager --no-headers | grep -c "Running"
+      register: cert_manager_final_check
+      changed_when: false
+
+    - name: Display cert-manager installation result
+      ansible.builtin.debug:
+        msg:
+          - "cert-manager installation completed"
+          - "Previous version: {{ current_cert_manager_version.stdout | default('unknown') }}"
+          - "Current version: {{ cert_manager_target_version }}"
+          - "Running pods: {{ cert_manager_final_check.stdout }}"
+          - "Cloudflare ClusterIssuer: {{ 'Configured' if cloudflare_api_token != '' else 'Skipped (no API token)' }}"

@@ -1,0 +1,81 @@
+# Description: Istio service mesh for advanced traffic management, security and observability
+# Category: ingress
+# Version: 1.24.0
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Istio Service Mesh
+  when: addon_name in ['istio', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Istio version
+      ansible.builtin.set_fact:
+        istio_target_version: >-
+          {{ requested_version if requested_version != '' else (istio_version | default('1.24.0')) }}
+
+    - name: Download Istio
+      ansible.builtin.shell: |
+        if [ ! -d "/opt/istio-{{ istio_target_version }}" ]; then
+          cd /opt
+          curl -L https://istio.io/downloadIstio | ISTIO_VERSION={{ istio_target_version }} sh -
+          ln -sfn istio-{{ istio_target_version }} istio
+        fi
+      register: istio_download_result
+      changed_when: "'istio-{{ istio_target_version }}' not in istio_download_result.stdout"
+
+    - name: Add Istio to PATH
+      ansible.builtin.lineinfile:
+        path: /etc/environment
+        line: 'PATH="/opt/istio/bin:$PATH"'
+        create: yes
+        backup: yes
+
+    - name: Install Istio with default profile
+      ansible.builtin.shell: |
+        export PATH="/opt/istio/bin:$PATH"
+        istioctl install --set values.defaultRevision=default -y
+      register: istio_install_result
+      changed_when: "'unchanged' not in istio_install_result.stdout"
+
+    - name: Enable Istio injection for default namespace
+      ansible.builtin.shell: kubectl label namespace default istio-injection=enabled --overwrite
+      register: istio_label_result
+      changed_when: "'labeled' in istio_label_result.stdout"
+
+    - name: Install Istio addons (Kiali, Jaeger, Prometheus, Grafana)
+      ansible.builtin.shell: |
+        kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-{{ istio_target_version }}/samples/addons/{{ item }}.yaml
+      loop:
+        - kiali
+        - jaeger
+        - prometheus
+        - grafana
+      register: istio_addons_result
+      changed_when: "'configured' in istio_addons_result.stdout or 'created' in istio_addons_result.stdout"
+      failed_when: false
+
+    - name: Wait for Istio control plane to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app=istiod -n istio-system --timeout=300s
+      changed_when: false
+
+    - name: Verify Istio installation
+      ansible.builtin.shell: kubectl get pods -n istio-system --no-headers | grep -c "Running"
+      register: istio_pod_count
+      changed_when: false
+
+    - name: Get Istio version
+      ansible.builtin.shell: /opt/istio/bin/istioctl version --short
+      register: istio_version_check
+      changed_when: false
+
+    - name: Display Istio installation result
+      ansible.builtin.debug:
+        msg:
+          - "Istio service mesh installation completed"
+          - "Version: {{ istio_version_check.stdout }}"
+          - "Target version: {{ istio_target_version }}"
+          - "Running pods in istio-system: {{ istio_pod_count.stdout }}"
+          - "Addons installed: Kiali, Jaeger, Prometheus, Grafana"
+          - "Default namespace has Istio injection enabled"
+          - "Access Kiali: kubectl port-forward svc/kiali 20001:20001 -n istio-system"

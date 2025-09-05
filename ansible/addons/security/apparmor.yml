@@ -1,0 +1,190 @@
+# Description: AppArmor Linux security module for application access control
+# Category: security  
+# Version: 1.0.0
+# Dependencies: linux kernel with AppArmor support
+# Maintainer: CPC Team
+
+---
+- name: Install/Configure AppArmor
+  when: addon_name in ['apparmor', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Check if AppArmor is available
+      ansible.builtin.shell: |
+        if [ -d "/sys/kernel/security/apparmor" ]; then
+          echo "available"
+        else
+          echo "not_available"
+        fi
+      register: apparmor_check
+      changed_when: false
+
+    - name: Install AppArmor utilities
+      ansible.builtin.package:
+        name:
+          - apparmor
+          - apparmor-utils
+          - apparmor-profiles
+          - apparmor-profiles-extra
+        state: present
+      when: apparmor_check.stdout == "available"
+
+    - name: Enable AppArmor service
+      ansible.builtin.systemd:
+        name: apparmor
+        enabled: yes
+        state: started
+      when: apparmor_check.stdout == "available"
+
+    - name: Create Kubernetes AppArmor profile directory
+      ansible.builtin.file:
+        path: /etc/apparmor.d/kubernetes
+        state: directory
+        mode: '0755'
+      when: apparmor_check.stdout == "available"
+
+    - name: Create strict AppArmor profile for containers
+      ansible.builtin.copy:
+        content: |
+          #include <tunables/global>
+          
+          profile k8s-strict flags=(attach_disconnected,mediate_deleted) {
+            #include <abstractions/base>
+            
+            # Allow basic system access
+            /etc/hosts r,
+            /etc/resolv.conf r,
+            /etc/nsswitch.conf r,
+            /etc/passwd r,
+            /etc/group r,
+            
+            # Allow access to common directories
+            /usr/bin/** ix,
+            /bin/** ix,
+            /sbin/** ix,
+            /lib{,32,64}/** mr,
+            /usr/lib{,32,64}/** mr,
+            
+            # Deny dangerous capabilities
+            deny capability sys_admin,
+            deny capability sys_module,
+            deny capability sys_rawio,
+            deny capability sys_time,
+            deny capability sys_nice,
+            deny capability sys_resource,
+            deny capability sys_pacct,
+            deny capability sys_ptrace,
+            deny capability sys_chroot,
+            deny capability setuid,
+            deny capability setgid,
+            deny capability setpcap,
+            deny capability linux_immutable,
+            deny capability net_bind_service,
+            deny capability net_broadcast,
+            deny capability net_admin,
+            deny capability net_raw,
+            
+            # Deny access to sensitive files
+            deny /proc/sys/** w,
+            deny /sys/** w,
+            deny /dev/mem r,
+            deny /dev/kmem r,
+            deny /dev/port r,
+            deny /boot/** r,
+            
+            # Allow temporary files
+            /tmp/** rw,
+            /var/tmp/** rw,
+          }
+        dest: /etc/apparmor.d/kubernetes/k8s-strict
+        mode: '0644'
+      when: apparmor_check.stdout == "available"
+      notify: reload_apparmor_profiles
+
+    - name: Create permissive AppArmor profile for containers
+      ansible.builtin.copy:
+        content: |
+          #include <tunables/global>
+          
+          profile k8s-permissive flags=(attach_disconnected,mediate_deleted,complain) {
+            #include <abstractions/base>
+            
+            # Allow most operations but log them
+            /** rwlkm,
+            
+            # Still deny some dangerous capabilities
+            deny capability sys_module,
+            deny capability sys_rawio,
+            deny /dev/mem r,
+            deny /dev/kmem r,
+            deny /boot/** r,
+          }
+        dest: /etc/apparmor.d/kubernetes/k8s-permissive
+        mode: '0644'
+      when: apparmor_check.stdout == "available"
+      notify: reload_apparmor_profiles
+
+    - name: Load AppArmor profiles
+      ansible.builtin.shell: |
+        apparmor_parser -r /etc/apparmor.d/kubernetes/k8s-strict
+        apparmor_parser -r /etc/apparmor.d/kubernetes/k8s-permissive
+      when: apparmor_check.stdout == "available"
+      changed_when: true
+
+    - name: Create example pod with AppArmor
+      ansible.builtin.copy:
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: apparmor-test-pod
+            annotations:
+              container.apparmor.security.beta.kubernetes.io/test-container: localhost/k8s-strict
+          spec:
+            containers:
+            - name: test-container
+              image: busybox:latest
+              command: ['sh', '-c', 'echo "AppArmor test pod running"; sleep 3600']
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+        dest: /tmp/apparmor-test-pod.yaml
+        mode: '0644'
+      when: apparmor_check.stdout == "available"
+
+    - name: Get AppArmor status
+      ansible.builtin.shell: aa-status
+      register: apparmor_status
+      when: apparmor_check.stdout == "available"
+      changed_when: false
+
+    - name: Check loaded profiles
+      ansible.builtin.shell: |
+        aa-status | grep -E "(k8s-strict|k8s-permissive)" | wc -l
+      register: k8s_profiles_count
+      when: apparmor_check.stdout == "available"
+      changed_when: false
+
+    - name: Display AppArmor installation result
+      ansible.builtin.debug:
+        msg:
+          - "AppArmor configuration completed"
+          - "AppArmor available: {{ apparmor_check.stdout }}"
+          - "Kubernetes profiles loaded: {{ k8s_profiles_count.stdout | default('0') }}"
+          - "Profiles created: k8s-strict (enforcing), k8s-permissive (complain mode)"
+          - "Test pod manifest: /tmp/apparmor-test-pod.yaml"
+          - "Apply with: kubectl apply -f /tmp/apparmor-test-pod.yaml"
+          - "Use annotations: container.apparmor.security.beta.kubernetes.io/<container>: localhost/<profile>"
+      when: apparmor_check.stdout == "available"
+
+    - name: Display AppArmor unavailable message
+      ansible.builtin.debug:
+        msg:
+          - "AppArmor is not available on this system"
+          - "Kernel must be compiled with AppArmor support"
+          - "Check: cat /boot/config-$(uname -r) | grep CONFIG_SECURITY_APPARMOR"
+      when: apparmor_check.stdout == "not_available"
+
+  handlers:
+    - name: reload_apparmor_profiles
+      ansible.builtin.shell: systemctl reload apparmor

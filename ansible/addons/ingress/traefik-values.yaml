@@ -1,0 +1,50 @@
+# ansible/playbooks/traefik-values.yaml
+
+# 1. Explicitly enable the providers we need
+providers:
+  kubernetesGateway:
+    enabled: true
+  kubernetesCRD:
+    enabled: true
+  kubernetesIngress:
+    enabled: true
+
+# 2. Enable DEBUG logs for diagnostics
+log:
+  level: INFO
+
+# 3. Enable Dashboard
+dashboard:
+  enabled: true
+
+# 4. Configure Gateway API
+experimental:
+  kubernetesGateway:
+    enabled: true
+    gateway:
+      service:
+        type: LoadBalancer
+
+
+# 5. Configure entry points (ports)
+entryPoints:
+  websecure:
+    address: ":8443/tcp"
+    # Tell Traefik that we expect PROXY protocol from Nginx
+    proxyProtocol:
+      insecure: true
+
+# 6. Configure Kubernetes service
+service:
+  #annotations:
+    # This will tell DigitalOcean to enable the proxy protocol so we can get the client real IP.
+    #service.beta.kubernetes.io~1linode-loadbalancer-enable-proxy-protocol: true
+  ports:
+    websecure:
+      port: 443
+      targetPort: 8443
+
+additionalArguments:
+  - "--entryPoints.web.proxyProtocol.insecure=true"
+  - "--entryPoints.websecure.proxyProtocol.insecure=true"
+

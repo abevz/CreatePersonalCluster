@@ -1,0 +1,78 @@
+---
+- name: Modular Addon Management System
+  hosts: "{{ target_hosts | default('control_plane') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    addon_name: "{{ addon_name | default('all') }}"
+    requested_version: "{{ addon_version | default('') }}"
+    control_plane_node: "{{ groups['control_plane'][0] }}"
+
+    # Global addon settings
+    cloudflare_api_token: "{{ lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') }}"
+    cloudflare_email: "{{ lookup('env', 'CLOUDFLARE_EMAIL') }}"
+    letsencrypt_server: "https://acme-v02.api.letsencrypt.org/directory"
+
+  pre_tasks:
+    - name: Ensure bash is installed for shell tasks
+      ansible.builtin.package:
+        name: bash
+        state: present
+
+    - name: Set target host to control plane
+      ansible.builtin.set_fact:
+        ansible_host: "{{ hostvars[control_plane_node]['ansible_host'] }}"
+      when: inventory_hostname != control_plane_node
+
+    - name: Discover available addon modules
+      local_action:
+        module: ansible.builtin.find
+        paths: "{{ playbook_dir }}/../addons"
+        patterns: "*.yml"
+        recurse: yes
+      register: available_addons
+      run_once: true
+
+    - name: Create addon registry
+      local_action:
+        module: ansible.builtin.set_fact
+        addon_registry: "{{ addon_registry | default({}) | combine({item.path | basename | regex_replace('\\.yml$', ''): {'path': item.path, 'category': item.path | dirname | basename}}) }}"
+      loop: "{{ available_addons.files }}"
+      run_once: true
+
+    - name: Display discovered addons
+      ansible.builtin.debug:
+        msg: "Found {{ addon_registry.keys() | length }} addon modules: {{ addon_registry.keys() | list | sort }}"
+      when: ansible_verbosity >= 1
+
+  tasks:
+    - name: Install specific addon
+      block:
+        - name: Validate addon exists
+          ansible.builtin.fail:
+            msg: "Addon '{{ addon_name }}' not found. Available addons: {{ addon_registry.keys() | list | sort }}"
+          when: addon_name not in addon_registry and addon_name != 'all'
+
+        - name: Include specific addon module
+          ansible.builtin.include_tasks: "{{ addon_registry[addon_name].path }}"
+          when: addon_name != 'all' and addon_name in addon_registry
+
+    - name: Install all addons
+      block:
+        - name: Include all addon modules
+          ansible.builtin.include_tasks: "{{ item.value.path }}"
+          loop: "{{ addon_registry | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          when: addon_name == 'all'
+
+  post_tasks:
+    - name: Cleanup temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/addon_*.yaml"
+        - "/tmp/addon_*.yml"
+      ignore_errors: true

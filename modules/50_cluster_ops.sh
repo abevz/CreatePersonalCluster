@@ -9,6 +9,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   exit 1
 fi
 
+# Initialize addon discovery system if available
+if [[ -f "$REPO_PATH/ansible/addons/addon_discovery.sh" ]]; then
+  source "$REPO_PATH/ansible/addons/addon_discovery.sh"
+  addon_discover_all
+fi
+
 cpc_cluster_ops() {
   local command="${1:-}"
 
@@ -63,6 +69,12 @@ _cluster_ops_help() {
 
 # Help for upgrade-addons
 _cluster_ops_upgrade_addons_help() {
+  # Load addon discovery if available
+  if [[ -f "$REPO_PATH/ansible/addons/addon_discovery.sh" ]]; then
+    source "$REPO_PATH/ansible/addons/addon_discovery.sh"
+    addon_discover_all
+  fi
+
   printf "${BLUE}Usage: cpc upgrade-addons [addon_name] [version]${ENDCOLOR}\n"
   printf "\n"
   printf "Installs or upgrades cluster addons. If 'addon_name' is not provided,\n"
@@ -70,11 +82,24 @@ _cluster_ops_upgrade_addons_help() {
   printf "\n"
   printf "${CYAN}Arguments:${ENDCOLOR}\n"
   printf "  ${ORANGE}%-15s${ENDCOLOR} %s\n" "[addon_name]" "(Optional) The name of the addon. Available:"
-  printf "                  %-15s %s\n" "" "all, calico, coredns, metallb, metrics-server, cert-manager,"
-  printf "                  %-15s %s\n" "" "kubelet-serving-cert-approver, argocd, ingress-nginx,"
-  printf "                  %-15s %s\n" "" "traefik-gateway."
+  
+  # Show discovered addons if available, otherwise show legacy list
+  if [[ -n "${DISCOVERED_ADDONS:-}" ]] && [[ ${#DISCOVERED_ADDONS[@]} -gt 0 ]]; then
+    printf "                  %-15s %s\n" "" "all, $(addon_list_all simple | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')."
+  else
+    printf "                  %-15s %s\n" "" "all, calico, coredns, metallb, metrics-server, cert-manager,"
+    printf "                  %-15s %s\n" "" "kubelet-serving-cert-approver, argocd, ingress-nginx,"
+    printf "                  %-15s %s\n" "" "traefik-gateway."
+  fi
+  
   printf "\n"
   printf "  ${ORANGE}%-15s${ENDCOLOR} %s\n" "[version]" "(Optional) A specific version for the addon (e.g., v1.2.3)."
+  
+  # Show detailed addon list if discovered
+  if [[ -n "${DISCOVERED_ADDONS:-}" ]] && [[ ${#DISCOVERED_ADDONS[@]} -gt 0 ]]; then
+    printf "\n${CYAN}Available Addons by Category:${ENDCOLOR}\n"
+    addon_list_all detailed
+  fi
 }
 
 # Help for configure-coredns
@@ -94,43 +119,21 @@ cluster_ops_upgrade_addons() {
   local addon_name="${1:-}"
   local addon_version="${2:-}"
 
-  if [[ -z "$addon_name" ]]; then
-    echo -e "${BLUE}Select addon to install/upgrade:${ENDCOLOR}"
-    echo ""
-    echo "  1) all                          - Install/upgrade all addons"
-    echo "  2) calico                       - Calico CNI networking"
-    echo "  3) metallb                      - MetalLB load balancer"
-    echo "  4) metrics-server               - Kubernetes Metrics Server"
-    echo "  5) coredns                      - CoreDNS DNS server"
-    echo "  6) cert-manager                 - Certificate manager"
-    echo "  7) kubelet-serving-cert-approver  - Kubelet cert approver"
-    echo "  8) argocd                       - ArgoCD GitOps"
-    echo "  9) ingress-nginx                - NGINX Ingress Controller"
-    echo " 10) traefik-gateway              - Traefik Gateway Controller"
-    echo ""
-    read -r -p "Enter your choice [1-10]: " choice
+  # Load addon discovery system
+  source "$REPO_PATH/ansible/addons/addon_discovery.sh"
+  addon_discover_all
 
-    case $choice in
-    1) addon_name="all" ;;
-    2) addon_name="calico" ;;
-    3) addon_name="metallb" ;;
-    4) addon_name="metrics-server" ;;
-    5) addon_name="coredns" ;;
-    6) addon_name="cert-manager" ;;
-    7) addon_name="kubelet-serving-cert-approver" ;;
-    8) addon_name="argocd" ;;
-    9) addon_name="ingress-nginx" ;;
-    10) addon_name="traefik-gateway" ;;
-    *)
-      log_error "Invalid choice: $choice"
+  # Interactive menu if no addon specified
+  if [[ -z "$addon_name" ]]; then
+    addon_name=$(addon_display_interactive_menu)
+    if [[ $? -ne 0 || -z "$addon_name" ]]; then
+      log_error "No addon selected or invalid choice"
       return 1
-      ;;
-    esac
+    fi
   fi
 
-  local allowed_addons=("all" "calico" "coredns" "metallb" "metrics-server" "cert-manager" "kubelet-serving-cert-approver" "argocd" "ingress-nginx" "traefik-gateway")
-  if ! [[ " ${allowed_addons[*]} " =~ " ${addon_name} " ]]; then
-    log_error "Invalid addon name: '$addon_name'."
+  # Validate addon exists (also handles 'all')
+  if ! addon_validate_exists "$addon_name"; then
     _cluster_ops_upgrade_addons_help
     return 1
   fi
@@ -163,9 +166,19 @@ cluster_ops_upgrade_addons() {
     log_info "Using default version for the addon."
   fi
 
-  # Execute Ansible playbook with recovery
+  # Execute Ansible playbook with recovery - use modular system if available
+  local playbook_to_use="pb_upgrade_addons_extended.yml"
+  
+  # Check if modular playbook exists and addon is in modular system
+  if [[ -f "$REPO_PATH/ansible/playbooks/pb_upgrade_addons_modular.yml" ]] && [[ -n "${DISCOVERED_ADDONS[$addon_name]}" || "$addon_name" == "all" ]]; then
+    playbook_to_use="pb_upgrade_addons_modular.yml"
+    log_info "Using modular addon system"
+  else
+    log_info "Using legacy addon system"
+  fi
+
   if ! recovery_execute \
-       "cpc_ansible run-ansible 'pb_upgrade_addons_extended.yml' --extra-vars '$extra_vars'" \
+       "cpc_ansible run-ansible '$playbook_to_use' --extra-vars '$extra_vars'" \
        "upgrade_addon_$addon_name" \
        "log_warning 'Addon upgrade failed, manual cleanup may be needed'" \
        "validate_addon_installation '$addon_name'"; then
