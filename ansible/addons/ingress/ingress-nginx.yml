@@ -1,0 +1,46 @@
+# Description: NGINX Ingress Controller for HTTP/HTTPS load balancing
+# Category: ingress
+# Version: v1.12.0
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade NGINX Ingress Controller
+  when: addon_name in ['ingress-nginx', 'nginx', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set ingress-nginx version
+      ansible.builtin.set_fact:
+        ingress_nginx_target_version: >-
+          {{ requested_version if requested_version != '' else (ingress_nginx_version | default('v1.12.0')) }}
+
+    - name: Check current ingress-nginx version
+      ansible.builtin.shell: kubectl get pods -n ingress-nginx -o jsonpath='{.items[0].spec.containers[0].image}' | cut -d':' -f2
+      register: current_ingress_nginx_version
+      ignore_errors: true
+
+    - name: Apply ingress-nginx
+      ansible.builtin.shell: >
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{ ingress_nginx_target_version }}/deploy/static/provider/baremetal/deploy.yaml
+      register: ingress_nginx_apply_result
+      changed_when: "'configured' in ingress_nginx_apply_result.stdout or 'created' in ingress_nginx_apply_result.stdout"
+
+    - name: Wait for ingress-nginx pods to be ready
+      ansible.builtin.shell: >
+        kubectl wait --for=condition=ready pod
+        -l app.kubernetes.io/name=ingress-nginx -n ingress-nginx --timeout=300s
+      changed_when: false
+
+    - name: Verify ingress-nginx installation
+      ansible.builtin.shell: kubectl get pods -n ingress-nginx --no-headers | grep -c "Running"
+      register: ingress_nginx_final_check
+      changed_when: false
+
+    - name: Display ingress-nginx installation result
+      ansible.builtin.debug:
+        msg:
+          - "ingress-nginx installation completed"
+          - "Previous version: {{ current_ingress_nginx_version.stdout | default('unknown') }}"
+          - "Current version: {{ ingress_nginx_target_version }}"
+          - "Running pods: {{ ingress_nginx_final_check.stdout }}"
+          - "Ingress controller ready for HTTP/HTTPS traffic"

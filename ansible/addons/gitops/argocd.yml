@@ -1,0 +1,55 @@
+# Description: ArgoCD GitOps continuous delivery tool for Kubernetes
+# Category: gitops
+# Version: v2.13.2
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade ArgoCD
+  when: addon_name in ['argocd', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set ArgoCD version
+      ansible.builtin.set_fact:
+        argocd_target_version: >-
+          {{ requested_version if requested_version != '' else (argocd_version | default('v2.13.2')) }}
+
+    - name: Create ArgoCD namespace
+      ansible.builtin.shell: kubectl create namespace argocd
+      register: argocd_ns_result
+      changed_when: "'created' in argocd_ns_result.stdout"
+      failed_when: "'already exists' not in argocd_ns_result.stderr and argocd_ns_result.rc != 0"
+
+    - name: Apply ArgoCD
+      ansible.builtin.shell: >
+        kubectl apply -n argocd
+        -f https://raw.githubusercontent.com/argoproj/argo-cd/{{ argocd_target_version }}/manifests/install.yaml
+      register: argocd_apply_result
+      changed_when: "'configured' in argocd_apply_result.stdout or 'created' in argocd_apply_result.stdout"
+
+    - name: Wait for ArgoCD pods to be ready
+      ansible.builtin.shell: >
+        kubectl wait --for=condition=ready pod
+        -l app.kubernetes.io/name=argocd-server -n argocd --timeout=600s
+      changed_when: false
+
+    - name: Get ArgoCD admin password
+      ansible.builtin.shell: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_admin_password
+      changed_when: false
+      ignore_errors: true
+
+    - name: Verify ArgoCD installation
+      ansible.builtin.shell: kubectl get pods -n argocd --no-headers | grep -c "Running"
+      register: argocd_final_check
+      changed_when: false
+
+    - name: Display ArgoCD installation result
+      ansible.builtin.debug:
+        msg:
+          - "ArgoCD GitOps installation completed"
+          - "Version: {{ argocd_target_version }}"
+          - "Running pods: {{ argocd_final_check.stdout }}"
+          - "Access ArgoCD UI: kubectl port-forward svc/argocd-server -n argocd 8080:443"
+          - "Username: admin"
+          - "Password: {{ argocd_admin_password.stdout | default('Check: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath=\"{.data.password}\" | base64 -d') }}"

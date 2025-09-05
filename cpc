@@ -6,7 +6,7 @@
 # Enhanced with modular architecture for better maintainability
 
 # CPC Version
-export CPC_VERSION="1.1.0"
+export CPC_VERSION="1.2.0"
 
 # Color definitions (kept for backward compatibility)
 export GREEN='\033[32m'

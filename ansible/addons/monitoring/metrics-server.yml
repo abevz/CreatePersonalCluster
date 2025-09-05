@@ -1,0 +1,51 @@
+# Description: Kubernetes Metrics Server for resource monitoring
+# Category: monitoring
+# Version: v0.7.2
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Metrics Server
+  when: addon_name in ['metrics-server', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Metrics Server version
+      ansible.builtin.set_fact:
+        metrics_server_target_version: >-
+          {{ requested_version if requested_version != '' else (metrics_server_version | default('v0.7.2')) }}
+
+    - name: Check current Metrics Server version
+      ansible.builtin.shell: kubectl get deployment -n kube-system metrics-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: current_metrics_server_version
+      ignore_errors: true
+
+    - name: Download Metrics Server manifests
+      ansible.builtin.get_url:
+        url: "https://github.com/kubernetes-sigs/metrics-server/releases/download/{{ metrics_server_target_version }}/components.yaml"
+        dest: "/tmp/metrics-server-{{ metrics_server_target_version }}.yaml"
+        mode: '0644'
+
+    - name: Patch Metrics Server for self-hosted clusters
+      ansible.builtin.shell: |
+        sed -i '/--metric-resolution=15s/a\        - --kubelet-insecure-tls' /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+
+    - name: Apply Metrics Server manifests
+      ansible.builtin.shell: kubectl apply -f /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
+      register: metrics_server_apply_result
+      changed_when: "'configured' in metrics_server_apply_result.stdout or 'created' in metrics_server_apply_result.stdout"
+
+    - name: Wait for Metrics Server to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=300s
+      changed_when: false
+
+    - name: Verify Metrics Server upgrade
+      ansible.builtin.shell: kubectl get deployment -n kube-system metrics-server -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d':' -f2
+      register: new_metrics_server_version
+      changed_when: false
+
+    - name: Display Metrics Server upgrade result
+      ansible.builtin.debug:
+        msg:
+          - "Metrics Server upgrade completed"
+          - "Previous version: {{ current_metrics_server_version.stdout | default('unknown') }}"
+          - "Current version: {{ new_metrics_server_version.stdout }}"
