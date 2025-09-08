@@ -551,6 +551,13 @@ function tofu_show_cluster_info() {
   # Check current workspace first (fast operation)
   if current_terraform_workspace=$(tofu workspace show 2>/dev/null); then
     if [[ "$current_terraform_workspace" != "$current_ctx" ]]; then
+      # Load secrets before running tofu commands
+      if ! load_secrets_cached; then
+        log_error "Failed to load secrets for tofu operations"
+        popd >/dev/null
+        return 1
+      fi
+      
       # Switch workspace
       if ! tofu workspace select "$current_ctx" &>/dev/null; then
         error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx'" "$SEVERITY_HIGH" "retry"
@@ -563,6 +570,13 @@ function tofu_show_cluster_info() {
       fi
     fi
   else
+    # Load secrets before running tofu commands
+    if ! load_secrets_cached; then
+      log_error "Failed to load secrets for tofu operations"
+      popd >/dev/null
+      return 1
+    fi
+    
     # Fallback if workspace show fails
     if ! tofu workspace select "$current_ctx" &>/dev/null; then
       error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx'" "$SEVERITY_HIGH" "retry"
@@ -613,6 +627,13 @@ function tofu_show_cluster_info() {
     fi
     
     if [[ "$tofu_use_cache" != true ]]; then
+      # Load secrets before running tofu commands
+      if ! load_secrets_cached; then
+        log_error "Failed to load secrets for tofu operations"
+        popd >/dev/null
+        return 1
+      fi
+      
       if ! cluster_summary=$(tofu output -json cluster_summary 2>/dev/null); then
         error_handle "$ERROR_EXECUTION" "Failed to get cluster summary from tofu output" "$SEVERITY_HIGH" "abort"
         popd >/dev/null

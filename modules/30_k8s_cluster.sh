@@ -536,6 +536,12 @@ k8s_cluster_status() {
     if [[ "$use_cache" != true ]]; then
       local tf_dir="${REPO_PATH}/terraform"
       
+      # Load secrets before running tofu commands
+      if ! load_secrets_cached; then
+        log_error "Failed to load secrets for tofu operations"
+        return 1
+      fi
+      
       # Try to get data directly from terraform state first (faster)
       pushd "$tf_dir" >/dev/null || return 1
       tofu workspace select "${current_ctx}" >/dev/null 2>&1
@@ -833,6 +839,11 @@ check_proxmox_vm_status() {
     return 0
   fi
   
+  # Set default PROXMOX_NODE if not provided
+  if [[ -z "$PROXMOX_NODE" ]]; then
+    PROXMOX_NODE="homelab"
+  fi
+  
   # Extract hostname from full API endpoint
   # PROXMOX_HOST contains: https://homelab.bevz.net:8006/api2/json
   # We need: homelab.bevz.net
@@ -842,6 +853,7 @@ check_proxmox_vm_status() {
   # Use username as-is (it already contains @pve)
   local auth_url="https://${clean_host}:8006/api2/json/access/ticket"
   
+  # Authenticate with Proxmox API
   local auth_response
   auth_response=$(echo "username=${PROXMOX_USERNAME}&password=${PROXMOX_PASSWORD}" | curl -s -k -X POST \
     "$auth_url" \
@@ -853,14 +865,15 @@ check_proxmox_vm_status() {
     return 0
   fi
   
+  # Extract ticket and CSRF token from auth response
   local ticket
   local csrf_token
   ticket=$(echo "$auth_response" | jq -r '.data.ticket // empty' 2>/dev/null)
   csrf_token=$(echo "$auth_response" | jq -r '.data.CSRFPreventionToken // empty' 2>/dev/null)
   
   if [[ -z "$ticket" || -z "$csrf_token" ]]; then
-    log_warning "Failed to get Proxmox authentication tokens. Showing basic VM info."
-    show_basic_vm_info "$cluster_data" "token failed"
+    log_warning "Failed to extract authentication tokens from Proxmox API response. Showing basic VM info."
+    show_basic_vm_info "$cluster_data" "token extraction failed"
     return 0
   fi
   
@@ -957,3 +970,9 @@ k8s_cluster_help() {
 }
 
 export -f k8s_cluster_help
+
+# Ensure username has @pve realm if not specified
+if [[ "$PROXMOX_USERNAME" != *"@"* ]]; then
+  PROXMOX_USERNAME="${PROXMOX_USERNAME}@pve"
+  log_debug "Added @pve realm to username: $PROXMOX_USERNAME"
+fi

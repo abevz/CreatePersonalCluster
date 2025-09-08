@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# CPC Auto Loader - Simple wrapper for loading environment variables
+# Usage: ./cpc-auto
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$("$SCRIPT_DIR/cpc" auto 2>/dev/null | grep -E '^export ')"

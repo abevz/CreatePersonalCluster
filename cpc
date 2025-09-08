@@ -128,7 +128,9 @@ display_usage() {
   echo "  run-command <target> \"<cmd>\"   Run a shell command on target host(s) or group."
   echo "  clear-ssh-hosts                Clear VM IP addresses from ~/.ssh/known_hosts"
   echo "  clear-ssh-maps                 Clear SSH control sockets and connections for VMs"
-  echo "  load_secrets                   Load and display secrets from SOPS configuration"
+  echo "  load_secrets                   Load secrets and output environment variables for sourcing"
+  echo "  auto                           Load all environment variables and output export commands for shell sourcing"
+  echo "  cpc-auto                       Simple wrapper script to load environment variables into current shell"
   echo "  clear-cache                    Clear all cached secrets and status data."
   echo "  dns-pihole <action>            Manage Pi-hole DNS records. Actions: list, add, unregister-dns, interactive-add, interactive-unregister."
   echo "  generate-hostnames             Generate hostname configurations for VMs in Proxmox"
@@ -217,6 +219,31 @@ done
 COMMAND="$1"
 shift # Remove command from arguments, rest are options
 
+# Function to automatically load secrets for commands that need them
+auto_load_secrets() {
+  local command="$1"
+  
+  # Commands that DON'T require secrets (exclude these)
+  local no_secret_commands=(
+    "setup-cpc" "help" "-h" "--help" "" "version"
+  )
+  
+  # Check if command should NOT load secrets
+  for no_secret_cmd in "${no_secret_commands[@]}"; do
+    if [[ "$command" == "$no_secret_cmd" ]]; then
+      return 0
+    fi
+  done
+  
+  # Load secrets for all other commands
+  if ! load_secrets_cached >/dev/null 2>&1; then
+    log_error "Failed to load secrets automatically. Use 'cpc load_secrets' manually."
+    return 1
+  fi
+  
+  return 0
+}
+
 # Handle quick-status early to avoid secrets loading
 if [[ "$COMMAND" == "quick-status" || "$COMMAND" == "qs" ]]; then
   echo -e "${CYAN}=== Quick Status (No Secrets) ===${ENDCOLOR}"
@@ -276,12 +303,18 @@ if [[ "$COMMAND" == "cluster-info" && ("$1" == "--quick" || "$1" == "-q") ]]; th
   exit 0
 fi
 
-# Load REPO_PATH if not doing setup
-if [[ "$COMMAND" != "setup-cpc" && "$COMMAND" != "" && "$COMMAND" != "-h" && "$COMMAND" != "--help" && "$COMMAND" != "help" ]]; then # Changed from setup-ccr
+# Load REPO_PATH and environment variables if possible
+if [[ "$COMMAND" != "setup-cpc" ]]; then
   REPO_PATH=$(get_repo_path)
   export REPO_PATH
-  # Load environment variables from cpc.env
-  load_env_vars # Will now use CPC_ENV_FILE
+  # Load environment variables from workspace .env file
+  load_env_vars >/dev/null 2>&1
+fi
+
+# Auto-load secrets for commands that need them (silent operation)
+# Also load for empty command (just ./cpc) and help commands
+if [[ "$COMMAND" != "setup-cpc" ]]; then
+  auto_load_secrets "$COMMAND" || exit 1
 fi
 
 case "$COMMAND" in
@@ -323,6 +356,10 @@ template)
 
 load_secrets)
   cpc_core load_secrets "$@"
+  ;;
+
+auto)
+  cpc_core auto "$@"
   ;;
 
 clear-cache)
