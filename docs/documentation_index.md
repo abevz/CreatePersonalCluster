@@ -58,6 +58,7 @@ my-kthw/
 - **[Modular Workspace System](../docs/modular_workspace_system.md)** - Details on the new modular workspace environment system
 
 ### ⚙️ Configuration & Setup
+- **[Secrets Management Guide](../docs/secrets_management_guide.md)** - Secure secrets configuration with SOPS
 - **[CPC Template Variables Guide](../docs/cpc_template_variables_guide.md)** - Configuration reference
 - **[Ansible Configuration](../ansible/README.md)** - Automation setup and usage
 - **[Ansible Playbooks](../ansible/playbooks/README.md)** - Detailed playbook documentation

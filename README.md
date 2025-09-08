@@ -459,6 +459,33 @@ RELEASE_LETTER="u"
 VM_USERNAME="ubuntu"
 ```
 
+#### Secrets Configuration (`terraform/secrets.sops.yaml`)
+
+CPC uses [Mozilla SOPS](https://github.com/mozilla/sops) for secure secret management. All sensitive data is encrypted and stored in `terraform/secrets.sops.yaml`.
+
+**📖 For detailed secrets configuration, see: [Secrets Management Guide](docs/secrets_management_guide.md)**
+
+##### 🔐 Key Security Features
+
+- **🔒 Encrypted Storage**: AES256-GCM encryption with Age keys
+- **🚫 No Plaintext**: Secrets never stored in plaintext files
+- **🔄 Automatic Decryption**: On-demand decryption during execution
+- **📝 Audit Trail**: Track changes and modifications
+- **🔑 Key Rotation**: Support for encryption key rotation
+
+##### 📁 Secrets Structure Overview
+
+```yaml
+global:          # VM credentials, SSH keys, Docker Hub, Cloudflare
+default:         # Infrastructure-specific configs
+  proxmox:       # Proxmox VE connection settings
+  s3_backend:    # MinIO/S3 backend for Terraform state
+  pihole:        # DNS server configuration
+  harbor:        # Container registry settings
+```
+
+**⚠️ Important**: Never commit decrypted secrets to version control. Always test decryption before production deployment.
+
 ---
 
 ## 📚 Workspace System
