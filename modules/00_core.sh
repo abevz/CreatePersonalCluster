@@ -69,19 +69,19 @@ load_secrets_cached() {
   local cache_env_file="/tmp/cpc_env_cache.sh"
   local secrets_file
   local repo_root
-  
+
   if ! repo_root=$(get_repo_path); then
     error_handle "$ERROR_CONFIG" "Failed to determine repository path" "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
-  
+
   secrets_file="$repo_root/terraform/secrets.sops.yaml"
-  
+
   # Check if cache exists and is fresh
   if [[ -f "$cache_env_file" && -f "$secrets_file" ]]; then
     local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_env_file" 2>/dev/null || echo 0)))
     local secrets_age=$(($(date +%s) - $(stat -c %Y "$secrets_file" 2>/dev/null || echo 0)))
-    
+
     # Use cache if it's newer than secrets file and less than 5 minutes old
     if [[ $cache_age -lt 300 && $cache_age -lt $secrets_age ]]; then
       log_info "Using cached secrets (age: ${cache_age}s)"
@@ -89,7 +89,7 @@ load_secrets_cached() {
       return 0
     fi
   fi
-  
+
   # Load fresh secrets and cache them
   log_info "Loading fresh secrets..."
   if load_secrets_fresh; then
@@ -111,9 +111,9 @@ load_secrets_cached() {
       [[ -n "${HARBOR_ROBOT_TOKEN:-}" ]] && echo "export HARBOR_ROBOT_TOKEN='$HARBOR_ROBOT_TOKEN'"
       [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]] && echo "export CLOUDFLARE_DNS_API_TOKEN='$CLOUDFLARE_DNS_API_TOKEN'"
       [[ -n "${CLOUDFLARE_EMAIL:-}" ]] && echo "export CLOUDFLARE_EMAIL='$CLOUDFLARE_EMAIL'"
-    } > "$cache_env_file"
-    
-    chmod 600 "$cache_env_file"  # Secure the cache file
+    } >"$cache_env_file"
+
+    chmod 600 "$cache_env_file" # Secure the cache file
     log_debug "Secrets cached successfully"
     return 0
   else
@@ -159,12 +159,12 @@ load_secrets_fresh() {
 
   # Try to decrypt and validate secrets with error handling
   if ! retry_execute \
-       "sops -d '$secrets_file' > /dev/null" \
-       2 \
-       1 \
-       10 \
-       "" \
-       "Decrypt secrets file"; then
+    "sops -d '$secrets_file' > /dev/null" \
+    2 \
+    1 \
+    10 \
+    "" \
+    "Decrypt secrets file"; then
     error_handle "$ERROR_AUTH" "Failed to decrypt secrets.sops.yaml. Check your SOPS configuration and GPG keys." "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
@@ -175,21 +175,21 @@ load_secrets_fresh() {
 
   # Map secrets file keys to expected environment variable names
   local secrets_map=(
-    "PROXMOX_HOST:virtual_environment_endpoint"
-    "PROXMOX_USERNAME:virtual_environment_username"
-    "PROXMOX_SSH_USERNAME:proxmox_username"
-    "VM_USERNAME:vm_username"
-    "VM_SSH_KEY:vm_ssh_keys[0]"  # Take first SSH key from array
+    "PROXMOX_HOST:default.proxmox.endpoint"
+    "PROXMOX_USERNAME:default.proxmox.username"
+    "PROXMOX_SSH_USERNAME:default.proxmox.ssh_username"
+    "VM_USERNAME:global.vm_username"
+    "VM_SSH_KEY:global.vm_ssh_keys[0]" # Take first SSH key from array
   )
 
   for mapping in "${secrets_map[@]}"; do
-    IFS=':' read -r env_var secret_key <<< "$mapping"
+    IFS=':' read -r env_var secret_key <<<"$mapping"
     local value
     value=$(sops -d "$secrets_file" | yq -r ".${secret_key} // \"\"" 2>/dev/null)
     if [[ -z "$value" || "$value" == "null" ]]; then
       missing_vars+=("$env_var")
     else
-      printf "export %s='%s'\n" "$env_var" "$value" >> /tmp/cpc_env_vars.sh
+      printf "export %s='%s'\n" "$env_var" "$value" >>/tmp/cpc_env_vars.sh
       export "$env_var=$value"
       declare -g "$env_var=$value"
       # echo "DEBUG: Loaded secret: $env_var = $value" >&2
@@ -199,21 +199,23 @@ load_secrets_fresh() {
 
   # Check for optional variables
   local optional_vars_map=(
-    "PROXMOX_PASSWORD:virtual_environment_password"
-    "VM_PASSWORD:vm_password"
-    "AWS_ACCESS_KEY_ID:minio_access_key"
-    "AWS_SECRET_ACCESS_KEY:minio_secret_key"
-    "DOCKER_HUB_USERNAME:docker_hub_username"
-    "DOCKER_HUB_PASSWORD:docker_hub_password"
-    "HARBOR_HOSTNAME:harbor_hostname"
-    "HARBOR_ROBOT_USERNAME:harbor_robot_username"
-    "HARBOR_ROBOT_TOKEN:harbor_robot_token"
-    "CLOUDFLARE_DNS_API_TOKEN:cloudflare_dns_api_token"
-    "CLOUDFLARE_EMAIL:cloudflare_email"
+    "PROXMOX_PASSWORD:default.proxmox.password"
+    "VM_PASSWORD:global.vm_password"
+    "AWS_ACCESS_KEY_ID:default.s3_backend.access_key"
+    "AWS_SECRET_ACCESS_KEY:default.s3_backend.secret_key"
+    "DOCKER_HUB_USERNAME:global.docker_hub_username"
+    "DOCKER_HUB_PASSWORD:global.docker_hub_password"
+    "HARBOR_HOSTNAME:default.harbor.hostname"
+    "HARBOR_ROBOT_USERNAME:default.harbor.robot_username"
+    "HARBOR_ROBOT_TOKEN:default.harbor.robot_token"
+    "CLOUDFLARE_DNS_API_TOKEN:global.cloudflare_dns_api_token"
+    "CLOUDFLARE_EMAIL:global.cloudflare_email"
+    "PIHOLE_WEB_PASSWORD:default.pihole.web_password"
+    "PIHOLE_IP_ADDRESS:default.pihole.ip_address"
   )
 
   for mapping in "${optional_vars_map[@]}"; do
-    IFS=':' read -r env_var secret_key <<< "$mapping"
+    IFS=':' read -r env_var secret_key <<<"$mapping"
     local value
     value=$(sops -d "$secrets_file" | yq -r ".${secret_key} // \"\"" 2>/dev/null)
     if [[ -n "$value" && "$value" != "null" ]]; then
@@ -728,9 +730,9 @@ core_clear_cache() {
     "/tmp/cpc_tofu_output_cache_*"
     "/tmp/cpc_workspace_cache"
   )
-  
+
   log_info "Clearing CPC cache files..."
-  
+
   for pattern in "${cache_files[@]}"; do
     if [[ "$pattern" == *"*"* ]]; then
       # Handle wildcard patterns
@@ -748,7 +750,7 @@ core_clear_cache() {
       fi
     fi
   done
-  
+
   log_success "Cache cleared successfully"
 }
 
@@ -762,10 +764,10 @@ core_list_workspaces() {
 
   local repo_root
   repo_root=$(get_repo_path)
-  
+
   log_info "Available Workspaces:"
   echo
-  
+
   # Show current workspace
   local current_workspace=""
   if [[ -f "$CPC_CONTEXT_FILE" ]]; then
@@ -774,9 +776,9 @@ core_list_workspaces() {
   else
     log_warning "No current workspace set"
   fi
-  
+
   echo
-  
+
   # List Tofu workspaces
   log_info "Tofu workspaces:"
   if [[ -d "$repo_root/terraform" ]]; then
@@ -790,10 +792,10 @@ core_list_workspaces() {
   else
     log_warning "Terraform directory not found"
   fi
-  
+
   echo
   echo
-  
+
   # List environment files
   log_info "Environment files:"
   if [[ -d "$repo_root/envs" ]]; then
@@ -892,10 +894,10 @@ function ansible_create_temp_inventory() {
   # Get cached cluster summary data (reuses the caching logic from tofu module)
   local current_ctx
   current_ctx=$(get_current_cluster_context) || return 1
-  
+
   local cache_file="/tmp/cpc_status_cache_${current_ctx}"
   local dynamic_inventory_json=""
-  
+
   # Try to get data from cache first
   if [[ -f "$cache_file" ]]; then
     local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
@@ -913,7 +915,7 @@ function ansible_create_temp_inventory() {
       fi
     fi
   fi
-  
+
   # Fall back to direct tofu call if no cache or cache is stale
   if [[ -z "$dynamic_inventory_json" || "$dynamic_inventory_json" == "null" ]]; then
     log_debug "Cache unavailable, getting fresh cluster data..."
@@ -922,7 +924,7 @@ function ansible_create_temp_inventory() {
       log_error "Command 'cpc deploy output -json cluster_summary' failed or returned empty."
       return 1
     fi
-    
+
     # Extract JSON data from the output
     dynamic_inventory_json=$(echo "$raw_output" | grep '^{.*}$' | tail -1)
     if [[ -z "$dynamic_inventory_json" || "$dynamic_inventory_json" == "null" ]]; then
@@ -935,7 +937,7 @@ function ansible_create_temp_inventory() {
   temp_inventory_file=$(mktemp /tmp/cpc_inventory.XXXXXX.ini)
 
   # Transform the cluster data into Ansible inventory INI format with groups
-  if ! cat >"$temp_inventory_file" << EOF
+  if ! cat >"$temp_inventory_file" <<EOF; then
 [control_plane]
 $(echo "$dynamic_inventory_json" | jq -r 'to_entries[] | select(.key | contains("controlplane")) | "\(.value.hostname) ansible_host=\(.value.IP)"')
 
@@ -946,7 +948,6 @@ $(echo "$dynamic_inventory_json" | jq -r 'to_entries[] | select(.key | contains(
 ansible_user=abevz
 ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 EOF
-  then
     log_error "Failed to create static inventory file."
     rm -f "$temp_inventory_file"
     return 1
