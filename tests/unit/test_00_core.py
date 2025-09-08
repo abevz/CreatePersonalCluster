@@ -15,6 +15,16 @@ from pathlib import Path
 @pytest.fixture
 def temp_repo():
     """Create a temporary copy of the project for isolated testing."""
+    # Save original config files
+    config_dir = Path.home() / ".config" / "cpc"
+    original_files = {}
+    for file_name in ["context", "current_cluster_context", "repo_path"]:
+        file_path = config_dir / file_name
+        if file_path.exists():
+            original_files[file_name] = file_path.read_text()
+        else:
+            original_files[file_name] = None
+    
     with tempfile.TemporaryDirectory() as temp_dir:
         # Copy the entire project structure
         src_dir = Path("/home/abevz/Projects/kubernetes/CreatePersonalCluster")
@@ -38,7 +48,7 @@ def temp_repo():
 REPO_PATH=""
 TERRAFORM_DIR="terraform"
 ENVIRONMENTS_DIR="envs"
-CPC_CONTEXT_FILE="$HOME/.config/cpc/context"
+CPC_CONTEXT_FILE="$HOME/.config/cpc/current_cluster_context"
 """)
         
         # Create a minimal secrets file for testing
@@ -63,6 +73,15 @@ TEMPLATE_VM_NAME=test-template
 """)
         
         yield temp_dir
+    
+    # Restore original config files
+    for file_name, content in original_files.items():
+        file_path = config_dir / file_name
+        if content is not None:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content)
+        elif file_path.exists():
+            file_path.unlink()
 
 
 def run_bash_command(command, cwd=None):
@@ -247,7 +266,7 @@ class TestParseEnvFile:
 class TestReadContextFile:
     def test_read_context_file_not_exists(self, temp_repo):
         # Ensure context file doesn't exist
-        context_file = Path.home() / ".config" / "cpc" / "context"
+        context_file = Path.home() / ".config" / "cpc" / "current_cluster_context"
         if context_file.exists():
             context_file.unlink()
         
