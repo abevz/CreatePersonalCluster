@@ -3,9 +3,9 @@ provider "sops" {
 }
 
 provider "aws" {
-  region     = "us-east-1"
-  access_key = data.sops_file.secrets.data["minio_access_key"]
-  secret_key = data.sops_file.secrets.data["minio_secret_key"]
+  region     = data.sops_file.secrets.data["default.s3_backend.region"]
+  access_key = data.sops_file.secrets.data["default.s3_backend.access_key"]
+  secret_key = data.sops_file.secrets.data["default.s3_backend.secret_key"]
 
   # MinIO specific configuration
   skip_credentials_validation = true
@@ -13,14 +13,14 @@ provider "aws" {
   skip_metadata_api_check     = true
 
   endpoints {
-    s3 = "https://s3.minio.bevz.net"
+    s3 = data.sops_file.secrets.data["default.s3_backend.endpoint"]
   }
 }
 
 provider "proxmox" {
-  endpoint = data.sops_file.secrets.data["virtual_environment_endpoint"]
-  password = data.sops_file.secrets.data["virtual_environment_password"]
-  username = data.sops_file.secrets.data["virtual_environment_username"]
+  endpoint = data.sops_file.secrets.data["default.proxmox.endpoint"]
+  password = data.sops_file.secrets.data["default.proxmox.password"]
+  username = data.sops_file.secrets.data["default.proxmox.username"]
 
   insecure = true # Consider setting to false in production with a valid certificate
 
