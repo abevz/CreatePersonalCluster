@@ -11,7 +11,7 @@ fi
 # Module: Terraform/OpenTofu functionality
 log_debug "Loading module: 60_tofu.sh - Terraform/OpenTofu management"
 
-# Function to handle all Terraform/OpenTofu commands
+# Refactored cpc_tofu() - Main Dispatcher
 function cpc_tofu() {
   local command="$1"
   shift
@@ -70,8 +70,7 @@ function cpc_tofu() {
   esac
 }
 
-# Deploy command - runs OpenTofu/Terraform commands in context
-
+# Refactored tofu_deploy() - Deploy Command
 function tofu_deploy() {
   if [[ "$1" == "-h" || "$1" == "--help" ]] || [[ $# -eq 0 ]]; then
     echo "Usage: cpc deploy <tofu_cmd> [options]"
@@ -84,8 +83,6 @@ function tofu_deploy() {
     echo "  destroy    Destroy infrastructure"
     echo "  output     Show output values"
     echo "  init       Initialize a working directory"
-    echo "  validate   Validate the configuration files"
-    echo "  refresh    Update state file against real resources"
     echo ""
     echo "Examples:"
     echo "  cpc deploy plan"
@@ -108,7 +105,7 @@ function tofu_deploy() {
 
   # Validate secrets are loaded
   if ! check_secrets_loaded; then
-    error_handle "$ERROR_CONFIG" "Failed to load secrets. Aborting Terraform deployment." "$SEVERITY_CRITICAL" "abort"
+    error_handle "$ERROR_AUTH" "Failed to load secrets. Aborting Terraform deployment." "$SEVERITY_CRITICAL" "abort"
     return 1
   fi
 
@@ -198,7 +195,7 @@ function tofu_deploy() {
     if ! tofu workspace select "$current_ctx"; then
       error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx'" "$SEVERITY_HIGH" "retry"
       # Retry once more
-      if ! tofu workspace select "$current_ctx"; then
+      if ! tofu workspace select "$current_ctx" ]; then
         error_handle "$ERROR_EXECUTION" "Failed to select Tofu workspace '$current_ctx' after retry" "$SEVERITY_CRITICAL" "abort"
         popd >/dev/null || exit 1
         return 1
@@ -279,6 +276,7 @@ function tofu_deploy() {
 
   while [ $retry_count -le $max_retries ]; do
     if [ $retry_count -gt 0 ]; then
+      log_info "Retrying tofu command (attempt $((retry_count + 1))/$((max_retries + 1)))..."
       sleep 2
     fi
 
@@ -333,7 +331,7 @@ function tofu_deploy() {
   log_success "'${final_tofu_cmd_array[*]}' completed successfully for context '$current_ctx'."
 }
 
-# Start VMs in current context
+# Refactored tofu_start_vms() - Start VMs
 function tofu_start_vms() {
   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: cpc start-vms"
@@ -370,7 +368,7 @@ function tofu_start_vms() {
   log_success "VMs in context '$current_ctx' should now be starting."
 }
 
-# Stop VMs in current context
+# Refactored tofu_stop_vms() - Stop VMs
 function tofu_stop_vms() {
   if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "Usage: cpc stop-vms"
@@ -414,7 +412,45 @@ function tofu_stop_vms() {
   log_success "VMs in context '$current_ctx' should now be stopping."
 }
 
-# Display cluster information in table or JSON format
+# Refactored tofu_generate_hostnames() - Generate Hostnames
+function tofu_generate_hostnames() {
+  # Initialize recovery for this operation
+  recovery_checkpoint "tofu_generate_hostnames_start" "Starting hostname generation operation"
+
+  # Load secrets first (required for hostname generation)
+  if ! load_secrets_cached; then
+    error_handle "$ERROR_AUTH" "Failed to load secrets required for hostname generation" "$SEVERITY_CRITICAL" "abort"
+    return 1
+  fi
+
+  # Validate workspace is set
+  if [[ -z "$CPC_WORKSPACE" ]]; then
+    error_handle "$ERROR_CONFIG" "CPC_WORKSPACE environment variable not set" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
+
+  log_info "Preparing to generate hostnames for workspace '$CPC_WORKSPACE'..."
+
+  # Validate script exists and is executable
+  local script_path="$REPO_PATH/scripts/generate_node_hostnames.sh"
+  if [[ ! -x "$script_path" ]]; then
+    error_handle "$ERROR_CONFIG" "Hostname generation script not found or not executable: $script_path" "$SEVERITY_HIGH" "abort"
+    return 1
+  fi
+
+  # Execute the script that generates and copies snippets
+  if ! "$script_path"; then
+    error_handle "$ERROR_EXECUTION" "Hostname configuration generation failed" "$SEVERITY_HIGH" "retry"
+    # Retry once more
+    if ! "$script_path"; then
+      error_handle "$ERROR_EXECUTION" "Hostname configuration generation failed after retry" "$SEVERITY_CRITICAL" "abort"
+      return 1
+    fi
+  fi
+  log_success "Hostname configurations generated successfully."
+}
+
+# Refactored tofu_show_cluster_info() - Show Cluster Info
 function tofu_show_cluster_info() {
   local format="table" # default format
   local quick_mode=false
@@ -503,11 +539,6 @@ function tofu_show_cluster_info() {
   if ! error_validate_directory "$tf_dir" "Terraform directory not found: $tf_dir"; then
     return 1
   fi
-
-  # Export AWS credentials for terraform backend
-  export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
-  export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
-  export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
   # Load workspace environment variables for proper Terraform context
   tofu_load_workspace_env_vars "$current_ctx"
@@ -627,8 +658,6 @@ function tofu_show_cluster_info() {
     echo ""
     printf "%-25s %-15s %-20s %s\n" "NODE" "VM_ID" "HOSTNAME" "IP"
     printf "%-25s %-15s %-20s %s\n" "----" "-----" "--------" "--"
-
-    # Parse JSON and display in a table format
     if ! echo "$json_data" | jq -r 'to_entries[] | "\(.key) \(.value.VM_ID) \(.value.hostname) \(.value.IP)"' |
       while read -r node vm_id hostname ip; do
         printf "%-25s %-15s %-20s %s\n" "$node" "$vm_id" "$hostname" "$ip"
@@ -646,7 +675,7 @@ function tofu_show_cluster_info() {
   fi
 }
 
-# Load workspace environment variables for Terraform context
+# Refactored tofu_load_workspace_env_vars() - Load Workspace Environment Variables
 function tofu_load_workspace_env_vars() {
   local current_ctx="$1"
   local env_file="$REPO_PATH/envs/$current_ctx.env"
@@ -708,22 +737,7 @@ function tofu_load_workspace_env_vars() {
   fi
 }
 
-# Display help for cluster-info command
-function tofu_cluster_info_help() {
-  echo "Usage: cpc cluster-info [--format <format>]"
-  echo ""
-  echo "Display simplified cluster information showing only essential details:"
-  echo "  - VM_ID: Proxmox VM identifier"
-  echo "  - hostname: VM hostname (node name)"
-  echo "  - IP: VM IP address"
-  echo ""
-  echo "Options:"
-  echo "  --format <format>  Output format: 'table' (default) or 'json'"
-  echo ""
-  echo "This command provides a clean, concise view of your cluster infrastructure"
-  echo "without the detailed debug information from 'cpc deploy output'."
-}
-
+# Refactored tofu_update_node_info() - Update Node Info
 function tofu_update_node_info() {
   local summary_json="$1"
 
@@ -763,39 +777,20 @@ function tofu_update_node_info() {
 }
 export -f tofu_update_node_info
 
-function tofu_generate_hostnames() {
-  # Initialize recovery for this operation
-  recovery_checkpoint "tofu_generate_hostnames_start" "Starting hostname generation operation"
-
-  # Load secrets first (required for hostname generation)
-  if ! load_secrets_cached; then
-    error_handle "$ERROR_AUTH" "Failed to load secrets required for hostname generation" "$SEVERITY_CRITICAL" "abort"
-    return 1
-  fi
-
-  # Validate workspace is set
-  if [[ -z "$CPC_WORKSPACE" ]]; then
-    error_handle "$ERROR_CONFIG" "CPC_WORKSPACE environment variable not set" "$SEVERITY_HIGH" "abort"
-    return 1
-  fi
-
-  log_info "Preparing to generate hostnames for workspace '$CPC_WORKSPACE'..."
-
-  # Validate script exists and is executable
-  local script_path="$REPO_PATH/scripts/generate_node_hostnames.sh"
-  if [[ ! -x "$script_path" ]]; then
-    error_handle "$ERROR_CONFIG" "Hostname generation script not found or not executable: $script_path" "$SEVERITY_HIGH" "abort"
-    return 1
-  fi
-
-  # Execute the script that generates and copies snippets
-  if ! "$script_path"; then
-    error_handle "$ERROR_EXECUTION" "Hostname configuration generation failed" "$SEVERITY_HIGH" "retry"
-    # Retry once more
-    if ! "$script_path"; then
-      error_handle "$ERROR_EXECUTION" "Hostname configuration generation failed after retry" "$SEVERITY_CRITICAL" "abort"
-      return 1
-    fi
-  fi
-  log_success "Hostname configurations generated successfully."
+# Refactored tofu_cluster_info_help() - Help for Cluster Info
+function tofu_cluster_info_help() {
+  echo "Usage: cpc cluster-info [--format <format>]"
+  echo ""
+  echo "Display simplified cluster information showing only essential details:"
+  echo "  - VM_ID: Proxmox VM identifier"
+  echo "  - hostname: VM hostname (node name)"
+  echo "  - IP: VM IP address"
+  echo ""
+  echo "Options:"
+  echo "  --format <format>  Output format: 'table' (default) or 'json'"
+  echo ""
+  echo "This command provides a clean, concise view of your cluster infrastructure"
+  echo "without the detailed debug information from 'cpc deploy output'."
 }
+
+log_debug "Module 60_tofu.sh loaded successfully"
