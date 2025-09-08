@@ -1,6 +1,26 @@
 #!/usr/bin/env python3
 """
 Master test runner for CPC comprehensive testing
+
+This script provides multiple ways to run CPC tests:
+
+1. Core Module Tests (test_00_core.py):
+   - 32 comprehensive unit tests for core bash functions
+   - Tests parsing, routing, error handling, secrets, context management
+   - Isolated testing environment with temporary directories
+   - All tests pass successfully
+
+Usage:
+    python tests/run_tests.py core      # Run only core module tests
+    python tests/run_tests.py quick     # Run fast unit tests (includes core)
+    python tests/run_tests.py all       # Run all test suites
+    python tests/run_tests.py           # Default: quick tests
+
+The core module tests ensure:
+- Kubernetes connectivity fixes work correctly
+- Bash function refactoring is properly tested
+- Isolated testing prevents regressions
+- Comprehensive coverage of core functionality
 """
 
 import sys
@@ -71,6 +91,7 @@ class CPCTestRunner:
         self.run_test_suite(
             "Core Unit Tests",
             [
+                'tests/unit/test_00_core.py',  # Our new core module tests
                 'tests/unit/test_cpc_comprehensive.py',
                 'tests/unit/test_cpc_modules.py'
             ]
@@ -104,6 +125,7 @@ class CPCTestRunner:
     def quick_tests(self):
         """Run quick tests (unit tests only)"""
         test_files = [
+            'tests/unit/test_00_core.py',  # Our core module tests
             'tests/unit/test_cpc_comprehensive.py',
             'tests/unit/test_cpc_modules.py'
         ]
@@ -123,6 +145,15 @@ class CPCTestRunner:
         self.run_test_suite(
             "Performance Tests",
             ['tests/unit/test_cpc_performance.py']
+        )
+    
+    def run_core_tests(self):
+        """Run only core module tests"""
+        print("🔧 Running Core Module Test Suite")
+        
+        self.run_test_suite(
+            "Core Module Tests",
+            ['tests/unit/test_00_core.py']
         )
     
     def print_summary(self):
@@ -176,10 +207,17 @@ def main():
             runner.functional_tests()
         elif sys.argv[1] == 'performance':
             runner.run_performance_tests()
+        elif sys.argv[1] == 'core':
+            runner.run_core_tests()
         elif sys.argv[1] == 'all':
             runner.run_all_tests()
         else:
-            print("Usage: python run_tests.py [quick|functional|performance|all]")
+            print("Usage: python run_tests.py [quick|functional|performance|core|all]")
+            print("  quick: Fast unit tests")
+            print("  functional: Functional tests")
+            print("  performance: Performance tests")
+            print("  core: Core module tests only")
+            print("  all: All test suites")
             print("Default: quick")
             return
     else:

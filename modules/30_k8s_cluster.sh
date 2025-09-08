@@ -507,9 +507,9 @@ k8s_cluster_status() {
       log_info "Running in fast mode (VM checks skipped)..."
       
       # Quick K8s check only
-      if kubectl cluster-info &>/dev/null; then
+      if KUBECONFIG="${HOME}/.kube/config" kubectl cluster-info --context="${current_ctx}" --request-timeout=5s &>/dev/null; then
         local nodes
-        nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+        nodes=$(KUBECONFIG="${HOME}/.kube/config" kubectl get nodes --no-headers --context="${current_ctx}" 2>/dev/null | wc -l)
         echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
       else
         echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
@@ -611,9 +611,9 @@ k8s_cluster_status() {
     fi
     
     # Quick K8s check
-    if kubectl cluster-info &>/dev/null; then
+    if KUBECONFIG="${HOME}/.kube/config" kubectl cluster-info --context="${current_ctx}" --request-timeout=5s &>/dev/null; then
       local nodes
-      nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+      nodes=$(KUBECONFIG="${HOME}/.kube/config" kubectl get nodes --no-headers --context="${current_ctx}" 2>/dev/null | wc -l)
       echo -e "${GREEN}K8s nodes: $nodes${ENDCOLOR}"
     else
       echo -e "${RED}K8s: Not accessible${ENDCOLOR}"
@@ -736,7 +736,7 @@ k8s_cluster_status() {
   if ! command -v kubectl &>/dev/null; then
     log_error "'kubectl' command not found. Please install it first."
     log_info "💡 Install kubectl: https://kubernetes.io/docs/tasks/tools/"
-  elif ! kubectl cluster-info &>/dev/null; then
+  elif ! KUBECONFIG="${HOME}/.kube/config" kubectl cluster-info --context="${current_ctx}" --request-timeout=10s &>/dev/null; then
     log_error "Cannot connect to Kubernetes cluster."
     log_info "💡 Try: 'cpc k8s-cluster get-kubeconfig' to retrieve cluster config"
     log_info "💡 Or run: 'cpc bootstrap' to create a new cluster"
@@ -749,9 +749,9 @@ k8s_cluster_status() {
     
     # Check control plane status
     echo -n "  Control plane: "
-    if kubectl get nodes --selector='node-role.kubernetes.io/control-plane' &>/dev/null; then
+    if KUBECONFIG="${HOME}/.kube/config" kubectl get nodes --selector='node-role.kubernetes.io/control-plane' --context="${current_ctx}" &>/dev/null; then
       local control_nodes
-      control_nodes=$(kubectl get nodes --selector='node-role.kubernetes.io/control-plane' --no-headers | wc -l)
+      control_nodes=$(KUBECONFIG="${HOME}/.kube/config" kubectl get nodes --selector='node-role.kubernetes.io/control-plane' --no-headers --context="${current_ctx}" | wc -l)
       echo -e "${GREEN}✓ $control_nodes control plane node(s)${ENDCOLOR}"
     else
       echo -e "${RED}✗ No control plane nodes found${ENDCOLOR}"
@@ -760,7 +760,7 @@ k8s_cluster_status() {
     # Check worker nodes
     echo -n "  Worker nodes: "
     local worker_nodes
-    worker_nodes=$(kubectl get nodes --selector='!node-role.kubernetes.io/control-plane' --no-headers 2>/dev/null | wc -l)
+    worker_nodes=$(KUBECONFIG="${HOME}/.kube/config" kubectl get nodes --selector='!node-role.kubernetes.io/control-plane' --no-headers --context="${current_ctx}" 2>/dev/null | wc -l)
     if [[ $worker_nodes -gt 0 ]]; then
       echo -e "${GREEN}✓ $worker_nodes worker node(s)${ENDCOLOR}"
     else
@@ -769,11 +769,11 @@ k8s_cluster_status() {
     
     # Check core services
     echo -n "  CoreDNS: "
-    if kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers &>/dev/null; then
+    if KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers --context="${current_ctx}" &>/dev/null; then
       local coredns_pods
-      coredns_pods=$(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | grep Running | wc -l)
+      coredns_pods=$(KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers --context="${current_ctx}" | grep Running | wc -l)
       local total_coredns
-      total_coredns=$(kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | wc -l)
+      total_coredns=$(KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers --context="${current_ctx}" | wc -l)
       if [[ $coredns_pods -eq $total_coredns ]]; then
         echo -e "${GREEN}✓ Running ($coredns_pods/$total_coredns)${ENDCOLOR}"
       else
@@ -786,22 +786,22 @@ k8s_cluster_status() {
     # Check CNI
     echo -n "  CNI (Calico): "
     # First try calico-system namespace (newer Calico installs)
-    if kubectl get pods -n calico-system --no-headers 2>/dev/null | grep -q calico-node; then
+    if KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n calico-system --no-headers --context="${current_ctx}" 2>/dev/null | grep -q calico-node; then
       local calico_pods
-      calico_pods=$(kubectl get pods -n calico-system --no-headers 2>/dev/null | grep calico-node | grep Running | wc -l)
+      calico_pods=$(KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n calico-system --no-headers --context="${current_ctx}" 2>/dev/null | grep calico-node | grep Running | wc -l)
       local total_calico
-      total_calico=$(kubectl get pods -n calico-system --no-headers 2>/dev/null | grep calico-node | wc -l)
+      total_calico=$(KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n calico-system --no-headers --context="${current_ctx}" 2>/dev/null | grep calico-node | wc -l)
       if [[ $calico_pods -eq $total_calico && $total_calico -gt 0 ]]; then
         echo -e "${GREEN}✓ Running ($calico_pods/$total_calico)${ENDCOLOR}"
       else
         echo -e "${YELLOW}⚠ Partially running ($calico_pods/$total_calico)${ENDCOLOR}"
       fi
     # Fallback to kube-system namespace (older Calico installs)
-    elif kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep -q .; then
+    elif KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers --context="${current_ctx}" 2>/dev/null | grep -q .; then
       local calico_pods
-      calico_pods=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | grep Running | wc -l)
+      calico_pods=$(KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers --context="${current_ctx}" 2>/dev/null | grep Running | wc -l)
       local total_calico
-      total_calico=$(kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers 2>/dev/null | wc -l)
+      total_calico=$(KUBECONFIG="${HOME}/.kube/config" kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers --context="${current_ctx}" 2>/dev/null | wc -l)
       if [[ $calico_pods -eq $total_calico && $total_calico -gt 0 ]]; then
         echo -e "${GREEN}✓ Running ($calico_pods/$total_calico)${ENDCOLOR}"
       else
@@ -812,7 +812,7 @@ k8s_cluster_status() {
     fi
     
     echo
-    kubectl cluster-info
+    KUBECONFIG="${HOME}/.kube/config" kubectl cluster-info --context="${current_ctx}"
   fi
 }
 
