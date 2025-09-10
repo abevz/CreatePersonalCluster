@@ -34,6 +34,20 @@
       register: metrics_server_apply_result
       changed_when: "'configured' in metrics_server_apply_result.stdout or 'created' in metrics_server_apply_result.stdout"
 
+    - name: Wait a moment for resources to be created
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Wait for Metrics Server deployment to be created
+      ansible.builtin.shell: kubectl wait --for=jsonpath='{.status.observedGeneration}'=1 deployment/metrics-server -n kube-system --timeout=60s
+      changed_when: false
+      ignore_errors: true
+
+    - name: Wait for Metrics Server pods to be created
+      ansible.builtin.shell: kubectl wait --for=jsonpath='{.items[*].status.phase}'=Running pod -l k8s-app=metrics-server -n kube-system --timeout=60s
+      changed_when: false
+      ignore_errors: true
+
     - name: Wait for Metrics Server to be ready
       ansible.builtin.shell: kubectl wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=300s
       changed_when: false

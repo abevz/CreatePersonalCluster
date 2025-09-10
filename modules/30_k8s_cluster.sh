@@ -148,6 +148,9 @@ k8s_bootstrap() {
 
   log_success "Temporary static JSON inventory created at $temp_inventory_file"
 
+  # Set up cleanup trap for temporary inventory file
+  trap 'rm -f "$temp_inventory_file"' EXIT
+
   # Check if cluster is already initialized (unless forced)
   if [ "$force_bootstrap" = false ]; then
     local control_plane_ip
@@ -163,7 +166,6 @@ k8s_bootstrap() {
         "test -f /etc/kubernetes/admin.conf" 2>/dev/null; then
         log_warning "Kubernetes cluster appears to already be initialized on $control_plane_ip"
         log_warning "Use --force to bootstrap anyway (this will reset the cluster)"
-        rm -f "$temp_inventory_file"
         return 1
       fi
     fi
@@ -176,34 +178,27 @@ k8s_bootstrap() {
 
   # CONNECTION CHECK with error handling
   log_info "Testing Ansible connectivity to all nodes..."
-  if ! error_validate_command "ansible all \"${ansible_extra_args[@]}\" -m ping --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\"" \
-                            "Failed to connect to all nodes via Ansible"; then
-    rm -f "$temp_inventory_file"
+  local ping_cmd="ansible all ${ansible_extra_args[*]} -m ping --ssh-extra-args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+  if ! error_validate_command "$ping_cmd" "Failed to connect to all nodes via Ansible"; then
     return 1
   fi
   log_success "Ansible connectivity test passed"
 
   # Step 1: Install Kubernetes components with recovery
   log_info "Step 1: Installing Kubernetes components..."
-  if ! recovery_execute \
-       "ansible_run_playbook \"install_kubernetes_cluster.yml\" \"${ansible_extra_args[@]}\"" \
-       "install_kubernetes" \
-       "log_warning 'Kubernetes installation failed, manual cleanup may be needed'" \
-       "ansible all \"${ansible_extra_args[@]}\" -m shell -a 'which kubelet' --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\""; then
+  if ! ansible_run_playbook install_kubernetes_cluster.yml "${ansible_extra_args[@]}"; then
     log_error "Failed to install Kubernetes components"
-    rm -f "$temp_inventory_file"
     return 1
   fi
 
   # Step 2: Initialize cluster with recovery
   log_info "Step 2: Initializing Kubernetes cluster..."
   if ! recovery_execute \
-       "ansible_run_playbook \"initialize_kubernetes_cluster_with_dns.yml\" \"${ansible_extra_args[@]}\"" \
+       "ansible_run_playbook initialize_kubernetes_cluster_with_dns.yml ${ansible_extra_args[*]}" \
        "initialize_kubernetes" \
        "log_warning 'Kubernetes initialization failed, manual cleanup may be needed'" \
-       "ansible all \"${ansible_extra_args[@]}\" -m shell -a 'test -f /etc/kubernetes/admin.conf' --ssh-extra-args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\""; then
+       "ansible all -l control_plane ${ansible_extra_args[*]} -m shell -a 'test -f /etc/kubernetes/admin.conf' --ssh-extra-args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"; then
     log_error "Failed to initialize Kubernetes cluster"
-    rm -f "$temp_inventory_file"
     return 1
   fi
 
@@ -213,9 +208,6 @@ k8s_bootstrap() {
   if ! ansible_run_playbook "validate_cluster.yml" -l control_plane "${ansible_extra_args[@]}"; then
     log_warning "Cluster validation failed, but continuing..."
   fi
-
-  # Remove temporary file
-  rm -f "$temp_inventory_file"
 
   log_success "Kubernetes cluster bootstrap completed successfully!"
   log_info "Next steps:"
@@ -294,7 +286,6 @@ k8s_get_kubeconfig() {
     -e "s/user: kubernetes-admin/user: ${user_name}/g" \
     -e "s/name: kubernetes/name: ${cluster_name}/g" \
     -e "s/cluster: kubernetes/cluster: ${cluster_name}/g" \
-    -e "s|server: https://.*:6443|server: https://${control_plane_ip}:6443|g" \
     -e "s/current-context: .*/current-context: ${context_name}/g" \
     "${temp_kubeconfig}"
 
@@ -317,7 +308,7 @@ k8s_get_kubeconfig() {
     cp "${kubeconfig_path}" "${kubeconfig_path}.bak.$(date +%s)"
   fi
 
-  KUBECONFIG="${kubeconfig_path}:${temp_kubeconfig}" kubectl config view --flatten >"${kubeconfig_path}.merged"
+  KUBECONFIG="${kubeconfig_path}:${temp_kubeconfig}" kubectl config view --merge --flatten >"${kubeconfig_path}.merged"
   mv "${kubeconfig_path}.merged" "${kubeconfig_path}"
   chmod 600 "${kubeconfig_path}"
 

@@ -166,7 +166,7 @@ cluster_ops_upgrade_addons() {
     log_info "Using default version for the addon."
   fi
 
-  # Execute Ansible playbook with recovery - use modular system if available
+  # Execute Ansible playbook
   local playbook_to_use="pb_upgrade_addons_extended.yml"
   
   # Check if modular playbook exists and addon is in modular system
@@ -177,16 +177,24 @@ cluster_ops_upgrade_addons() {
     log_info "Using legacy addon system"
   fi
 
-  if ! recovery_execute \
-       "cpc_ansible run-ansible '$playbook_to_use' --extra-vars '$extra_vars'" \
-       "upgrade_addon_$addon_name" \
-       "log_warning 'Addon upgrade failed, manual cleanup may be needed'" \
-       "validate_addon_installation '$addon_name'"; then
+  if cpc_ansible run-ansible "$playbook_to_use" --extra-vars "$extra_vars"; then
+    log_info "Ansible playbook completed successfully"
+    
+    # Validate addon installation
+    if validate_addon_installation "$addon_name"; then
+      log_success "Addon operation for '$addon_name' completed and validated successfully."
+    else
+      log_error "Addon validation failed for '$addon_name'"
+      log_warning "Addon upgrade failed, manual cleanup may be needed"
+      error_handle "$ERROR_EXECUTION" "Addon validation failed for '$addon_name'" "$SEVERITY_HIGH"
+      return 1
+    fi
+  else
+    log_error "Ansible playbook execution failed for addon '$addon_name'"
+    log_warning "Addon upgrade failed, manual cleanup may be needed"
     error_handle "$ERROR_EXECUTION" "Ansible playbook execution failed for addon '$addon_name'" "$SEVERITY_HIGH"
     return 1
   fi
-
-  log_success "Addon operation for '$addon_name' completed successfully."
 }
 
 cluster_configure_coredns() {
@@ -293,79 +301,71 @@ cluster_configure_coredns() {
   log_info "Local domains ($domains) will now be forwarded to $dns_server"
 }
 
-# Helper function to validate addon installation
-function validate_addon_installation() {
+# validate_addon_installation() - Validate addon installation on the cluster
+validate_addon_installation() {
   local addon_name="$1"
 
-  case "$addon_name" in
-    "calico")
-      # Validate Calico pods are running
-      if timeout_kubectl_operation \
-           "kubectl get pods -n kube-system -l k8s-app=calico-node --no-headers | grep -q Running" \
-           "Validate Calico installation" \
-           60; then
-        log_debug "Calico addon validated successfully"
-        return 0
-      fi
-      ;;
-    "metallb")
-      # Validate MetalLB pods are running
-      if timeout_kubectl_operation \
-           "kubectl get pods -n metallb-system -l app=metallb --no-headers | grep -q Running" \
-           "Validate MetalLB installation" \
-           30; then
-        log_debug "MetalLB addon validated successfully"
-        return 0
-      fi
-      ;;
-    "metrics-server")
-      # Validate Metrics Server is accessible
-      if timeout_kubectl_operation \
-           "kubectl top nodes --no-headers >/dev/null 2>&1" \
-           "Validate Metrics Server" \
-           30; then
-        log_debug "Metrics Server addon validated successfully"
-        return 0
-      fi
-      ;;
-    "coredns")
-      # Validate CoreDNS pods are running
-      if timeout_kubectl_operation \
-           "kubectl get pods -n kube-system -l k8s-app=kube-dns --no-headers | grep -q Running" \
-           "Validate CoreDNS installation" \
-           30; then
-        log_debug "CoreDNS addon validated successfully"
-        return 0
-      fi
-      ;;
-    "cert-manager")
-      # Validate cert-manager pods are running
-      if timeout_kubectl_operation \
-           "kubectl get pods -n cert-manager --no-headers | grep -q Running" \
-           "Validate cert-manager installation" \
-           30; then
-        log_debug "cert-manager addon validated successfully"
-        return 0
-      fi
-      ;;
-    "argocd")
-      # Validate ArgoCD pods are running
-      if timeout_kubectl_operation \
-           "kubectl get pods -n argocd --no-headers | grep -q Running" \
-           "Validate ArgoCD installation" \
-           30; then
-        log_debug "ArgoCD addon validated successfully"
-        return 0
-      fi
-      ;;
-    *)
-      log_debug "No specific validation for addon: $addon_name"
-      return 0
-      ;;
-  esac
+  # Expand KUBECONFIG variable properly
+  local kubeconfig="${KUBECONFIG:-$HOME/.kube/config}"
+  kubeconfig="${kubeconfig/#\$\{HOME\}/${HOME}}"
+  kubeconfig="${kubeconfig/#\$HOME/${HOME}}"
 
-  log_warning "Validation failed for addon: $addon_name"
-  return 1
+  # Set KUBECONFIG explicitly
+  export KUBECONFIG="$kubeconfig"
+
+  # Check if kubectl is available
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo "kubectl command not found. Cannot validate addon installation." >&2
+    return 1
+  fi
+
+  # Check if kubeconfig file exists
+  if [[ ! -f "$kubeconfig" ]]; then
+    echo "Kubeconfig file not found: $kubeconfig" >&2
+    return 1
+  fi
+
+  # Check if we can connect to cluster
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    echo "Cannot connect to Kubernetes cluster. Cannot validate addon installation." >&2
+    return 1
+  fi
+
+  # Use timeout to prevent hanging
+  timeout 30s bash -c "
+    export KUBECONFIG='$kubeconfig'
+    case '$addon_name' in
+      metallb)
+        # Check MetalLB pods
+        if kubectl get pods -n metallb-system --no-headers -o custom-columns=':.status.phase' | grep -q 'Running'; then
+          exit 0
+        else
+          echo 'MetalLB pods not ready' >&2
+          exit 1
+        fi
+        ;;
+      metrics-server)
+        # Check Metrics Server pods
+        if kubectl get pods -n kube-system -l k8s-app=metrics-server --no-headers -o custom-columns=':.status.phase' | grep -q 'Running'; then
+          exit 0
+        else
+          echo 'Metrics Server pods not ready' >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo 'Unknown addon: $addon_name' >&2
+        exit 1
+        ;;
+    esac
+  "
+
+  local exit_code=$?
+  if [[ $exit_code -eq 0 ]]; then
+    return 0
+  else
+    return 1
+  fi
 }
 
 # Helper function to validate CoreDNS configuration
@@ -383,5 +383,3 @@ function validate_coredns_configuration() {
   # Basic validation - check if config contains our DNS server
   echo "$config" | grep -q "$dns_server"
 }
-
-export -f cpc_cluster_ops validate_addon_installation validate_coredns_configuration
