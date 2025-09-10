@@ -61,49 +61,6 @@ check_required_commands() {
 }
 export -f check_required_commands
 
-get_repo_path() {
-  if [ -f "$REPO_PATH_FILE" ]; then
-    cat "$REPO_PATH_FILE"
-  else
-    echo -e "${RED}Repository path not set. Run 'cpc setup-cpc' to set this value.${ENDCOLOR}" >&2 # Changed from ccr setup-ccr
-    exit 1
-  fi
-}
-export -f get_repo_path
-
-get_current_cluster_context() {
-  if [ -f "$CPC_CONTEXT_FILE" ]; then
-    cat "$CPC_CONTEXT_FILE"
-  else
-    echo -e "${RED}Error: No cpc context set.${ENDCOLOR}" >&2
-    echo -e "${BLUE}The cpc context determines the Tofu workspace and associated configuration (e.g., OS type).${ENDCOLOR}" >&2
-    echo -e "${BLUE}Please set a context using 'cpc ctx <workspace_name>'.${ENDCOLOR}" >&2
-
-    # Attempt to get repo_path to list workspaces.
-    # This relies on REPO_PATH_FILE being set by 'cpc setup-cpc'.
-    if [ -f "$REPO_PATH_FILE" ]; then
-      local repo_p_for_listing
-      repo_p_for_listing=$(cat "$REPO_PATH_FILE")
-      if [ -d "$repo_p_for_listing/terraform" ]; then
-        echo -e "${BLUE}Available Tofu workspaces in '$repo_p_for_listing/terraform' (use one of these for <workspace_name>):${ENDCOLOR}" >&2
-        # Ensure tofu command is available for listing or provide a message
-        if command -v tofu &>/dev/null; then
-          (cd "$repo_p_for_listing/terraform" && tofu workspace list | sed 's/^*/  /') >&2
-        else
-          echo -e "${YELLOW}  'tofu' command not found. Cannot list workspaces. Please ensure OpenTofu is installed and in your PATH.${ENDCOLOR}" >&2
-        fi
-      else
-        echo -e "${YELLOW}Warning: Cannot list Tofu workspaces. Terraform directory not found at '$repo_p_for_listing/terraform'.${ENDCOLOR}" >&2
-      fi
-    else
-      echo -e "${YELLOW}Warning: Cannot list Tofu workspaces. Repository path not set. Run 'cpc setup-cpc'.${ENDCOLOR}" >&2
-    fi
-    echo -e "${BLUE}Typically, the context/workspace should be one of: debian, ubuntu, rocky.${ENDCOLOR}" >&2
-    exit 1
-  fi
-}
-export -f get_current_cluster_context
-
 # Check if secrets are already loaded
 check_secrets_loaded() {
   if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ] || [ -z "$VM_USERNAME" ] || [ -z "$HARBOR_HOSTNAME" ]; then
@@ -343,11 +300,11 @@ list-workspaces)
   ;;
 
 clone-workspace)
-  cpc_core clone-workspace "$@"
+  cpc_workspace_ops clone-workspace "$@"
   ;;
 
 delete-workspace)
-  cpc_core delete-workspace "$@"
+  cpc_workspace_ops delete-workspace "$@"
   ;;
 
 template)
@@ -363,7 +320,7 @@ auto)
   ;;
 
 clear-cache)
-  cpc_core clear-cache "$@"
+  clear_all_caches "$@"
   ;;
 
 deploy)
