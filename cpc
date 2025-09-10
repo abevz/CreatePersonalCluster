@@ -93,6 +93,7 @@ display_usage() {
   echo "  generate-hostnames             Generate hostname configurations for VMs in Proxmox"
   echo "  scripts/<script_name>          Run any script from the scripts directory"
   echo "  deploy <tofu_cmd> [opts]       Run any 'tofu' command (e.g., plan, apply, output) in context."
+  echo "  workspace <ws_cmd> [opts]      Run tofu workspace commands (e.g., list, select, show)."
   echo "  cluster-info [--quick|-q]         Show simplified cluster information (VM_ID, hostname, IP). Use --quick for cached data."
   echo ""
   echo "VM Management:"
@@ -325,6 +326,10 @@ clear-cache)
 
 deploy)
   cpc_tofu deploy "$@"
+  ;;
+
+workspace)
+  cpc_tofu workspace "$@"
   ;;
 
 bootstrap)
