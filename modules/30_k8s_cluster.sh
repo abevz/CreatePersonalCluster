@@ -564,10 +564,11 @@ k8s_cluster_status() {
       }
 
       # Ensure the correct workspace is selected
-      env $aws_creds tofu workspace select "${current_ctx}" >/dev/null
+      eval "$aws_creds"
+      tofu workspace select "${current_ctx}" >/dev/null
 
       # Get the cluster summary output
-      cluster_data=$(env $aws_creds tofu output -json cluster_summary)
+      cluster_data=$(tofu output -json cluster_summary)
       local exit_code=$?
 
       popd >/dev/null || {
@@ -682,10 +683,11 @@ k8s_cluster_status() {
   }
 
   # Ensure the correct workspace is selected
-  env $aws_creds tofu workspace select "${current_ctx}" >/dev/null
+  eval "$aws_creds"
+  tofu workspace select "${current_ctx}" >/dev/null
 
   # Get the cluster summary output
-  cluster_data=$(env $aws_creds tofu output -json cluster_summary)
+  cluster_data=$(tofu output -json cluster_summary)
   local exit_code=$?
 
   popd >/dev/null || {
