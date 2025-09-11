@@ -126,45 +126,90 @@ k8s_bootstrap() {
 #
 # Retrieve and merge Kubernetes cluster config into local kubeconfig
 k8s_get_kubeconfig() {
-  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    k8s_show_kubeconfig_help
-    return 0
-  fi
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        k8s_show_kubeconfig_help
+        return 0
+    fi
 
-  log_step "Retrieving kubeconfig from the cluster..."
+    log_step "Retrieving kubeconfig from the cluster..."
 
-  local current_ctx
-  current_ctx=$(get_current_cluster_context)
-  if [[ -z "$current_ctx" ]]; then
-    log_error "No active workspace context is set. Use 'cpc ctx <workspace_name>'."
-    return 1
-  fi
+    local current_ctx
+    current_ctx=$(get_current_cluster_context)
+    if [[ -z "$current_ctx" ]]; then
+        log_error "No active workspace context is set. Use 'cpc ctx <workspace_name>'."
+        return 1
+    fi
 
-  # Retrieve kubeconfig from cluster using helper function
-  if ! retrieve_kubeconfig_from_cluster_v2 "$current_ctx"; then
-    return 1
-  fi
-  local control_plane_ip="$RETRIEVED_CONTROL_PLANE_IP"
-  local temp_kubeconfig="$RETRIEVED_TEMP_KUBECONFIG"
+    log_info "Getting infrastructure data from Terraform..."
+    local raw_output
+    raw_output=$("$REPO_PATH/cpc" deploy output -json 2>/dev/null | sed -n '/^{$/,/^}$/p')
 
-  # Modify kubeconfig contexts using helper function
-  modify_kubeconfig_contexts_v2 "$temp_kubeconfig" "$current_ctx"
-  local cluster_name="$MODIFIED_CLUSTER_NAME"
-  local user_name="$MODIFIED_USER_NAME"
-  local context_name="$MODIFIED_CONTEXT_NAME"
+    local control_plane_ip control_plane_hostname
+    control_plane_ip=$(echo "$raw_output" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.IP | select(. != null)' | head -n 1)
+    control_plane_hostname=$(echo "$raw_output" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.hostname | select(. != null)' | head -n 1)
 
-  # Backup existing kubeconfig using helper function
-  backup_existing_kubeconfig_v2
-  local kubeconfig_path="$BACKUP_KUBECONFIG_PATH"
+    if [[ -z "$control_plane_ip" || -z "$control_plane_hostname" ]]; then
+        log_error "Could not determine control plane IP or hostname."
+        return 1
+    fi
+    log_info "Control plane found: ${control_plane_hostname} (${control_plane_ip})"
 
-  # Merge kubeconfig files using helper function
-  merge_kubeconfig_files_v2 "$kubeconfig_path" "$temp_kubeconfig" "$context_name"
+    local temp_admin_conf=$(mktemp)
+    local ca_crt_file=$(mktemp)
+    local client_crt_file=$(mktemp)
+    local client_key_file=$(mktemp)
+    trap 'rm -f -- "$temp_admin_conf" "$ca_crt_file" "$client_crt_file" "$client_key_file"' EXIT
 
-  # Cleanup temp files using helper function
-  cleanup_kubeconfig_temp_files_v2 "$temp_kubeconfig"
+    log_info "Fetching admin.conf from control plane..."
+    if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "${ANSIBLE_REMOTE_USER:-abevz}@${control_plane_ip}" \
+        "sudo cat /etc/kubernetes/admin.conf" >"${temp_admin_conf}"; then
+        log_error "SSH command to fetch admin.conf failed."
+        return 1
+    fi
+    
+    if [[ ! -s "$temp_admin_conf" ]]; then
+        log_error "Fetched admin.conf file is empty. Check user/sudo permissions on the control plane."
+        return 1
+    fi
+    log_success "Admin.conf file fetched successfully."
 
-  log_success "Kubeconfig has been updated successfully."
-  log_info "Current context is now set to '${context_name}'."
+    yq e '.clusters[0].cluster."certificate-authority-data"' "$temp_admin_conf" | base64 -d > "$ca_crt_file"
+    yq e '.users[0].user."client-certificate-data"' "$temp_admin_conf" | base64 -d > "$client_crt_file"
+    yq e '.users[0].user."client-key-data"' "$temp_admin_conf" | base64 -d > "$client_key_file"
+    
+    local server_url
+    server_url=$(yq e '.clusters[0].cluster.server' "$temp_admin_conf")
+    if [[ "$server_url" == *"127.0.0.1"* ]]; then
+        server_url="https://\${control_plane_hostname}:6443"
+    fi
+
+    local cluster_name="$current_ctx"
+    local user_name="${current_ctx}-admin"
+    local context_name="$current_ctx"
+    local kubeconfig_path="${HOME}/.kube/config" 
+
+    log_info "Force updating '${kubeconfig_path}' for context '${context_name}'..."
+
+    mkdir -p "$(dirname "$kubeconfig_path")"
+
+    kubectl config --kubeconfig="$kubeconfig_path" set-cluster "$cluster_name" \
+        --server="$server_url" \
+        --embed-certs=true \
+        --certificate-authority="$ca_crt_file"
+
+    kubectl config --kubeconfig="$kubeconfig_path" set-credentials "$user_name" \
+        --embed-certs=true \
+        --client-certificate="$client_crt_file" \
+        --client-key="$client_key_file"
+
+    kubectl config --kubeconfig="$kubeconfig_path" set-context "$context_name" \
+        --cluster="$cluster_name" \
+        --user="$user_name"
+        
+    kubectl config --kubeconfig="$kubeconfig_path" use-context "$context_name"
+
+    log_success "Kubeconfig has been updated and context is set to '${context_name}'." ✅
 }
 
 # Upgrade Kubernetes control plane components
@@ -689,8 +734,10 @@ retrieve_kubeconfig_from_cluster_v2() {
     return 1
   fi
 
-  local control_plane_ip
+  # Get both IP and hostname
+  local control_plane_ip control_plane_hostname
   control_plane_ip=$(echo "$raw_output" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.IP | select(. != null)' | head -n 1)
+  control_plane_hostname=$(echo "$raw_output" | jq -r '.cluster_summary.value | to_entries[] | select(.key | contains("controlplane")) | .value.hostname | select(. != null)' | head -n 1)
 
   if [[ -z "$control_plane_ip" ]]; then
     log_error "Could not determine the control plane IP address from Terraform outputs."
@@ -698,51 +745,153 @@ retrieve_kubeconfig_from_cluster_v2() {
   fi
 
   log_info "Control plane IP found: ${control_plane_ip}"
+  log_info "Control plane hostname found: ${control_plane_hostname}"
 
-  # Download and process kubeconfig
-  local temp_kubeconfig
-  temp_kubeconfig=$(mktemp)
-  trap 'rm -f -- "$temp_kubeconfig"' EXIT
+  # Download admin.conf using IP address (more reliable)
+  local temp_admin_conf
+  temp_admin_conf=$(mktemp)
+  trap 'rm -f -- "$temp_admin_conf"' EXIT
 
-  log_info "Fetching kubeconfig from ${control_plane_ip}..."
+  log_info "Fetching admin.conf from control plane..."
   if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     "${ANSIBLE_REMOTE_USER:-$VM_USERNAME}@${control_plane_ip}" \
-    "sudo cat /etc/kubernetes/admin.conf" >"${temp_kubeconfig}"; then
-    log_error "Failed to fetch kubeconfig file from the control plane node."
+    "sudo cat /etc/kubernetes/admin.conf" >"${temp_admin_conf}"; then
+    log_error "Failed to fetch admin.conf file from the control plane node."
     return 1
   fi
 
-  if [[ ! -s "${temp_kubeconfig}" ]]; then
-    log_error "Fetched kubeconfig file is empty. Check sudo permissions on the control plane node."
+  if [[ ! -s "${temp_admin_conf}" ]]; then
+    log_error "Fetched admin.conf file is empty. Check sudo permissions on the control plane node."
     return 1
   fi
 
-  log_success "Kubeconfig file fetched successfully."
+  log_success "Admin.conf file fetched successfully."
 
-  # Return via global variables
-  RETRIEVED_CONTROL_PLANE_IP="$control_plane_ip"
-  RETRIEVED_TEMP_KUBECONFIG="$temp_kubeconfig"
+  # Extract values from admin.conf using yq
+  if ! command -v yq &>/dev/null; then
+    log_error "yq is required but not installed. Please install yq to use this function."
+    return 1
+  fi
 
-  return 0
+  local server_url ca_data client_cert_data client_key_data
+  local cluster_name user_name context_name
+  server_url=$(yq '.clusters[0].cluster.server' "${temp_admin_conf}")
+  ca_data=$(yq '.clusters[0].cluster."certificate-authority-data"' "${temp_admin_conf}")
+  client_cert_data=$(yq '.users[0].user."client-certificate-data"' "${temp_admin_conf}")
+  client_key_data=$(yq '.users[0].user."client-key-data"' "${temp_admin_conf}")
+  
+  # Get original names from admin.conf
+  local original_cluster_name original_user_name original_context_name
+  original_cluster_name=$(yq '.clusters[0].name' "${temp_admin_conf}")
+  original_user_name=$(yq '.users[0].name' "${temp_admin_conf}")
+  original_context_name=$(yq '.contexts[0].name' "${temp_admin_conf}")
+  
+  # Create names with current context prefix
+  cluster_name="${current_ctx}"
+  user_name="${current_ctx}-admin"
+  context_name="${current_ctx}"
+
+  if [[ -z "$server_url" || -z "$ca_data" || -z "$client_cert_data" || -z "$client_key_data" ]]; then
+    log_error "Failed to extract required values from admin.conf"
+    return 1
+  fi
+
+  # Replace server URL with hostname
+  server_url="https://${control_plane_hostname}:6443"
+
+  # Create temporary files for certificates
+  local ca_file client_cert_file client_key_file
+  ca_file=$(mktemp)
+  client_cert_file=$(mktemp)
+  client_key_file=$(mktemp)
+  trap 'rm -f -- "$temp_admin_conf" "$ca_file" "$client_cert_file" "$client_key_file"' EXIT
+
+  # Save certificate data to files
+  echo "$ca_data" | base64 -d > "$ca_file"
+  echo "$client_cert_data" | base64 -d > "$client_cert_file"
+  echo "$client_key_data" | base64 -d > "$client_key_file"
+
+  # Check file sizes
+  if [[ ! -s "$ca_file" ]]; then
+    log_error "CA file is empty after decoding"
+    return 1
+  fi
+  if [[ ! -s "$client_cert_file" ]]; then
+    log_error "Client certificate file is empty after decoding"
+    return 1
+  fi
+  if [[ ! -s "$client_key_file" ]]; then
+    log_error "Client key file is empty after decoding"
+    return 1
+  fi
+
+  log_info "Certificate files created successfully"
+
+  # Set up kubectl config
+  log_info "Setting up kubectl configuration..."
+
+  # Add new cluster entry using yq
+  yq -i '.clusters += [{"name": "'$cluster_name'", "cluster": {"server": "'$server_url'", "certificate-authority-data": "'$ca_data'"}}]' ~/.kube/config
+
+  # Add new user entry using yq
+  yq -i '.users += [{"name": "'$user_name'", "user": {"client-certificate-data": "'$client_cert_data'", "client-key-data": "'$client_key_data'"}}]' ~/.kube/config
+
+  # Add new context entry using yq
+  yq -i '.contexts += [{"name": "'$context_name'", "context": {"cluster": "'$cluster_name'", "user": "'$user_name'"}}]' ~/.kube/config
+
+  # Set current context
+  yq -i '.current-context = "'$context_name'"' ~/.kube/config
+
+  log_success "Kubeconfig has been updated successfully."
+  log_info "Current context is now set to '${context_name}'."
+
+  # Cleanup
+  rm -f "${temp_admin_conf}" "$ca_file" "$client_cert_file" "$client_key_file"
 }
 
 # Helper function: Modify kubeconfig contexts
 modify_kubeconfig_contexts_v2() {
   local temp_kubeconfig="$1"
   local current_ctx="$2"
+  local control_plane_hostname="$3"
 
   local cluster_name="$current_ctx"
-  local user_name="${current_ctx}-admin"
+  local user_name="${current_ctx}_admin"
   local context_name="$current_ctx"
 
-  sed -i \
-    -e "s/name: kubernetes-admin@kubernetes/name: ${context_name}/g" \
-    -e "s/name: kubernetes-admin/name: ${user_name}/g" \
-    -e "s/user: kubernetes-admin/user: ${user_name}/g" \
-    -e "s/name: kubernetes/name: ${cluster_name}/g" \
-    -e "s/cluster: kubernetes/cluster: ${cluster_name}/g" \
-    -e "s/current-context: .*/current-context: ${context_name}/g" \
-    "${temp_kubeconfig}"
+  # Use yq for more reliable YAML editing
+  if command -v yq &>/dev/null; then
+    # Replace server URL
+    yq -i '.clusters[0].cluster.server = "https://'${control_plane_hostname}':6443"' "${temp_kubeconfig}"
+    
+    # Replace cluster name
+    yq -i '.clusters[0].name = "'${cluster_name}'"' "${temp_kubeconfig}"
+    
+    # Replace user name
+    yq -i '.users[0].name = "'${user_name}'"' "${temp_kubeconfig}"
+    
+    # Replace context name
+    yq -i '.contexts[0].name = "'${context_name}'"' "${temp_kubeconfig}"
+    
+    # Replace context cluster reference
+    yq -i '.contexts[0].context.cluster = "'${cluster_name}'"' "${temp_kubeconfig}"
+    
+    # Replace context user reference
+    yq -i '.contexts[0].context.user = "'${user_name}'"' "${temp_kubeconfig}"
+    
+    # Replace current context
+    yq -i '.current-context = "'${context_name}'"' "${temp_kubeconfig}"
+  else
+    # Fallback to sed if yq is not available
+    sed -i \
+      -e "s|server: https://[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*:6443|server: https://${control_plane_hostname}:6443|g" \
+      -e "s/name: kubernetes/name: ${cluster_name}/g" \
+      -e "s/name: kubernetes-admin/name: ${user_name}/g" \
+      -e "s/user: kubernetes-admin/user: ${user_name}/g" \
+      -e "s/cluster: kubernetes/cluster: ${cluster_name}/g" \
+      -e "s/current-context: .*/current-context: ${context_name}/g" \
+      "${temp_kubeconfig}"
+  fi
 
   # Return via global variables
   MODIFIED_CLUSTER_NAME="$cluster_name"
