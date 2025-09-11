@@ -92,6 +92,8 @@ class CPCTestRunner:
             "Core Unit Tests",
             [
                 'tests/unit/test_00_core.py',  # Our new core module tests
+                'tests/unit/test_20_ansible.py',
+                'tests/unit/test_60_tofu.py',
                 'tests/unit/test_cpc_comprehensive.py',
                 'tests/unit/test_cpc_modules.py'
             ]
