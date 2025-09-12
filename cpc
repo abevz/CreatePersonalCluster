@@ -111,6 +111,7 @@ display_usage() {
   echo "  add-nodes                      Add new worker nodes to the cluster."
   echo "  remove-nodes                   Remove nodes from the Kubernetes cluster."
   echo "  drain-node <node_name>         Drain workloads from a node."
+  echo "  uncordon-node <node_name>      Uncordon a node to allow new pods to be scheduled."
   echo "  upgrade-node <node_name>       Upgrade Kubernetes on a specific node."
   echo "  reset-node <node_name>         Reset Kubernetes on a specific node."
   echo "  reset-all-nodes                Reset Kubernetes on all nodes in the current context."
@@ -366,6 +367,10 @@ remove-nodes)
 
 drain-node)
   cpc_k8s_nodes drain "$@"
+  ;;
+
+uncordon-node)
+  cpc_k8s_nodes uncordon "$@"
   ;;
 
 upgrade-node)
