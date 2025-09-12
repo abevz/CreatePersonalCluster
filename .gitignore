@@ -22,3 +22,6 @@ cpc.env
 secrets.sops.yaml
 terraform_state.json
 terraform/snippets/summary.txt
+
+# Python test cache
+tests/unit/__pycache__
