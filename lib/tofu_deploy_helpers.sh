@@ -207,6 +207,11 @@ function build_tofu_command_array() {
     fi
     # Add variable to tofu command array
     final_tofu_cmd_array+=("-var" "dns_servers=${dns_servers_list}")
+    
+    # Add release_letter variable if defined
+    if [[ -n "${RELEASE_LETTER:-}" ]]; then
+      final_tofu_cmd_array+=("-var" "release_letter=${RELEASE_LETTER}")
+    fi
     ;;
   esac
 
