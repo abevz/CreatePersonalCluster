@@ -148,6 +148,15 @@ cluster_ops_upgrade_addons() {
   fi
   
   log_info "Ansible playbook completed successfully"
+
+  # Check for Kubeconfig before attempting validation
+  local kubeconfig_path="${KUBECONFIG:-$HOME/.kube/config}"
+  if [[ ! -f "$kubeconfig_path" ]]; then
+    log_warning "Kubeconfig not found at $kubeconfig_path. Skipping addon validation."
+    log_success "Addon operation for '$addon_name' completed."
+    return 0
+  fi
+
   if ! validate_addon_installation "$addon_name"; then
     _upgrade_addons_handle_failure "$addon_name" "Addon validation failed"
     return 1
@@ -343,7 +352,7 @@ _coredns_get_dns_server() {
     return 0
   fi
 
-  log_step "Getting DNS server from Terraform variables..."
+  log_step "Getting DNS server from Terraform variables..." >&2
   local repo_path
   if ! repo_path=$(get_repo_path); then
     error_handle "$ERROR_CONFIG" "Failed to determine repository path" "$SEVERITY_HIGH"
@@ -380,11 +389,10 @@ _coredns_confirm_operation() {
   log_info "  DNS Server: $dns_server"
   log_info "  Domains: $domains"
 
-  timeout_execute \
-       "read -r -t 30 -p 'Continue with CoreDNS configuration? [y/N] ' response && [[ \"$response\" =~ ^([yY][eE][sS]|[yY])\$ ]]]" \
-       35 \
-       "User confirmation" \
-       ""
+  read -r -t 30 -p 'Continue with CoreDNS configuration? [y/N] ' response
+  if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    return 1
+  fi
 }
 
 _coredns_run_ansible() {
@@ -397,7 +405,7 @@ _coredns_run_ansible() {
     return 1
   fi
 
-  local extra_vars="pihole_dns_server=$dns_server local_domains='[\"$(echo "$domains" | sed 's/,/","/g')\"]'"
+  local extra_vars="pihole_dns_server=$dns_server local_domains_str=$domains"
 
   recovery_execute \
        "cpc_ansible run-ansible 'configure_coredns_local_domains.yml' --extra-vars '$extra_vars'" \
