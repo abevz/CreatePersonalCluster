@@ -290,10 +290,8 @@ _upgrade_addons_build_ansible_vars() {
 _upgrade_addons_determine_playbook() {
   local addon_name="$1"
   if [[ -f "$REPO_PATH/ansible/playbooks/pb_upgrade_addons_modular.yml" ]] && [[ -n "${DISCOVERED_ADDONS[$addon_name]}" || "$addon_name" == "all" ]]; then
-    log_info "Using modular addon system"
     echo "pb_upgrade_addons_modular.yml"
   else
-    log_info "Using legacy addon system"
     echo "pb_upgrade_addons_extended.yml"
   fi
 }
