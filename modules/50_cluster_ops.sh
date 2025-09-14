@@ -368,7 +368,7 @@ _coredns_get_dns_server() {
     new_dns_server="10.10.10.100"
     log_warning "DNS server not found in Terraform. Using fallback: $new_dns_server"
   else
-    log_success "Found DNS server in Terraform: $new_dns_server"
+    log_success "Found DNS server in Terraform: $new_dns_server" >&2
   fi
   echo "$new_dns_server"
 }
