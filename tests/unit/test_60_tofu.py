@@ -26,6 +26,7 @@ def temp_repo(tmp_path, project_root):
     (tmp_path / "envs").mkdir()
     (tmp_path / "terraform").mkdir()
     (tmp_path / "scripts").mkdir()
+    (tmp_path / "bin").mkdir() # Ensure bin directory exists for mocks
 
     # Copy real config.conf
     shutil.copy(project_root / "config.conf", tmp_path / "config.conf")
@@ -91,68 +92,70 @@ function ssh_connect() { echo "mock ssh"; }
     for module_name, content in mock_modules.items():
         (tmp_path / "modules" / module_name).write_text(content)
 
-    # Create mock tofu command
-    mock_tofu = """#!/bin/bash
-    case "$1" in
-        workspace)
-            case "$2" in
-                select)
-                    if [[ "$3" == "nonexistent" ]]; then
-                        echo "Error: Workspace 'nonexistent' not found" >&2
-                        exit 1
-                    fi
-                    echo "Switched to workspace $3"
-                    exit 0
-                    ;;
-                show)
-                    echo "test-context"
-                    exit 0
-                    ;;
-                list)
-                    echo "Switched to workspace test-context"
-                    echo "Mock tofu command executed: workspace list"
-                    exit 0
-                    ;;
-            esac
-            ;;
-        output)
-            if [[ "$2" == "-json" && "$3" == "cluster_summary" ]]; then
-                echo '{"test-node": {"IP": "10.0.0.1", "hostname": "test-host", "VM_ID": "100"}}'
+    # Create mock tofu command directly in the bin directory
+    mock_tofu_content = """
+#!/bin/bash
+case "$1" in
+    workspace) 
+        case "$2" in
+            select)
+                if [[ "$3" == "nonexistent" ]]; then
+                    echo "Error: Workspace 'nonexistent' not found" >&2
+                    exit 1
+                fi
+                echo "Switched to workspace $3"
                 exit 0
-            elif [[ "$2" == "-json" ]]; then
-                echo "Error: Output 'invalid_key' not found" >&2
-                exit 1
-            fi
-            ;;
-        plan)
-            echo "No changes. Your infrastructure matches the configuration."
+                ;;
+            show)
+                echo "test-context"
+                exit 0
+                ;;
+            list)
+                echo "Switched to workspace test-context"
+                echo "Mock tofu command executed: workspace list"
+                exit 0
+                ;;
+        esac
+        ;;
+    output)
+        if [[ "$2" == "-json" && "$3" == "cluster_summary" ]]; then
+            echo '{"test-node": {"IP": "10.0.0.1", "hostname": "test-host", "VM_ID": "100"}}'
             exit 0
-            ;;
-        apply)
-            echo "Apply complete!"
-            exit 0
-            ;;
-        destroy)
-            echo "Destroy complete!"
-            exit 0
-            ;;
-        init)
-            echo "Terraform initialized successfully!"
-            exit 0
-            ;;
-    esac
-    echo "Mock tofu command executed: $@"
-    exit 0
-    """
-    (tmp_path / "tofu").write_text(mock_tofu)
-    (tmp_path / "tofu").chmod(0o755)
+        elif [[ "$2" == "-json" ]]; then
+            echo "Error: Output 'invalid_key' not found" >&2
+            exit 1
+        fi
+        ;;
+    plan)
+        echo "No changes. Your infrastructure matches the configuration."
+        exit 0
+        ;;
+    apply)
+        echo "Apply complete!"
+        exit 0
+        ;;
+    destroy)
+        echo "Destroy complete!"
+        exit 0
+        ;;
+    init)
+        echo "Terraform initialized successfully!"
+        exit 0
+        ;;
+esac
+echo "Mock tofu command executed: $@"
+exit 0
+"""
+    (tmp_path / "bin" / "tofu").write_text(mock_tofu_content)
+    (tmp_path / "bin" / "tofu").chmod(0o755)
 
     # Create mock hostname generation script
-    mock_hostname_script = """#!/bin/bash
-    echo "Generated hostname: test-host"
-    echo "SUCCESS: Hostname configurations generated successfully."
-    exit 0
-    """
+    mock_hostname_script = """
+#!/bin/bash
+echo "Generated hostname: test-host"
+echo "SUCCESS: Hostname configurations generated successfully."
+exit 0
+"""
     (tmp_path / "scripts" / "generate_node_hostnames.sh").write_text(mock_hostname_script)
     (tmp_path / "scripts" / "generate_node_hostnames.sh").chmod(0o755)
 
@@ -160,13 +163,30 @@ function ssh_connect() { echo "mock ssh"; }
 
 
 @pytest.fixture(scope="function")
-def mock_env(temp_repo):
+def mock_env(temp_repo, monkeypatch):
     """Fixture to set up mock environment variables"""
     env = os.environ.copy()
     env['REPO_PATH'] = str(temp_repo)
     env['CPC_WORKSPACE'] = 'test'
     env['TERRAFORM_DIR'] = 'terraform'
-    env['PATH'] = str(temp_repo) + ':' + env.get('PATH', '')
+
+    # CRITICAL FIX: Set PATH to prioritize mock binaries and include essential system paths
+    system_paths = [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin"
+    ]
+    env['PATH'] = str(temp_repo / "bin") + os.pathsep + os.pathsep.join(system_paths)
+
+    # CRITICAL FIX: Unset any real cloud credentials to prevent accidental interaction
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("PROXMOX_USER", raising=False)
+    monkeypatch.delenv("PROXMOX_PASSWORD", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_DNS_API_TOKEN", raising=False)
+
     return env
 
 
@@ -185,7 +205,7 @@ def run_bash_command(command, env=None, cwd=None):
         [ -f "$module" ] && source "$module"
     done
     # Set REPO_PATH after sourcing to override config.conf
-    export REPO_PATH="{cwd}"
+    export REPO_PATH=\"{cwd}\"
     # Execute the command
     {command}
     """

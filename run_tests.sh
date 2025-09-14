@@ -4,7 +4,7 @@
 set -e
 
 echo "🚀 Starting CPC Test Suite"
-echo "=========================="
+echo "========================="
 
 # Add pipx bin directory to PATH
 export PATH="$HOME/.local/bin:$PATH"
@@ -16,6 +16,33 @@ else
     echo "⚠️  Not using virtual environment"
 fi
 
+# --- Context Management for Tests ---
+
+# Source 00_core.sh to get context functions
+if [[ -f "$(dirname "$0")/modules/00_core.sh" ]]; then
+    source "$(dirname "$0")/modules/00_core.sh"
+else
+    echo "Error: modules/00_core.sh not found. Cannot manage context." >&2
+    exit 1
+fi
+
+# Save current context
+CURRENT_CPC_CONTEXT=$(get_current_cluster_context)
+
+# Function to restore context on exit
+restore_cpc_context() {
+    echo "\n🔄 Restoring original CPC context: $CURRENT_CPC_CONTEXT"
+    # Use the cpc ctx command directly to ensure it works as expected
+    # Suppress warnings about REPO_PATH not being set, as it's expected in this context
+    ./cpc ctx "$CURRENT_CPC_CONTEXT" >/dev/null 2>&1
+    echo "✅ Original CPC context restored."
+}
+
+# Trap to ensure context is restored even if script exits prematurely
+trap restore_cpc_context EXIT
+
+# --- End Context Management ---
+
 # Function to run tests
 run_tests() {
     local test_type=$1
@@ -25,11 +52,18 @@ run_tests() {
     echo "📋 Running $test_type tests..."
     echo "------------------------------"
 
+    # Switch to a temporary test context for isolation
+    local temp_test_context="cpc-test-$(date +%s)"
+    echo "Switching to temporary test context: $temp_test_context"
+    ./cpc ctx "$temp_test_context" >/dev/null 2>&1
+
     if python -m pytest "$test_path" -v --tb=short; then
         echo "✅ $test_type tests passed"
+        # No need to switch back here, trap will handle it
         return 0
     else
         echo "❌ $test_type tests failed"
+        # No need to switch back here, trap will handle it
         return 1
     fi
 }
@@ -90,7 +124,7 @@ run_linting "Bashate on main script" "bashate cpc"
 run_linting "Ansible-lint on playbooks" "ansible-lint ansible/playbooks/"
 
 echo ""
-echo "=========================="
+echo "========================="
 echo "🏁 Test Suite Complete"
 
 if [ $failed_tests -eq 0 ]; then
