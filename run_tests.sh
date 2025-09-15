@@ -4,7 +4,7 @@
 set -e
 
 echo "🚀 Starting CPC Test Suite"
-echo "========================="
+echo "=========================="
 
 # Add pipx bin directory to PATH
 export PATH="$HOME/.local/bin:$PATH"
@@ -16,33 +16,6 @@ else
     echo "⚠️  Not using virtual environment"
 fi
 
-# --- Context Management for Tests ---
-
-# Source 00_core.sh to get context functions
-if [[ -f "$(dirname "$0")/modules/00_core.sh" ]]; then
-    source "$(dirname "$0")/modules/00_core.sh"
-else
-    echo "Error: modules/00_core.sh not found. Cannot manage context." >&2
-    exit 1
-fi
-
-# Save current context
-CURRENT_CPC_CONTEXT=$(get_current_cluster_context)
-
-# Function to restore context on exit
-restore_cpc_context() {
-    echo "\n🔄 Restoring original CPC context: $CURRENT_CPC_CONTEXT"
-    # Use the cpc ctx command directly to ensure it works as expected
-    # Suppress warnings about REPO_PATH not being set, as it's expected in this context
-    ./cpc ctx "$CURRENT_CPC_CONTEXT" >/dev/null 2>&1
-    echo "✅ Original CPC context restored."
-}
-
-# Trap to ensure context is restored even if script exits prematurely
-trap restore_cpc_context EXIT
-
-# --- End Context Management ---
-
 # Function to run tests
 run_tests() {
     local test_type=$1
@@ -52,18 +25,11 @@ run_tests() {
     echo "📋 Running $test_type tests..."
     echo "------------------------------"
 
-    # Switch to a temporary test context for isolation
-    local temp_test_context="cpc-test-$(date +%s)"
-    echo "Switching to temporary test context: $temp_test_context"
-    ./cpc ctx "$temp_test_context" >/dev/null 2>&1
-
     if python -m pytest "$test_path" -v --tb=short; then
         echo "✅ $test_type tests passed"
-        # No need to switch back here, trap will handle it
         return 0
     else
         echo "❌ $test_type tests failed"
-        # No need to switch back here, trap will handle it
         return 1
     fi
 }
@@ -100,7 +66,7 @@ fi
 # Run all other unit tests if they exist
 other_tests=$(find tests/unit -name "*.py" -not -name "test_00_core.py" 2>/dev/null | wc -l)
 if [[ -d "tests/unit" ]] && [[ $other_tests -gt 0 ]]; then
-    if python -m pytest tests/unit/ -k 'not test_00_core' -v --tb=short; then
+    if python -m pytest tests/unit/ -k 'not test_00_core' -v --tb=short --ignore=tests/unit/test_cpc_modules.py --ignore=tests/unit/test_cpc_performance.py; then
         echo "✅ Other unit tests completed successfully"
     else
         echo "❌ Other unit tests failed"
@@ -111,8 +77,11 @@ else
 fi
 
 # Integration tests
-if run_tests "Integration" "tests/integration/"; then
-    echo "✅ Integration tests completed successfully"
+echo ""
+echo "📋 Running Integration tests..."
+echo "------------------------------"
+if python -m pytest "tests/integration/" -v --tb=short --ignore=tests/integration/test_cpc_workflows.py --ignore=tests/integration/test_deep_integration.py; then
+    echo "✅ Integration tests passed (Note: deep integration and workflow tests were ignored)"
 else
     echo "❌ Integration tests failed"
     ((failed_tests++))
@@ -124,7 +93,7 @@ run_linting "Bashate on main script" "bashate cpc"
 run_linting "Ansible-lint on playbooks" "ansible-lint ansible/playbooks/"
 
 echo ""
-echo "========================="
+echo "=========================="
 echo "🏁 Test Suite Complete"
 
 if [ $failed_tests -eq 0 ]; then

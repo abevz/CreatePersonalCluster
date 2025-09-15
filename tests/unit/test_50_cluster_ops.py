@@ -116,14 +116,14 @@ class TestClusterOpsUpgradeAddons:
 
 class TestClusterConfigureCoreDNS:
     def test_happy_path_with_args(self, bash_helper):
-        result = bash_helper.run_bash_command("cluster_configure_coredns --dns-server 8.8.8.8 --domains example.com")
+        result = bash_helper.run_bash_command("cluster_configure_coredns --dns-server 8.8.8.8 --domains example.com --yes")
         assert result.returncode == 0, f"STDERR: {result.stderr}"
         assert "CoreDNS configured successfully!" in result.stdout
 
     def test_dns_server_from_script(self, bash_helper):
-        result = bash_helper.run_bash_command("cluster_configure_coredns --domains example.com")
+        result = bash_helper.run_bash_command("cluster_configure_coredns --domains example.com --yes")
         assert result.returncode == 0, f"STDERR: {result.stderr}"
-        assert "Found DNS server in Terraform: 1.1.1.1" in result.stdout
+        assert "Found DNS server in Terraform: 1.1.1.1" in result.stderr
 
     def test_user_cancellation(self, bash_helper):
         (bash_helper.temp_repo_path / "lib" / "timeout.sh").write_text("#!/bin/bash\ntimeout_execute() { return 1; } # Simulate user saying 'n'")
@@ -133,7 +133,7 @@ class TestClusterConfigureCoreDNS:
 
     def test_invalid_domain_format(self, bash_helper):
         # FIX: Use single quotes to pass the argument with a space correctly
-        result = bash_helper.run_bash_command("cluster_configure_coredns --domains 'bad domain'")
+        result = bash_helper.run_bash_command("cluster_configure_coredns --domains 'bad domain' --yes")
         assert result.returncode == 1, f"STDERR: {result.stderr}"
         assert "Invalid domains format" in result.stdout
 

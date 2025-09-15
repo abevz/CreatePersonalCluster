@@ -270,6 +270,15 @@ if [[ "$COMMAND" != "setup-cpc" ]]; then
   load_env_vars >/dev/null 2>&1
 fi
 
+# --- FIX for KUBECONFIG variable expansion ---
+if [[ -n "$KUBECONFIG" ]]; then
+    # Robustly expand ${HOME} and $HOME literals
+    KUBECONFIG="${KUBECONFIG//'${HOME}'/$HOME}"
+    KUBECONFIG="${KUBECONFIG//'$HOME'/$HOME}"
+    export KUBECONFIG
+fi
+# --- END FIX ---
+
 # Auto-load secrets for commands that need them (silent operation)
 # Also load for empty command (just ./cpc) and help commands
 if [[ "$COMMAND" != "setup-cpc" ]]; then

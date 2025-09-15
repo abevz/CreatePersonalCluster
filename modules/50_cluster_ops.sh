@@ -171,6 +171,7 @@ cluster_configure_coredns() {
   # These variables will be modified by _coredns_parse_args in the same shell scope.
   local dns_server=""
   local domains=""
+  local non_interactive=false
   
   _coredns_parse_args "$@"
   if [[ $? -ne 0 ]]; then return 1; fi
@@ -180,7 +181,7 @@ cluster_configure_coredns() {
 
   domains=$(_coredns_get_domains "$domains")
 
-  if ! _coredns_confirm_operation "$dns_server" "$domains"; then
+  if ! _coredns_confirm_operation "$dns_server" "$domains" "$non_interactive"; then
     log_info "Operation cancelled or timed out."
     return 0
   fi
@@ -318,6 +319,10 @@ _upgrade_addons_handle_failure() {
 _coredns_parse_args() {
   while [[ $# -gt 0 ]]; do
     case $1 in
+    -y|--yes)
+      non_interactive=true
+      shift 1
+      ;;
     --dns-server) 
       if [[ -n "$2" && "$2" != --* ]]; then
         dns_server="$2"
@@ -385,9 +390,15 @@ _coredns_get_domains() {
 _coredns_confirm_operation() {
   local dns_server="$1"
   local domains="$2"
+  local non_interactive="$3"
+
   log_step "Configuring CoreDNS for local domain resolution..."
   log_info "  DNS Server: $dns_server"
   log_info "  Domains: $domains"
+
+  if [[ "$non_interactive" == "true" ]]; then
+    return 0 # Bypass prompt
+  fi
 
   read -r -t 30 -p 'Continue with CoreDNS configuration? [y/N] ' response
   if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
