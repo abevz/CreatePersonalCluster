@@ -1,0 +1,41 @@
+name: Linting
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'feature/**'
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: make lint-shell
+
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install tflint
+        run: |
+          curl -s https://api.github.com/repos/terraform-linters/tflint/releases/latest \
+          | grep "browser_download_url.*_linux_amd64.zip" \
+          | cut -d : -f 2,3 \
+          | tr -d " " \
+          | wget -qi -
+          unzip tflint_linux_amd64.zip
+          sudo mv tflint /usr/local/bin/
+
+      - name: Run tflint
+        run: make lint-tf

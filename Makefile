@@ -34,12 +34,15 @@ test-integration:
 	python -m pytest tests/integration/ -v --tb=short
 
 # Linting targets
-lint: lint-shell lint-ansible
+lint: lint-shell lint-tf lint-ansible
 
 lint-shell:
 	@echo "Running shell linting..."
-	shellcheck cpc modules/*.sh
-	bashate cpc modules/*.sh
+	find . -name "*.sh" -not -path "./.git/*" -print0 | xargs -0 shellcheck
+
+lint-tf:
+	@echo "Running Terraform linting..."
+	tflint --recursive terraform/
 
 lint-ansible:
 	@echo "Running Ansible linting..."
