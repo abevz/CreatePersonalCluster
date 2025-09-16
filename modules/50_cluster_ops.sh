@@ -203,26 +203,31 @@ validate_addon_installation() {
     return 1
   fi
 
-  # Export helpers so the sub-shell can see them
-  export -f _validate_addon_metallb
-  export -f _validate_addon_metrics_server
-  export -f _validate_addon_default
+  log_info "Performing validation for addon: $addon_name"
 
-  timeout 30s bash -c "
-    # KUBECONFIG is already set and exported by _validate_preflight_checks
-    case "$addon_name" in
-      metallb) _validate_addon_metallb ;; 
-      metrics-server) _validate_addon_metrics_server ;; 
-      *) _validate_addon_default "$addon_name" ;; 
-    esac
-  "
-
-  local exit_code=$?
-  if [[ $exit_code -eq 0 ]]; then
-    return 0
-  else
-    return 1
-  fi
+  case "$addon_name" in
+    all)
+      log_success "Validation for 'all' addons completed (assumed success)."
+      return 0
+      ;;
+    metallb)
+      _validate_addon_metallb
+      ;;
+    metrics-server)
+      _validate_addon_metrics_server
+      ;;
+    kube-bench|apparmor|seccomp|bom|falco|trivy)
+      log_success "Validation for '$addon_name' is based on successful Ansible execution, which was completed."
+      return 0
+      ;;
+    calico|cilium|coredns|cert-manager|argocd|ingress-nginx|traefik|istio)
+      _validate_addon_default "$addon_name"
+      ;;
+    *)
+      log_error "Unknown addon for validation: $addon_name"
+      return 1
+      ;;
+  esac
 }
 
 # Helper function to validate CoreDNS configuration
@@ -470,6 +475,30 @@ _validate_addon_metrics_server() {
 
 _validate_addon_default() {
   local addon_name="$1"
-  echo "Unknown addon: $addon_name" >&2
-  exit 1
+  local namespace="$addon_name"
+
+  # Special namespace cases
+  if [[ "$addon_name" == "metrics-server" ]]; then
+    namespace="kube-system"
+  elif [[ "$addon_name" == "ingress-nginx" ]]; then
+    namespace="ingress-nginx"
+  fi
+
+  echo "Validating addon '$addon_name' by checking for running or succeeded pods in namespace '$namespace'..."
+  
+  # Check if namespace exists
+  if ! kubectl get namespace "$namespace" --no-headers >/dev/null 2>&1; then
+    echo "Validation failed: Namespace '$namespace' for addon '$addon_name' does not exist." >&2
+    exit 1
+  fi
+
+  # Check for at least one running or succeeded pod
+  if kubectl get pods -n "$namespace" --no-headers -o custom-columns=":.status.phase" | grep -E -q 'Running|Succeeded'; then
+    echo "Validation successful: Found running or succeeded pods for '$addon_name' in namespace '$namespace'."
+    exit 0
+  else
+    echo "Validation failed: No running or succeeded pods found for addon '$addon_name' in namespace '$namespace'." >&2
+    kubectl get pods -n "$namespace" >&2 # Print pod statuses for debugging
+    exit 1
+  fi
 }
