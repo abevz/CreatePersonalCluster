@@ -25,3 +25,21 @@ terraform/snippets/summary.txt
 
 # Python test cache
 tests/unit/__pycache__
+
+# Gemini-generated files
+GEMINI.md
+TEST_COMPLIANCE_REPORT.md
+
+# Test environment files
+envs/test-clone.env
+envs/ubuntu-test.env
+
+# Log files
+kube-bench-full.log
+
+# Python cache
+scripts/__pycache__/
+tests/__pycache__/
+
+# Temp files
+tmp/

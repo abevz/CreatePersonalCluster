@@ -189,21 +189,21 @@ class TestHandleCoreErrors:
         result = bash_helper.run_bash_command('handle_core_errors "invalid_command" "test-command"')
         assert result.returncode == 0
         # Error messages go to stdout with color codes in this implementation
-        assert "Invalid core command" in result.stdout
+        assert "Invalid core command" in result.stderr
 
     def test_handle_routing_failure_error(self, bash_helper):
         """Test handling routing failure error"""
         result = bash_helper.run_bash_command('handle_core_errors "routing_failure" "test-message"')
         assert result.returncode == 0
         # Error messages go to stdout with color codes in this implementation
-        assert "Failed to route command" in result.stdout
+        assert "Failed to route command" in result.stderr
 
     def test_handle_unknown_error(self, bash_helper):
         """Test handling unknown error type"""
         result = bash_helper.run_bash_command('handle_core_errors "unknown_error" "test-message"')
         assert result.returncode == 0
         # Error messages go to stdout with color codes in this implementation
-        assert "Unknown error" in result.stdout
+        assert "Unknown error" in result.stderr
 
 
 class TestDetermineScriptDirectory:
@@ -606,7 +606,7 @@ class TestCpcCore:
         result = bash_helper.run_bash_command('cpc_core "unknown-command"')
         assert result.returncode == 1
         # Error messages go to stdout with color codes
-        assert "Unknown core command" in result.stdout
+        assert "Unknown core command" in result.stderr
 
 
 class TestGetAwsCredentials:

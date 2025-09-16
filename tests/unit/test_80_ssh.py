@@ -125,13 +125,13 @@ class TestSshClearHosts:
 
         result = bash_helper.run_bash_command("ssh_clear_hosts --dry-run")
         assert result.returncode == 0
-        assert "Dry run mode. Will not remove entries." in result.stdout
+        assert "Dry run mode. Will not remove entries." in result.stderr
 
     def test_no_known_hosts_file(self, bash_helper, temp_repo, monkeypatch):
         monkeypatch.setenv("HOME", str(temp_repo))
         result = bash_helper.run_bash_command("ssh_clear_hosts")
         assert result.returncode == 0
-        assert "No ~/.ssh/known_hosts file found" in result.stdout
+        assert "No ~/.ssh/known_hosts file found" in result.stderr
 
 class TestSshClearMaps:
     def test_happy_path(self, bash_helper):
@@ -142,7 +142,7 @@ class TestSshClearMaps:
     def test_dry_run(self, bash_helper):
         result = bash_helper.run_bash_command("ssh_clear_maps --dry-run")
         assert result.returncode == 0
-        assert "Dry run mode - showing what would be cleared" in result.stdout
+        assert "Dry run mode - showing what would be cleared" in result.stderr
 
 class TestGetAnsibleInventoryJson:
     def test_success(self, bash_helper):
@@ -154,4 +154,4 @@ class TestGetAnsibleInventoryJson:
         (temp_repo / "ansible" / "inventory" / "tofu_inventory.py").unlink()
         result = bash_helper.run_bash_command("_get_ansible_inventory_json")
         assert result.returncode == 1
-        assert "Inventory script not found" in result.stdout
+        assert "Inventory script not found" in result.stderr

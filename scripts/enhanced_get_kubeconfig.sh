@@ -11,7 +11,7 @@ export BLUE='\033[1;34m'
 export ENDCOLOR='\033[0m'
 
 # Configuration
-CONFIG_DIR="$HOME/.config/my-kthw-cpc"
+CONFIG_DIR="${CPC_CONFIG_DIR:-$HOME/.config/cpc}"
 REPO_PATH_FILE="$CONFIG_DIR/repo_path"
 CPC_CONTEXT_FILE="$CONFIG_DIR/current_cluster_context"
 
@@ -51,19 +51,19 @@ error_handle() {
   log_error "$error_message (Error code: $error_code)"
 
   case "$action" in
-    "abort")
-      log_error "Aborting operation due to critical error"
-      exit $error_code
-      ;;
-    "retry")
-      log_warning "Will retry operation"
-      ;;
-    "continue")
-      log_warning "Continuing despite error"
-      ;;
-    *)
-      log_warning "Unknown error action: $action"
-      ;;
+  "abort")
+    log_error "Aborting operation due to critical error"
+    exit $error_code
+    ;;
+  "retry")
+    log_warning "Will retry operation"
+    ;;
+  "continue")
+    log_warning "Continuing despite error"
+    ;;
+  *)
+    log_warning "Unknown error action: $action"
+    ;;
   esac
 }
 
@@ -78,19 +78,19 @@ recovery_checkpoint() {
 validate_dependencies() {
   local missing_deps=()
 
-  if ! command -v tofu &> /dev/null; then
+  if ! command -v tofu &>/dev/null; then
     missing_deps+=("tofu")
   fi
 
-  if ! command -v kubectl &> /dev/null; then
+  if ! command -v kubectl &>/dev/null; then
     missing_deps+=("kubectl")
   fi
 
-  if ! command -v jq &> /dev/null; then
+  if ! command -v jq &>/dev/null; then
     missing_deps+=("jq")
   fi
 
-  if ! command -v ssh &> /dev/null; then
+  if ! command -v ssh &>/dev/null; then
     missing_deps+=("ssh")
   fi
 
@@ -177,47 +177,47 @@ enhanced_get_kubeconfig() {
   # Parse options
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --force)
-        force_overwrite=true
-        shift
-        ;;
-      --context-name)
-        custom_context_name="$2"
-        shift 2
-        ;;
-      --use-ip)
-        use_ip=true
-        use_hostname=false
-        shift
-        ;;
-      --use-hostname)
-        use_hostname=true
-        use_ip=false
-        shift
-        ;;
-      -h|--help)
-        echo "Usage: cpc get-kubeconfig [options]"
-        echo ""
-        echo "Get kubeconfig from the cluster and merge it with local ~/.kube/config"
-        echo ""
-        echo "Options:"
-        echo "  --force                Force overwrite existing context"
-        echo "  --context-name NAME    Use custom context name"
-        echo "  --use-ip              Force use of IP address for server endpoint"
-        echo "  --use-hostname        Use DNS hostname for server endpoint (default)"
-        echo "  -h, --help            Show this help"
-        echo ""
-        echo "The command will:"
-        echo "  1. Retrieve kubeconfig from control plane node"
-        echo "  2. Update server endpoint to use hostname (if available) or IP"
-        echo "  3. Rename context to avoid conflicts"
-        echo "  4. Merge with existing ~/.kube/config"
-        return 0
-        ;;
-      *)
-        error_handle "$ERROR_INPUT" "Unknown option: $1" "$SEVERITY_LOW" "abort"
-        return 1
-        ;;
+    --force)
+      force_overwrite=true
+      shift
+      ;;
+    --context-name)
+      custom_context_name="$2"
+      shift 2
+      ;;
+    --use-ip)
+      use_ip=true
+      use_hostname=false
+      shift
+      ;;
+    --use-hostname)
+      use_hostname=true
+      use_ip=false
+      shift
+      ;;
+    -h | --help)
+      echo "Usage: cpc get-kubeconfig [options]"
+      echo ""
+      echo "Get kubeconfig from the cluster and merge it with local ~/.kube/config"
+      echo ""
+      echo "Options:"
+      echo "  --force                Force overwrite existing context"
+      echo "  --context-name NAME    Use custom context name"
+      echo "  --use-ip              Force use of IP address for server endpoint"
+      echo "  --use-hostname        Use DNS hostname for server endpoint (default)"
+      echo "  -h, --help            Show this help"
+      echo ""
+      echo "The command will:"
+      echo "  1. Retrieve kubeconfig from control plane node"
+      echo "  2. Update server endpoint to use hostname (if available) or IP"
+      echo "  3. Rename context to avoid conflicts"
+      echo "  4. Merge with existing ~/.kube/config"
+      return 0
+      ;;
+    *)
+      error_handle "$ERROR_INPUT" "Unknown option: $1" "$SEVERITY_LOW" "abort"
+      return 1
+      ;;
     esac
   done
 
@@ -382,9 +382,9 @@ enhanced_get_kubeconfig() {
     fi
 
     if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-         -o ConnectTimeout=10 \
-         "${remote_user}@${control_plane_ip}" \
-         "sudo cat /etc/kubernetes/admin.conf" > "$temp_kubeconfig" 2>/dev/null; then
+      -o ConnectTimeout=10 \
+      "${remote_user}@${control_plane_ip}" \
+      "sudo cat /etc/kubernetes/admin.conf" >"$temp_kubeconfig" 2>/dev/null; then
       ssh_success=true
       break
     fi
@@ -490,7 +490,7 @@ enhanced_get_kubeconfig() {
     fi
 
     local temp_merged="$HOME/.kube/config.tmp"
-    if ! KUBECONFIG=~/.kube/config:$temp_kubeconfig kubectl config view --flatten > "$temp_merged" 2>/dev/null; then
+    if ! KUBECONFIG=~/.kube/config:$temp_kubeconfig kubectl config view --flatten >"$temp_merged" 2>/dev/null; then
       error_handle "$ERROR_EXECUTION" "Failed to merge kubeconfig files" "$SEVERITY_HIGH" "abort"
       return 1
     fi

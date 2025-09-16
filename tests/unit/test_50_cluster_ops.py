@@ -91,12 +91,12 @@ class TestClusterOpsUpgradeAddons:
     def test_happy_path_with_arg(self, bash_helper):
         result = bash_helper.run_bash_command("cluster_ops_upgrade_addons metallb")
         assert result.returncode == 0, f"STDERR: {result.stderr}"
-        assert "Addon operation for 'metallb' completed and validated successfully" in result.stdout
+        assert "Validation successful: Found running pods for 'metallb'" in result.stdout
 
     def test_interactive_menu_path(self, bash_helper):
         result = bash_helper.run_bash_command("cluster_ops_upgrade_addons")
         assert result.returncode == 0, f"STDERR: {result.stderr}"
-        assert "Addon operation for 'metallb' completed and validated successfully" in result.stdout
+        assert "Validation successful: Found running pods for 'metallb'" in result.stdout
 
     def test_invalid_addon_name(self, bash_helper):
         result = bash_helper.run_bash_command("cluster_ops_upgrade_addons fake-addon")
@@ -106,13 +106,13 @@ class TestClusterOpsUpgradeAddons:
     def test_ansible_failure_path(self, bash_helper):
         result = bash_helper.run_bash_command("cluster_ops_upgrade_addons metallb", env={"FORCE_ANSIBLE_FAILURE": "true"})
         assert result.returncode == 1, f"STDERR: {result.stderr}"
-        assert "Ansible playbook execution failed" in result.stdout
+        assert "Ansible playbook execution failed" in result.stderr
 
     def test_validation_failure_path(self, bash_helper):
         (bash_helper.temp_repo_path / "bin" / "kubectl").write_text("#!/bin/bash\nexit 1")
         result = bash_helper.run_bash_command("cluster_ops_upgrade_addons metallb")
         assert result.returncode == 1, f"STDERR: {result.stderr}"
-        assert "Addon validation failed" in result.stdout
+        assert "Addon validation failed" in result.stderr
 
 class TestClusterConfigureCoreDNS:
     def test_happy_path_with_args(self, bash_helper):
@@ -135,7 +135,7 @@ class TestClusterConfigureCoreDNS:
         # FIX: Use single quotes to pass the argument with a space correctly
         result = bash_helper.run_bash_command("cluster_configure_coredns --domains 'bad domain' --yes")
         assert result.returncode == 1, f"STDERR: {result.stderr}"
-        assert "Invalid domains format" in result.stdout
+        assert "Invalid domains format" in result.stderr
 
 class TestValidateAddonInstallation:
     def test_preflight_kubectl_missing(self, bash_helper):
@@ -156,4 +156,4 @@ class TestValidateAddonInstallation:
     def test_unknown_addon(self, bash_helper):
         result = bash_helper.run_bash_command("validate_addon_installation unknown-addon")
         assert result.returncode == 1, f"STDERR: {result.stderr}"
-        assert "Unknown addon: unknown-addon" in result.stderr
+        assert "Unknown addon for validation: unknown-addon" in result.stderr

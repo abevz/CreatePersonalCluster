@@ -757,7 +757,7 @@ esac
         result = self.run_bash_command("k8s_bootstrap --invalid-arg")
         
         assert result.returncode == 1
-        assert "Unknown option" in result.stdout  # Error goes to stdout
+        assert "Unknown option" in result.stderr  # Error goes to stdout
 
 
 class TestK8sGetKubeconfig(BaseBashTest):
@@ -815,7 +815,7 @@ preferences: {}
         )
         
         assert result.returncode == 1
-        assert "No active workspace context is set" in result.stdout  # Error goes to stdout, not stderr
+        assert "No active workspace context is set" in result.stderr  # Error goes to stdout, not stderr
     
     def test_get_kubeconfig_infrastructure_data_retrieval(self):
         """Test infrastructure data retrieval."""
@@ -1047,7 +1047,7 @@ class TestK8sUpgrade(BaseBashTest):
         result = self.run_bash_command("k8s_upgrade --invalid-option")
         
         assert result.returncode == 1
-        assert "Unknown option" in result.stdout  # Error goes to stdout
+        assert "Unknown option" in result.stderr  # Error goes to stdout
 
 
 class TestK8sResetAllNodes(BaseBashTest):
@@ -1082,7 +1082,7 @@ class TestK8sResetAllNodes(BaseBashTest):
         )
         
         assert result.returncode == 0
-        assert "Resetting all Kubernetes nodes" in result.stdout
+        assert "Resetting all Kubernetes nodes" in result.stderr
 
 
 class TestK8sClusterStatus(BaseBashTest):
@@ -1297,7 +1297,7 @@ class TestCommandDispatcher(BaseBashTest):
         result = self.run_bash_command("cpc_k8s_cluster invalid-command")
         
         assert result.returncode != 0
-        assert "Unknown k8s cluster command" in result.stdout  # More specific assertion
+        assert "Unknown k8s cluster command" in result.stderr  # More specific assertion
 
 
 class TestUtilityFunctions(BaseBashTest):

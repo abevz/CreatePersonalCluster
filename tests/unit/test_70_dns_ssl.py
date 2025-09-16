@@ -157,7 +157,7 @@ class TestDnsSslTestResolution:
     def test_preflight_checks_failure(self, bash_helper):
         result = bash_helper.run_bash_command("_test_dns_preflight_checks", env={"FORCE_KUBECTL_FAILURE": "true"})
         assert result.returncode == 1
-        assert "Cannot connect to Kubernetes cluster" in result.stdout
+        assert "Cannot connect to Kubernetes cluster" in result.stderr
 
     def test_run_main_test_success(self, bash_helper):
         result = bash_helper.run_bash_command("_test_dns_run_main_test google.com")
@@ -181,23 +181,23 @@ class TestDnsSslVerifyCertificates:
         result = bash_helper.run_bash_command(f"_verify_single_local_cert {cert_path} 'API Server'", env={"FORCE_OPENSSL_EXPIRE": "true"})
         assert result.returncode == 0
         assert "Status: ❌ Expired" in result.stdout
-        assert "Certificate expired" in result.stdout
+        assert "Certificate expired" in result.stderr
 
     def test_verify_single_local_cert_not_found(self, bash_helper):
         result = bash_helper.run_bash_command("_verify_single_local_cert /no/such/file.crt 'Fake Cert'")
         assert result.returncode == 0
-        assert "Certificate file not found" in result.stdout
+        assert "Certificate file not found" in result.stderr
 
     def test_verify_certs_remotely_failure(self, bash_helper):
         result = bash_helper.run_bash_command("_verify_certs_remotely", env={"FORCE_KUBECTL_FAILURE": "true"})
         assert result.returncode == 0
-        assert "Cannot connect to cluster" in result.stdout
+        assert "Cannot connect to cluster" in result.stderr
 
 class TestDnsSslCheckClusterDns:
     def test_preflight_failure(self, bash_helper):
         result = bash_helper.run_bash_command("_check_dns_preflight", env={"FORCE_KUBECTL_FAILURE": "true"})
         assert result.returncode == 1
-        assert "Cannot connect to Kubernetes cluster" in result.stdout
+        assert "Cannot connect to Kubernetes cluster" in result.stderr
 
     def test_get_pod_status(self, bash_helper):
         result = bash_helper.run_bash_command("_check_dns_get_pod_status")

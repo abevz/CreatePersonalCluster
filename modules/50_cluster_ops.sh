@@ -457,10 +457,11 @@ _validate_preflight_checks() {
 
 _validate_addon_metallb() {
   if kubectl get pods -n metallb-system --no-headers -o custom-columns=":.status.phase" | grep -q 'Running'; then
-    exit 0
+    log_success "Validation successful: Found running pods for 'metallb' in namespace 'metallb-system'."
+    return 0
   else
-    echo 'MetalLB pods not ready' >&2
-    exit 1
+    log_error 'Validation failed: MetalLB pods not ready in namespace metallb-system.'
+    return 1
   fi
 }
 

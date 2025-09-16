@@ -1,68 +1,88 @@
-
+# tests/conftest.py
 import pytest
+from pathlib import Path
 import subprocess
-import re
 import os
+import shutil
 
-@pytest.fixture(scope="session", autouse=True)
-def cpc_context_restorer():
+@pytest.fixture
+def bash_helper(tmp_path: Path, monkeypatch):
     """
-    A session-scoped fixture that automatically saves the CPC context
-    before tests run and restores it after they complete.
+    A master fixture to provide a helper for running bash script functions
+    in a fully mocked and isolated environment.
     """
-    original_context = None
-    # Assuming the project root is the parent directory of the 'tests' directory
-    project_root = os.path.dirname(os.path.dirname(__file__))
-    cpc_script = os.path.join(project_root, 'cpc')
+    repo_root = tmp_path
+    lib_dir = repo_root / "lib"
+    bin_dir = repo_root / "bin"
 
-    # Ensure the cpc script is executable
-    if not os.access(cpc_script, os.X_OK):
-        print(f"\n[CPC Test Setup] Warning: CPC script at {cpc_script} is not executable. Skipping context restoration.")
-        yield
-        return
+    for d in [lib_dir, bin_dir]:
+        d.mkdir(exist_ok=True)
 
-    try:
-        # Get the current context before tests start
-        result = subprocess.run(
-            [cpc_script, 'ctx'],
+    # --- Dynamically find project root ---
+    PROJECT_ROOT = Path(__file__).parent.parent
+
+    print(f"\nDEBUG: Project root determined to be: {PROJECT_ROOT}")
+
+    # Copy real library scripts to be sourced
+    lib_source_dir = PROJECT_ROOT / "lib"
+    if lib_source_dir.exists():
+        for script in lib_source_dir.glob("*.sh"):
+            shutil.copy(script, lib_dir)
+
+    # ВАЖНО: Этот блок копирует исполняемые скрипты из папки /scripts
+    # Copy real executable scripts to the mock bin directory
+    scripts_source_dir = PROJECT_ROOT / "scripts"
+    
+    print(f"DEBUG: Checking for scripts directory at: {scripts_source_dir}")
+
+    if scripts_source_dir.exists():
+        print("DEBUG: Scripts directory FOUND. Starting to copy...")
+        for script in scripts_source_dir.glob("*.sh"):
+            print(f"DEBUG:   - Copying {script.name}")
+            dest_script = bin_dir / script.name
+            shutil.copy(script, dest_script)
+            dest_script.chmod(0o755) # Делаем их исполняемыми
+    else:
+        print("DEBUG: Scripts directory NOT FOUND. Skipping copy of executables.")
+    # Create smarter mocks that log their arguments
+    mock_commands = ["curl", "ssh", "scp", "tofu", "id", "command", "ansible-playbook", "ssh-keygen"]
+    for cmd in mock_commands:
+        mock_path = bin_dir / cmd
+        log_file = tmp_path / f"{cmd}.log"
+        # Мок будет записывать все свои аргументы в лог-файл
+        mock_path.write_text(f"#!/bin/bash\necho \"$@\" >> {log_file}")
+        mock_path.chmod(0o755)
+
+    # Prepend our mock bin directory to the PATH
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+
+    def run_command(command: str, env: dict = None):
+        # 1. Всегда начинаем с полной, измененной monkeypatch'ем копии окружения
+        full_env = os.environ.copy()
+
+        # 2. Если тест передал свои переменные, добавляем или обновляем их
+        if env is not None:
+            full_env.update(env)
+
+        # Добавляем наш REPO_PATH, как и раньше
+        full_env["REPO_PATH"] = str(repo_root)
+
+        sourcing_script = ""
+        for lib in sorted(lib_dir.glob("*.sh")):
+            sourcing_script += f'source "{lib}" || {{ echo "FATAL: Failed to source {lib.name}" >&2; exit 1; }}\n'
+
+        full_command = f"""
+        set -e
+        {sourcing_script}
+        {command}
+        """
+
+        return subprocess.run(
+            ['bash', '-c', full_command],
             capture_output=True,
             text=True,
-            cwd=project_root,
-            timeout=15
+            # 3. Используем объединенное окружение
+            env=full_env
         )
-        if result.returncode == 0:
-            # Regex to find the context name, works even with ANSI color codes
-            match = re.search(r"Current cluster context: (\S+)", result.stdout)
-            if match:
-                original_context = match.group(1)
-                print(f"\n[CPC Test Setup] Saved original context: {original_context}")
-            else:
-                print(f"\n[CPC Test Setup] Warning: Could not parse original context from './cpc ctx' output.")
-        else:
-            print(f"\n[CPC Test Setup] Warning: './cpc ctx' failed, could not save context. STDERR: {result.stderr}")
-
-    except Exception as e:
-        print(f"\n[CPC Test Setup] Warning: Could not save original CPC context due to an exception: {e}")
-
-    # This is where the tests will run
-    yield
-
-    # After tests are done, restore the context
-    if original_context:
-        try:
-            print(f"\n[CPC Test Teardown] Restoring original context: '{original_context}'")
-            # Use a longer timeout for restoration as it might involve cloud operations
-            restore_result = subprocess.run(
-                [cpc_script, 'ctx', original_context],
-                capture_output=True,
-                text=True,
-                cwd=project_root,
-                timeout=30
-            )
-            if restore_result.returncode == 0:
-                print(f"[CPC Test Teardown] Original context restored successfully.")
-            else:
-                print(f"[CPC Test Teardown] ERROR: Failed to restore context. STDOUT: {restore_result.stdout} STDERR: {restore_result.stderr}")
-        except Exception as e:
-            print(f"\n[CPC Test Teardown] ERROR: Could not restore original CPC context due to an exception: {e}")
+    return run_command
 
