@@ -94,7 +94,7 @@ validate_dependencies() {
 validate_vm_exists() {
   local vm_id="$1"
 
-  if ! qm list 2>/dev/null | grep -q "^[[:space:]]*$vm_id[[:space:]]"; then
+  if ! qm list 2>/dev/null | grep -q "^[[:space:]]*${vm_id}[[:space:]]"; then
     error_handle "$ERROR_CONFIG" "VM with ID $vm_id does not exist" "$SEVERITY_HIGH" "abort"
     return 1
   fi
@@ -150,7 +150,7 @@ for VM_ID in "${VM_IDS[@]}"; do
   fi
 
   # Get the disk path for this VM
-  local disk_path
+  disk_path
   if ! disk_path=$(qm config "$VM_ID" 2>/dev/null | grep "virtio0:" | cut -d: -f2 | cut -d, -f1 2>/dev/null); then
     error_handle "$ERROR_EXECUTION" "Failed to get disk path for VM $VM_ID" "$SEVERITY_HIGH" "continue"
     continue
@@ -175,7 +175,7 @@ for VM_ID in "${VM_IDS[@]}"; do
     continue
   fi
 
-  local mount_success=false
+  mount_success=false
 
   # Try to mount the VM disk directly first
   log_info "Attempting direct mount for VM $VM_ID..."
@@ -186,7 +186,7 @@ for VM_ID in "${VM_IDS[@]}"; do
     log_warning "Could not mount VM $VM_ID disk directly. Trying qemu-nbd method..."
 
     # Try using qemu-nbd to mount the disk
-    local nbd_device="/dev/nbd0"
+    nbd_device="/dev/nbd0"
 
     # Load nbd module
     if ! sudo modprobe nbd 2>/dev/null; then
@@ -223,7 +223,7 @@ for VM_ID in "${VM_IDS[@]}"; do
 
   # If mount was successful, proceed with machine-id operations
   if [[ "$mount_success" == "true" ]]; then
-    local machine_id_cleared=false
+    machine_id_cleared=false
 
     # Remove existing machine-id files
     if sudo rm -f "$MOUNT_POINT/etc/machine-id" 2>/dev/null && \

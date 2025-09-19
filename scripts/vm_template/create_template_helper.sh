@@ -259,7 +259,7 @@ if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     
     # Copy the user-data file to Proxmox snippets directory first
     echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
-    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
     sudo mkdir -p "$snippets_path"
     sudo cp "$TEMP_USERDATA" "${snippets_path}/debian-userdata-${TEMPLATE_VM_ID}.yaml"
     sudo chmod 644 "${snippets_path}/debian-userdata-${TEMPLATE_VM_ID}.yaml"
@@ -305,9 +305,7 @@ elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
     
     # Copy the user-data file to Proxmox snippets directory first
     echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
-    # Copy the user-data file to Proxmox snippets directory first
-    echo -e "${GREEN}Copying cloud-init user-data to Proxmox snippets directory...${ENDCOLOR}"
-    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
     sudo mkdir -p "$snippets_path"
     sudo cp "$TEMP_USERDATA" "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
     sudo chmod 644 "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml"
@@ -563,18 +561,18 @@ sudo rm -f "${PROXMOX_ISO_PATH:?PROXMOX_ISO_PATH is not set}/${IMAGE_NAME:?IMAGE
 # Clean up temporary cloud-init files
 if [[ "$IMAGE_NAME" == *"debian"* || "$IMAGE_NAME" == *"Debian"* ]]; then
     echo -e "${GREEN}Cleaning up temporary Debian cloud-init files...${ENDCOLOR}"
-    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
     sudo rm -f "${snippets_path}/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
     rm -f "/tmp/debian-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
 elif [[ "$IMAGE_NAME" == *"ubuntu"* || "$IMAGE_NAME" == *"Ubuntu"* ]]; then
     echo -e "${GREEN}Preserving Ubuntu cloud-init files for VM deployments...${ENDCOLOR}"
     # Create a generic cloud-init file for all Ubuntu VMs
-    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
     sudo cp "./ubuntu-cloud-init-userdata.yaml" "${snippets_path}/ubuntu-userdata.yaml"
     sudo chmod 644 "${snippets_path}/ubuntu-userdata.yaml"
     
     # Important: ALSO KEEP the template-specific file (this is what Terraform/OpenTofu references)
-    local snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
+    snippets_path="${PROXMOX_STORAGE_BASE_PATH}/${PROXMOX_DISK_DATASTORE}/snippets"
     sudo cp "./ubuntu-cloud-init-userdata.yaml" "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
     sudo chmod 644 "${snippets_path}/ubuntu-userdata-${TEMPLATE_VM_ID}.yaml" 2>/dev/null || true
     echo -e "${GREEN}Created permanent ubuntu cloud-init files in snippets for VM deployments${ENDCOLOR}"

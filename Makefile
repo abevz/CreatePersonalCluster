@@ -43,7 +43,7 @@ lint-shell:
 
 lint-tf:
 	@echo "Running Terraform linting..."
-	tflint --recursive terraform/
+	cd terraform && tflint
 
 lint-ansible:
 	@echo "Running Ansible linting..."
