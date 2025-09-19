@@ -1,7 +1,7 @@
 # CPC Project Makefile
 # Provides convenient commands for development, testing, and maintenance
 
-.PHONY: help test test-unit test-integration lint lint-shell lint-ansible clean setup dev-setup
+.PHONY: help test test-unit test-integration lint lint-shell lint-ansible clean setup dev-setup security
 
 # Default target
 help:
@@ -9,6 +9,7 @@ help:
 	@echo "==================="
 	@echo ""
 	@echo "Available targets:"
+	@echo "  security       - Run security checks for secrets"
 	@echo "  test           - Run all tests"
 	@echo "  test-unit      - Run unit tests only"
 	@echo "  test-integration - Run integration tests only"
@@ -47,6 +48,11 @@ lint-tf:
 lint-ansible:
 	@echo "Running Ansible linting..."
 	ansible-lint ansible/playbooks/
+
+# Security targets
+security:
+	@echo "Running security checks..."
+	./scripts/security_check.sh
 
 # Cleanup
 clean:

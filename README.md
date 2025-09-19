@@ -11,6 +11,7 @@
 
 ## 📋 Table of Contents
 
+- [🔒 Security & Secrets](#-security--secrets)
 - [🎯 Overview](#-overview)
 - [✨ Key Features](#-key-features)
 - [🚀 Quick Start](#-quick-start)
@@ -23,6 +24,29 @@
 - [🧪 Testing & Validation](#-testing--validation)
 - [🤝 Contributing](#-contributing)
 - [📄 License](#-license)
+
+---
+
+## 🔒 Security & Secrets
+
+**⚠️ IMPORTANT**: This project handles sensitive information including API keys, passwords, and tokens. Always follow security best practices:
+
+### 🚨 Never Commit Secrets
+- **DO NOT** commit files containing real secrets to version control
+- Use `secrets.sops.yaml` (encrypted with SOPS) for sensitive data
+- Temporary files like `secrets_temp.yaml` are **automatically ignored**
+- Always run `gitleaks detect` before pushing to check for exposed secrets
+
+### 🔐 Secret Management
+- Use [SOPS](https://github.com/getsops/sops) for encrypting secrets
+- Store encrypted secrets in `secrets.sops.yaml`
+- Decrypt only when needed: `sops decrypt secrets.sops.yaml`
+- Never store decrypted secrets in the repository
+
+### 🛡️ Security Tools
+- Run `gitleaks detect` regularly to scan for exposed secrets
+- Use `.gitignore` to prevent accidental commits of sensitive files
+- Rotate compromised credentials immediately
 
 ---
 
