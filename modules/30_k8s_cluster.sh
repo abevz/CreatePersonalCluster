@@ -406,6 +406,7 @@ k8s_cluster_status() {
 
   # Check SSH connectivity using helper function
   log_info "🔗 2. Testing SSH connectivity..."
+
   check_ssh_connectivity_v2 "$cluster_data" "$quick_mode"
 
   echo
@@ -413,6 +414,18 @@ k8s_cluster_status() {
   # Check Kubernetes health using helper function
   log_info "⚙️ 3. Checking Kubernetes cluster status..."
   check_kubernetes_health_v2 "$current_ctx" "$quick_mode"
+}
+
+# Helper function to show basic VM info when Proxmox API is not available
+show_basic_vm_info() {
+  local cluster_data="$1"
+  local reason="$2"
+  
+  echo "$cluster_data" | jq -r 'to_entries[] | "\(.value.VM_ID) \(.key) \(.value.hostname) \(.value.IP)"' | while read -r vm_id vm_key hostname ip; do
+    if [[ -n "$vm_id" && "$vm_id" != "null" ]]; then
+      echo -e "  VM $vm_id ($hostname): ${YELLOW}? Status unknown ($reason)${ENDCOLOR}"
+    fi
+  done
 }
 
 # Helper function to show basic VM info when Proxmox API is not available

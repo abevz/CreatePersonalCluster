@@ -1102,6 +1102,7 @@ function core_auto_command() {
   
   # Restore debug setting
   [[ -n "$old_debug" ]] && export CPC_DEBUG="$old_debug"
+
 }
 
 # gather_workspace_info() - Gathers information about the current workspace

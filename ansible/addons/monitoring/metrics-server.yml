@@ -24,7 +24,6 @@
         url: "https://raw.githubusercontent.com/kubernetes-sigs/metrics-server/096960107da4a1b2e2ec83b2ac3424248cfc0ad5/deploy/kubernetes/components.yaml"
         dest: "/tmp/metrics-server-{{ metrics_server_target_version }}.yaml"
         mode: '0644'
-
     - name: Apply Metrics Server manifests
       ansible.builtin.shell: kubectl apply -f /tmp/metrics-server-{{ metrics_server_target_version }}.yaml
       register: metrics_server_apply_result

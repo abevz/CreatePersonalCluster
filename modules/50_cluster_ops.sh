@@ -261,6 +261,7 @@ _upgrade_addons_get_user_selection() {
   return 0
 }
 
+
 _upgrade_addons_validate_selection() {
   local addon_name="$1"
   if ! addon_validate_exists "$addon_name"; then
