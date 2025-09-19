@@ -19,7 +19,14 @@ chown -R root:root /opt/cni/bin # https://github.com/cilium/cilium/issues/23838
 
 ### install yq
 wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+wget -q https://github.com/mikefarah/yq/releases/latest/download/checksums -O /tmp/yq_checksums
+if ! sha256sum --check --ignore-missing /tmp/yq_checksums; then
+    echo "ERROR: yq checksum verification failed!"
+    rm -f /usr/local/bin/yq /tmp/yq_checksums
+    exit 1
+fi
 chmod +x /usr/local/bin/yq
+rm -f /tmp/yq_checksums
 
 ### install yj
 wget -q https://github.com/sclevine/yj/releases/download/v5.1.0/yj-linux-amd64 -O /usr/local/bin/yj

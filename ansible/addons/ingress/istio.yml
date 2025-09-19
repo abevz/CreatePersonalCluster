@@ -45,7 +45,7 @@
 
     - name: Install Istio addons (Kiali, Jaeger, Prometheus, Grafana)
       ansible.builtin.shell: |
-        kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-{{ istio_target_version }}/samples/addons/{{ item }}.yaml
+        kubectl apply -f https://raw.githubusercontent.com/istio/istio/e9ff9d1d64b7d082da545e6ea3956fb1e6364ec7/samples/addons/{{ item }}.yaml
       loop:
         - kiali
         - jaeger

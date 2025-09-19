@@ -23,9 +23,6 @@ secrets.sops.yaml
 terraform_state.json
 terraform/snippets/summary.txt
 
-# Python test cache
-tests/unit/__pycache__
-
 # Gemini-generated files
 GEMINI.md
 TEST_COMPLIANCE_REPORT.md
@@ -36,10 +33,6 @@ envs/ubuntu-test.env
 
 # Log files
 kube-bench-full.log
-
-# Python cache
-scripts/__pycache__/
-tests/__pycache__/
 
 # Temp files
 tmp/

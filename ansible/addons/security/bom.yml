@@ -23,8 +23,22 @@
             aarch64) ARCH="arm64" ;;
             armv7l) ARCH="arm" ;;
           esac
-          curl -L "https://github.com/kubernetes-sigs/bom/releases/download/v{{ bom_target_version }}/bom-${ARCH}-linux" -o /usr/local/bin/bom
+          
+          # Download binary and checksum
+          curl -L "https://github.com/kubernetes-sigs/bom/releases/download/v{{ bom_target_version }}/bom-${ARCH}-linux" -o /tmp/bom-${ARCH}-linux
+          curl -L "https://github.com/kubernetes-sigs/bom/releases/download/v{{ bom_target_version }}/bom-${ARCH}-linux.sha256" -o /tmp/bom-${ARCH}-linux.sha256
+          
+          # Verify checksum
+          if ! sha256sum --check /tmp/bom-${ARCH}-linux.sha256; then
+            echo "ERROR: BOM binary checksum verification failed!"
+            rm -f /tmp/bom-${ARCH}-linux /tmp/bom-${ARCH}-linux.sha256
+            exit 1
+          fi
+          
+          # Move to final location and set permissions
+          mv /tmp/bom-${ARCH}-linux /usr/local/bin/bom
           chmod +x /usr/local/bin/bom
+          rm -f /tmp/bom-${ARCH}-linux.sha256
         fi
       register: bom_download
       changed_when: "'bom' not in bom_download.stdout"
