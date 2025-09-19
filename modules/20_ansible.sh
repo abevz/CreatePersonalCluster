@@ -155,153 +155,84 @@ ansible_show_run_command_help() {
 function ansible_run_playbook() {
   local playbook_name=$1
   shift
+  
+  # Prepare inventory
+  local temp_inventory_file
+  temp_inventory_file=$(ansible_prepare_inventory "$@")
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+  
+  # Add temporary inventory to arguments if it was created
+  if [[ -n "$temp_inventory_file" ]]; then
+    set -- "$@" -i "$temp_inventory_file"
+  fi
+  
+  # Load environment variables
+  local env_vars
+  env_vars=$(ansible_load_environment_variables)
+  
+  # Prepare secret variables
+  local secret_vars
+  secret_vars=$(ansible_prepare_secret_variables)
+  
+  # Construct command array - pass all remaining args as separate parameters
+  local cmd_array
+  ansible_construct_command_array cmd_array "$playbook_name" "$temp_inventory_file" "$env_vars" "$secret_vars" "$@"
+  
+  # Execute command
+  ansible_execute_command cmd_array "$playbook_name"
+  local result=$?
+  
+  # Clean up temporary files
+  ansible_cleanup_temp_files "$temp_inventory_file"
+  
+  return $result
+}
+
+# ansible_execute_command() - Execute ansible command with proper error handling
+function ansible_execute_command() {
+  local -n cmd_array_ref=$1  # nameref parameter
+  local playbook_name="$2"
   local repo_root
   repo_root=$(get_repo_path)
   local ansible_dir="$repo_root/ansible"
-  local temp_inventory_file
-
-  # --- CHANGE 1: We create inventory only once if needed ---
-  # If there is no inventory (-i) in arguments, create temporary
-  if ! [[ "$*" =~ -i ]]; then
-    temp_inventory_file=$(ansible_create_temp_inventory)
-    if [[ $? -ne 0 || -z "$temp_inventory_file" ]]; then
-      log_error "Failed to create temporary Ansible inventory."
-      return 1
-    fi
-    # Add temporary inventory to arguments
-    set -- "$@" -i "$temp_inventory_file"
-  fi
-
-  local ansible_cmd_array=("ansible-playbook" "playbooks/$playbook_name" "--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
-
-  local current_ctx
-  current_ctx=$(get_current_cluster_context)
-  local env_file="$repo_root/envs/$current_ctx.env"
-
-  if [[ -f "$env_file" ]]; then
-    log_debug "Loading variables from $env_file for Ansible..."
-    while IFS= read -r line; do
-      [[ -n "$line" && ! "$line" =~ ^\s*# ]] && ansible_cmd_array+=("-e" "$line")
-    done <"$env_file"
-  fi
-
-  # --- CHANGE 2: Here IT IS! Universal block for passing secrets ---
-  # List of secrets that will be automatically passed to Ansible if they exist in the environment.
-  # They are loaded by the load_secrets function from 00_core.sh
-  local secret_vars_to_pass=(
-    "HARBOR_HOSTNAME"
-    "HARBOR_ROBOT_USERNAME"
-    "HARBOR_ROBOT_TOKEN"
-    "DOCKER_HUB_USERNAME"
-    "DOCKER_HUB_PASSWORD"
-    # Add other secrets here if needed in Ansible
-  )
-
-  log_debug "Adding secrets from environment to Ansible command..."
-  for var_name in "${secret_vars_to_pass[@]}"; do
-    # The construction ${!var_name} is an indirect reference to the variable's value.
-    if [[ -n "${!var_name}" ]]; then
-      # Pass the variable to Ansible. Ansible prefers lowercase variables.
-      local ansible_var_name
-      ansible_var_name=$(echo "$var_name" | tr '[:upper:]' '[:lower:]')
-      ansible_cmd_array+=("-e" "$ansible_var_name=${!var_name}")
-      log_debug "  -> Passing secret: $ansible_var_name"
-    fi
-  done
-  # --- END OF CHANGES BLOCK ---
-
-  local ansible_user
-  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")
-  ansible_cmd_array+=("-e" "ansible_user=$ansible_user")
-
-  # Add all other arguments passed to the function (e.g., -i /path/to/inventory)
-  if [[ $# -gt 0 ]]; then
-    ansible_cmd_array+=("$@")
-  fi
-
-  log_info "Running: ${ansible_cmd_array[*]}"
+  
+  log_info "Running: ${cmd_array_ref[*]}"
 
   pushd "$ansible_dir" >/dev/null || {
     error_handle "$ERROR_EXECUTION" "Failed to change to ansible directory: $ansible_dir" "$SEVERITY_HIGH"
     return 1
   }
 
-  # Execute ansible command directly to preserve argument array
-  log_info "Starting recoverable operation: upgrade_addon_${playbook_name}"
+  # Create command string safely
+  local cmd_str
+  printf -v cmd_str '%q ' "${cmd_array_ref[@]}"
+  cmd_str=${cmd_str% }  # Remove trailing space
   
-  if "${ansible_cmd_array[@]}"; then
+  if eval "$cmd_str"; then
     log_success "Ansible playbook $playbook_name completed successfully"
-    recovery_result=0
+    return 0
   else
-    recovery_result=$?
-    log_error "Ansible playbook $playbook_name failed (exit code: $recovery_result)"
-    log_warning "Attempting recovery for operation: upgrade_addon_${playbook_name}"
-    log_warning "Addon upgrade failed, manual cleanup may be needed"
+    local exit_code=$?
+    log_error "Ansible playbook $playbook_name failed (exit code: $exit_code)"
+    return $exit_code
   fi
 
   popd >/dev/null
-
-  # --- CHANGE 3: Remove temporary inventory if it was created ---
-  if [[ -n "$temp_inventory_file" ]]; then
-    rm "$temp_inventory_file"
-  fi
-
-  return $recovery_result
 }
 
 # Update Ansible inventory cache from Terraform state
 ansible_update_inventory_cache() {
   log_info "Updating inventory cache..."
-  local repo_root
-  repo_root=$(get_repo_path) || return 1
-  local cache_file="$repo_root/.ansible_inventory_cache.json"
-  local terraform_dir="$repo_root/terraform"
-
-  if [ -d "$terraform_dir" ]; then
-    pushd "$terraform_dir" >/dev/null || true
-
-    local cluster_summary
-    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null | jq -r '.value // empty')
-
-    if [ -n "$cluster_summary" ]; then
-      # Generate inventory from cluster_summary
-      local inventory_json
-      inventory_json=$(echo "$cluster_summary" | jq '{
-                "_meta": {
-                    "hostvars": (
-                        to_entries | map({
-                            key: .value.IP,
-                            value: {
-                                "ansible_host": .value.IP,
-                                "node_name": .key,
-                                "hostname": .value.hostname,
-                                "vm_id": .value.VM_ID,
-                                "k8s_role": (if (.key | contains("controlplane")) then "control-plane" else "worker" end)
-                            }
-                        }) | from_entries
-                    )
-                },
-                "all": {
-                    "children": ["control_plane", "workers"]
-                },
-                "control_plane": {
-                    "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]]
-                },
-                "workers": {
-                    "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]]
-                }
-            }')
-
-      # Write to cache file
-      echo "$inventory_json" >"$cache_file"
-      log_success "Inventory cache updated"
-    else
-      log_warning "Could not get cluster_summary from terraform, using existing cache"
-    fi
-
-    popd >/dev/null || true
-  else
-    log_warning "Terraform directory not found at $terraform_dir"
+  
+  # Get cluster summary
+  local cluster_summary
+  cluster_summary=$(ansible_get_cluster_summary)
+  
+  # Create basic inventory if cluster summary was retrieved
+  if [[ -n "$cluster_summary" ]]; then
+    ansible_create_basic_inventory "$cluster_summary"
   fi
 }
 
@@ -321,93 +252,305 @@ ansible_update_inventory_cache_advanced() {
 
   log_info "Updating Ansible inventory cache..."
 
+  # Validate terraform directory
+  if ! ansible_validate_terraform_directory; then
+    return 1
+  fi
+
+  # Setup AWS credentials
+  ansible_setup_aws_credentials
+
+  # Fetch cluster information
+  local cluster_summary
+  cluster_summary=$(ansible_fetch_cluster_information)
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+
+  # Generate inventory JSON
+  local inventory_json
+  inventory_json=$(ansible_generate_inventory_json "$cluster_summary")
+
+  # Write inventory cache
+  ansible_write_inventory_cache "$inventory_json"
+}
+
+#----------------------------------------------------------------------
+# Helper Functions for Refactoring
+#----------------------------------------------------------------------
+
+# ansible_create_temp_inventory() - Create temporary inventory file
+# This function was called but not defined - creating it now
+function ansible_create_temp_inventory() {
+  local temp_file
+  temp_file=$(mktemp /tmp/ansible_inventory_XXXXXX.ini)
+  
+  if [[ $? -ne 0 ]]; then
+    log_error "Failed to create temporary file for inventory"
+    return 1
+  fi
+  
+  # Use the advanced inventory cache update to populate the temp file
   local repo_root
   repo_root=$(get_repo_path) || return 1
   local cache_file="$repo_root/.ansible_inventory_cache.json"
+  
+  if [[ -f "$cache_file" ]]; then
+    # Convert JSON cache to INI format for ansible-playbook with host variables
+    {
+      echo "[all:vars]"
+      echo "ansible_python_interpreter=/usr/bin/python3"
+      echo ""
+      echo "[control_plane]"
+      # Add control plane hosts with their variables
+      jq -r '.control_plane.hosts[]' "$cache_file" 2>/dev/null | while read -r host; do
+        echo "$host"
+        # Add host-specific variables
+        jq -r --arg host "$host" '._meta.hostvars[$host] | to_entries[] | "\($host) \(.key)=\(.value)"' "$cache_file" 2>/dev/null
+      done
+      echo ""
+      echo "[workers]"
+      # Add worker hosts with their variables
+      jq -r '.workers.hosts[]' "$cache_file" 2>/dev/null | while read -r host; do
+        echo "$host"
+        # Add host-specific variables
+        jq -r --arg host "$host" '._meta.hostvars[$host] | to_entries[] | "\($host) \(.key)=\(.value)"' "$cache_file" 2>/dev/null
+      done
+    } > "$temp_file"
+  else
+    log_warning "No inventory cache found, creating basic inventory"
+    # Create basic inventory if cache doesn't exist
+    {
+      echo "[all:vars]"
+      echo "ansible_python_interpreter=/usr/bin/python3"
+      echo ""
+      echo "[control_plane]"
+      echo "# Add control plane nodes here"
+      echo ""
+      echo "[workers]"
+      echo "# Add worker nodes here"
+    } > "$temp_file"
+  fi
+  
+  echo "$temp_file"
+}
+
+# ansible_create_basic_inventory() - Create basic inventory structure from cluster summary
+function ansible_create_basic_inventory() {
+  local cluster_summary="$1"
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+  local cache_file="$repo_root/.ansible_inventory_cache.json"
+
+  if [ -n "$cluster_summary" ]; then
+    # Generate inventory from cluster_summary
+    local inventory_json
+    inventory_json=$(echo "$cluster_summary" | jq '{
+              "_meta": {
+                  "hostvars": (
+                      to_entries | map({
+                          key: .value.IP,
+                          value: {
+                              "ansible_host": .value.IP,
+                              "node_name": .key,
+                              "hostname": .value.hostname,
+                              "vm_id": .value.VM_ID,
+                              "k8s_role": (if (.key | contains("controlplane")) then "control-plane" else "worker" end)
+                          }
+                      }) | from_entries
+                  )
+              },
+              "all": {
+                  "children": ["control_plane", "workers"]
+              },
+              "control_plane": {
+                  "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]]
+              },
+              "workers": {
+                  "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]]
+              }
+          }')
+
+    # Write to cache file
+    echo "$inventory_json" >"$cache_file"
+    log_success "Inventory cache updated"
+  fi
+}
+
+# ansible_prepare_inventory() - Create temporary inventory file if not provided by user
+function ansible_prepare_inventory() {
+  local temp_inventory_file=""
+  
+  # If there is no inventory (-i) in arguments, create temporary
+  if ! [[ "$*" =~ -i ]]; then
+    temp_inventory_file=$(ansible_create_temp_inventory)
+    if [[ $? -ne 0 || -z "$temp_inventory_file" ]]; then
+      log_error "Failed to create temporary Ansible inventory."
+      return 1
+    fi
+  fi
+  
+  echo "$temp_inventory_file"
+}
+
+# ansible_load_environment_variables() - Load environment variables from context-specific .env file
+function ansible_load_environment_variables() {
+  local repo_root
+  repo_root=$(get_repo_path)
+  local current_ctx
+  current_ctx=$(get_current_cluster_context)
+  local env_file="$repo_root/envs/$current_ctx.env"
+  local env_vars=()
+
+  if [[ -f "$env_file" ]]; then
+    log_debug "Loading variables from $env_file for Ansible..."
+    while IFS= read -r line; do
+      # Skip empty lines and lines starting with #
+      [[ -n "$line" && ! "$line" =~ ^\s*# ]] || continue
+      
+      # Remove inline comments (everything after #)
+      line="${line%%#*}"
+      # Trim whitespace
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      
+      # Only add non-empty lines
+      [[ -n "$line" ]] && env_vars+=("$line")
+    done <"$env_file"
+  fi
+  
+  # Return the array (this will be captured as a string, but we'll handle it differently)
+  echo "${env_vars[@]}"
+}
+
+# ansible_prepare_secret_variables() - Prepare secret variables for Ansible execution
+function ansible_prepare_secret_variables() {
+  # List of secrets that will be automatically passed to Ansible if they exist in the environment.
+  # They are loaded by the load_secrets function from 00_core.sh
+  local secret_vars_to_pass=(
+    "HARBOR_HOSTNAME"
+    "HARBOR_ROBOT_USERNAME"
+    "HARBOR_ROBOT_TOKEN"
+    "DOCKER_HUB_USERNAME"
+    "DOCKER_HUB_PASSWORD"
+    # Add other secrets here if needed in Ansible
+  )
+
+  local secret_vars=()
+  log_debug "Adding secrets from environment to Ansible command..."
+  for var_name in "${secret_vars_to_pass[@]}"; do
+    # The construction ${!var_name} is an indirect reference to the variable's value.
+    if [[ -n "${!var_name}" ]]; then
+      # Pass the variable to Ansible. Ansible prefers lowercase variables.
+      local ansible_var_name
+      ansible_var_name=$(echo "$var_name" | tr '[:upper:]' '[:lower:]')
+      secret_vars+=("$ansible_var_name=${!var_name}")
+      log_debug "  -> Passing secret: $ansible_var_name"
+    fi
+  done
+  
+  echo "${secret_vars[@]}"
+}
+
+# ansible_construct_command_array() - Build the final ansible-playbook command array
+function ansible_construct_command_array() {
+  local -n _result=$1  # nameref parameter
+  local playbook_name="$2"
+  local temp_inventory_file="$3"
+  local env_vars="$4"
+  local secret_vars="$5"
+  shift 5  # Remove the first 5 parameters
+  
+  local repo_root
+  repo_root=$(get_repo_path)
+  local ansible_dir="$repo_root/ansible"
+  
+  _result=("ansible-playbook" "playbooks/$playbook_name")
+  
+  # Add SSH extra args as separate arguments
+  _result+=("--ssh-extra-args")
+  _result+=("-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+  
+  # Add environment variables (split the string into array)
+  if [[ -n "$env_vars" ]]; then
+    read -ra env_array <<< "$env_vars"
+    for var in "${env_array[@]}"; do
+      _result+=("-e" "$var")
+    done
+  fi
+  
+  # Add secret variables (split the string into array)
+  if [[ -n "$secret_vars" ]]; then
+    read -ra secret_array <<< "$secret_vars"
+    for var in "${secret_array[@]}"; do
+      _result+=("-e" "$var")
+    done
+  fi
+  
+  # Add ansible_user
+  local ansible_user
+  ansible_user=$(grep -Po '^remote_user\s*=\s*\K.*' "$ansible_dir/ansible.cfg")
+  _result+=("-e" "ansible_user=$ansible_user")
+  
+  # Add temporary inventory if it exists
+  if [[ -n "$temp_inventory_file" ]]; then
+    _result+=("-i" "$temp_inventory_file")
+  fi
+  
+  # Process remaining user-provided arguments
+  local ansible_flags=("-h" "--help" "-v" "--verbose" "-C" "--check" "-D" "--diff" 
+                      "-b" "--become" "-K" "--ask-become-pass" "-k" "--ask-pass"
+                      "-t" "--tags" "--skip-tags" "-l" "--limit" "-f" "--forks"
+                      "-u" "--user" "-c" "--connection" "-T" "--timeout"
+                      "--step" "--syntax-check" "--list-tasks" "--list-tags" "--list-hosts")
+  
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    if [[ "$arg" =~ ^[A-Z_]+=.+ ]]; then
+      # This looks like a key=value variable, add -e prefix
+      _result+=("-e" "$arg")
+    elif [[ " ${ansible_flags[*]} " =~ " $arg " ]]; then
+      # This is a known ansible flag
+      _result+=("$arg")
+    else
+      # Unknown argument, add it as-is (might be a value for a previous flag)
+      _result+=("$arg")
+    fi
+    shift
+  done
+}
+
+# ansible_cleanup_temp_files() - Clean up temporary files created during execution
+function ansible_cleanup_temp_files() {
+  local temp_inventory_file="$1"
+  
+  # Remove temporary inventory if it was created
+  if [[ -n "$temp_inventory_file" ]]; then
+    rm "$temp_inventory_file"
+  fi
+}
+
+# ansible_validate_terraform_directory() - Validate that terraform directory exists and is accessible
+function ansible_validate_terraform_directory() {
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
   local terraform_dir="$repo_root/terraform"
 
   if [ ! -d "$terraform_dir" ]; then
     log_error "terraform directory not found at $terraform_dir"
     return 1
   fi
+  
+  return 0
+}
 
+# ansible_setup_aws_credentials() - Set up AWS credentials for terraform backend access
+function ansible_setup_aws_credentials() {
   # Export AWS credentials for terraform backend (needed for tofu output)
   export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
   export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
   export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
-
-  # Load current cluster info using cluster-info (which handles credentials)
-  log_warning "Getting cluster information..."
-
-  # Get cluster info and extract only the JSON part (last line that starts with {)
-  local cluster_info_output
-  cluster_info_output=$(cpc_tofu cluster-info --format json 2>/dev/null)
-  local cluster_summary
-  cluster_summary=$(echo "$cluster_info_output" | grep '^{.*}$' | tail -1)
-
-  if [ -z "$cluster_summary" ] || [ "$cluster_summary" = "null" ]; then
-    log_error "Could not get cluster information from terraform"
-    log_info "Make sure terraform is applied and cluster is running"
-    return 1
-  fi
-
-  # Generate inventory from cluster_summary
-  local inventory_json
-  inventory_json=$(echo "$cluster_summary" | jq '{
-      "_meta": {
-        "hostvars": (
-          to_entries | reduce .[] as $item ({}; 
-            . + {
-              ($item.value.IP): {
-                "ansible_host": $item.value.IP,
-                "node_name": $item.key,
-                "hostname": $item.value.hostname,
-                "vm_id": $item.value.VM_ID,
-                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
-              }
-            } + {
-              ($item.value.hostname): {
-                "ansible_host": $item.value.IP,
-                "node_name": $item.key,
-                "hostname": $item.value.hostname,
-                "vm_id": $item.value.VM_ID,
-                "k8s_role": (if ($item.key | contains("controlplane")) then "control-plane" else "worker" end)
-              }
-            }
-          )
-        )
-      },
-      "all": {
-        "children": ["control_plane", "workers"]
-      },
-      "control_plane": {
-        "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("controlplane")) | .value.hostname) | .[]]
-      },
-      "workers": {
-        "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]] + [to_entries | map(select(.key | contains("worker")) | .value.hostname) | .[]]
-      }
-    }')
-
-  # Write to cache file
-  echo "$inventory_json" >"$cache_file"
-
-  log_success "Ansible inventory cache updated at $cache_file"
-  log_info "Inventory contents:"
-  jq '.' "$cache_file"
 }
-
-#----------------------------------------------------------------------
-# Export functions for use by other modules
-#----------------------------------------------------------------------
-export -f cpc_ansible
-export -f ansible_run_playbook_command
-export -f ansible_run_shell_command
-export -f ansible_run_playbook
-export -f ansible_show_help
-export -f ansible_show_run_command_help
-export -f ansible_list_playbooks
-export -f ansible_update_inventory_cache
-export -f ansible_update_inventory_cache_advanced
 
 #----------------------------------------------------------------------
 # Module help function
@@ -426,4 +569,121 @@ ansible_help() {
   echo "  ansible_update_inventory_cache_advanced() - Advanced inventory update with cluster info"
 }
 
-export -f ansible_help
+#----------------------------------------------------------------------
+# Missing Helper Functions (created during refactoring)
+#----------------------------------------------------------------------
+
+# ansible_get_cluster_summary() - Get cluster summary from terraform output
+function ansible_get_cluster_summary() {
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+  local terraform_dir="$repo_root/terraform"
+
+  if [ -d "$terraform_dir" ]; then
+    pushd "$terraform_dir" >/dev/null || {
+      log_error "Failed to change to terraform directory: $terraform_dir"
+      return 1
+    }
+
+    local cluster_summary
+    cluster_summary=$(tofu output -json cluster_summary 2>/dev/null | jq -r '.value // empty')
+
+    if [ -n "$cluster_summary" ]; then
+      popd >/dev/null || true
+      echo "$cluster_summary"
+      return 0
+    else
+      log_warning "Could not get cluster_summary from terraform, using existing cache"
+      popd >/dev/null || true
+      return 1
+    fi
+  else
+    log_warning "Terraform directory not found at $terraform_dir"
+    return 1
+  fi
+}
+
+# ansible_fetch_cluster_information() - Retrieve cluster information from tofu/terraform
+function ansible_fetch_cluster_information() {
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+  local terraform_dir="$repo_root/terraform"
+
+  if [ -d "$terraform_dir" ]; then
+    pushd "$terraform_dir" >/dev/null || {
+      log_error "Failed to change to terraform directory: $terraform_dir"
+      return 1
+    }
+
+    local cluster_info
+    cluster_info=$(tofu output -json cluster_info 2>/dev/null | jq -r '.value // empty')
+
+    if [ -n "$cluster_info" ]; then
+      popd >/dev/null || true
+      echo "$cluster_info"
+      return 0
+    else
+      log_error "Could not get cluster_info from terraform"
+      popd >/dev/null || true
+      return 1
+    fi
+  else
+    log_error "Terraform directory not found at $terraform_dir"
+    return 1
+  fi
+}
+
+# ansible_generate_inventory_json() - Transform cluster summary into Ansible inventory JSON
+function ansible_generate_inventory_json() {
+  local cluster_summary="$1"
+  
+  if [ -z "$cluster_summary" ]; then
+    log_error "No cluster summary provided"
+    return 1
+  fi
+  
+  # Generate inventory JSON from cluster summary
+  local inventory_json
+  inventory_json=$(echo "$cluster_summary" | jq '{
+            "_meta": {
+                "hostvars": (
+                    to_entries | map({
+                        key: .value.IP,
+                        value: {
+                            "ansible_host": .value.IP,
+                            "node_name": .key,
+                            "hostname": .value.hostname,
+                            "vm_id": .value.VM_ID,
+                            "k8s_role": (if (.key | contains("controlplane")) then "control-plane" else "worker" end)
+                        }
+                    }) | from_entries
+                )
+            },
+            "all": {
+                "children": ["control_plane", "workers"]
+            },
+            "control_plane": {
+                "hosts": [to_entries | map(select(.key | contains("controlplane")) | .value.IP) | .[]]
+            },
+            "workers": {
+                "hosts": [to_entries | map(select(.key | contains("worker")) | .value.IP) | .[]]
+            }
+        }')
+
+  echo "$inventory_json"
+}
+
+# ansible_write_inventory_cache() - Write inventory JSON to cache file
+function ansible_write_inventory_cache() {
+  local inventory_json="$1"
+  local repo_root
+  repo_root=$(get_repo_path) || return 1
+  local cache_file="$repo_root/.ansible_inventory_cache.json"
+
+  # Write to cache file
+  echo "$inventory_json" >"$cache_file"
+
+  log_success "Ansible inventory cache updated at $cache_file"
+  log_info "Inventory contents:"
+  jq '.' "$cache_file"
+}

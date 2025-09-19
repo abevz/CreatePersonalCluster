@@ -483,13 +483,23 @@ def main():
         sys.exit(1)
 
     # Correctly access nested Pi-hole credentials
-    pihole_ip = secrets.get('pihole', {}).get('ip_address')
-    pihole_web_password = secrets.get('pihole', {}).get('web_password')
+    pihole_data = secrets.get('pihole')
+    if not pihole_data and 'default' in secrets:
+        pihole_data = secrets.get('default', {}).get('pihole')
+
+    if not pihole_data:
+        print("Error: 'pihole' key not found in secrets file, neither at the root nor under 'default'.", file=sys.stderr)
+        if args.debug:
+            print(f"DEBUG: Loaded secrets structure: {secrets}")
+        sys.exit(1)
+
+    pihole_ip = pihole_data.get('ip_address')
+    pihole_web_password = pihole_data.get('web_password')
 
     if not pihole_ip or not pihole_web_password:
-        print("Error: Pi-hole IP address or web password not found in secrets file under the 'pihole' key.", file=sys.stderr)
+        print("Error: Pi-hole IP address or web password not found within the 'pihole' configuration block.", file=sys.stderr)
         if args.debug: # Conditional print
-            print(f"DEBUG: Loaded secrets structure: {secrets}")
+            print(f"DEBUG: Loaded pihole data: {pihole_data}")
         sys.exit(1)
 
     # Authenticate to Pi-hole

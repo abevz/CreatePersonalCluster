@@ -24,8 +24,9 @@ timeout_init() {
 
 # Execute command with timeout
 timeout_execute() {
-    local command="$1"
-    local timeout_seconds="${2:-$DEFAULT_COMMAND_TIMEOUT}"
+    local timeout_seconds="${1:-$DEFAULT_COMMAND_TIMEOUT}"
+    shift
+    local command="$*"
     local description="${3:-Command execution}"
     local cleanup_command="${4:-}"
 

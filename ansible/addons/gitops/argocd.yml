@@ -22,8 +22,7 @@
 
     - name: Apply ArgoCD
       ansible.builtin.shell: >
-        kubectl apply -n argocd
-        -f https://raw.githubusercontent.com/argoproj/argo-cd/{{ argocd_target_version }}/manifests/install.yaml
+        kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/dc43124058130db9a747d141d86d7c2f4aac7bf9/manifests/install.yaml
       register: argocd_apply_result
       changed_when: "'configured' in argocd_apply_result.stdout or 'created' in argocd_apply_result.stdout"
 

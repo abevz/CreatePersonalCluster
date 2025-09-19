@@ -20,10 +20,13 @@
       ansible.builtin.shell: |
         if ! command -v helm &> /dev/null; then
           echo "Helm not found. Installing..."
-          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-          chmod 700 get_helm.sh
-          ./get_helm.sh
-          rm ./get_helm.sh
+          HELM_VERSION="v3.19.0"
+          ARCH="amd64"
+          if [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; fi
+          curl -L --fail --remote-name-all https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
+          sha256sum --check helm-${HELM_VERSION}-linux-${ARCH}.tar.gz.sha256sum
+          sudo tar -xzf helm-${HELM_VERSION}-linux-${ARCH}.tar.gz -C /usr/local/bin --strip-components=1 linux-${ARCH}/helm
+          rm helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
         else
           echo "Helm is already installed."
         fi
@@ -37,7 +40,10 @@
 
     - name: Install Gateway API CRDs
       ansible.builtin.shell: >
-        kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_target_version }}/standard-install.yaml
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/690f754646e8326128fd686e3e46117ac479cfdf/config/crd/standard/gateway.networking.k8s.io_gatewayclasses.yaml &&
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/690f754646e8326128fd686e3e46117ac479cfdf/config/crd/standard/gateway.networking.k8s.io_gateways.yaml &&
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/690f754646e8326128fd686e3e46117ac479cfdf/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml &&
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/690f754646e8326128fd686e3e46117ac479cfdf/config/crd/standard/gateway.networking.k8s.io_referencegrants.yaml
       register: gateway_api_result
       changed_when: "'configured' in gateway_api_result.stdout or 'created' in gateway_api_result.stdout"
 

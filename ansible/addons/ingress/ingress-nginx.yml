@@ -21,7 +21,7 @@
 
     - name: Apply ingress-nginx
       ansible.builtin.shell: >
-        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{ ingress_nginx_target_version }}/deploy/static/provider/baremetal/deploy.yaml
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/8ee4384271e081578bb8f08eccf2f3b5a78ada25/deploy/static/provider/baremetal/deploy.yaml
       register: ingress_nginx_apply_result
       changed_when: "'configured' in ingress_nginx_apply_result.stdout or 'created' in ingress_nginx_apply_result.stdout"
 

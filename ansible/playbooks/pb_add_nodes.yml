@@ -60,7 +60,11 @@
       command: systemctl is-active kubelet
       register: kubelet_status
       changed_when: false
-      ignore_errors: true
+      failed_when: false  # Never fail this task, just capture the status
+
+    - name: Display kubelet status check result
+      debug:
+        msg: "Kubelet status: {{ kubelet_status.stdout | default('inactive') }} (this is expected for new nodes)"
 
     - name: Reset node if it exists in cluster but kubelet is not running
       shell: kubeadm reset --force

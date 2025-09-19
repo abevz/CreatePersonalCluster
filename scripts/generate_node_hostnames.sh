@@ -65,7 +65,7 @@ VM_DOMAIN=$(grep -A 3 'variable "vm_domain"' "$REPO_PATH/terraform/variables.tf"
 # Get node information from the terraform output
 echo "Getting node information from terraform output..."
 cd "$REPO_PATH/terraform"
-NODE_INFO=$(tofu output -json k8s_node_names 2>/dev/null)
+CLUSTER_SUMMARY=$(tofu output -json cluster_summary 2>/dev/null)
 cd "$REPO_PATH/scripts"
 
 # Initialize arrays
@@ -74,23 +74,85 @@ ROLES=()
 INDICES=()
 
 # If the tofu output command succeeds and is not empty, parse the JSON
-if [ $? -eq 0 ] && [ -n "$NODE_INFO" ] && [ "$NODE_INFO" != "null" ]; then
+if [ $? -eq 0 ] && [ -n "$CLUSTER_SUMMARY" ] && [ "$CLUSTER_SUMMARY" != "null" ]; then
   echo "Successfully got node information from tofu output."
   while read -r key hostname; do
     short_hostname=$(echo "$hostname" | cut -d'.' -f1)
     role="${short_hostname:0:1}"
-    index="${short_hostname:2}"
+    
+    # Extract index using regex - handle both formats: c1, cb1, w1, wb1, etc.
+    if [[ "$short_hostname" =~ ^[cw]([0-9]+)$ ]]; then
+      # Format: c1, w1, w2 (no release letter)
+      index="${BASH_REMATCH[1]}"
+    elif [[ "$short_hostname" =~ ^[cw][a-z]([0-9]+)$ ]]; then
+      # Format: cb1, wb1, wb2 (with release letter)
+      index="${BASH_REMATCH[1]}"
+    else
+      # Fallback for unexpected format
+      index="${short_hostname:2}"
+    fi
 
     HOSTNAMES+=("$hostname")
     ROLES+=("$role")
     INDICES+=("$index")
-  done < <(echo "$NODE_INFO" | jq -r 'to_entries[] | "\(.key) \(.value)"')
+  done < <(echo "$CLUSTER_SUMMARY" | jq -r 'to_entries[] | "\(.key) \(.value.hostname)"')
 else
   echo "Warning: Could not get node information from terraform output. Falling back to default node definitions."
-  # Fallback logic for new workspaces
+  # Fallback logic for new workspaces - read from environment file
   HOSTNAMES=() # Ensure it's empty
+  
+  # Read additional nodes from environment file
+  ENV_FILE="$REPO_PATH/envs/$CURRENT_WORKSPACE.env"
+  ADDITIONAL_WORKERS=""
+  ADDITIONAL_CONTROLPLANES=""
+  
+  if [ -f "$ENV_FILE" ]; then
+    # Extract additional workers and control planes
+    ADDITIONAL_WORKERS=$(grep -E "^ADDITIONAL_WORKERS=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '"' || echo "")
+    ADDITIONAL_CONTROLPLANES=$(grep -E "^ADDITIONAL_CONTROLPLANES=" "$ENV_FILE" | cut -d'=' -f2 | tr -d '"' || echo "")
+  fi
+  
+  # Start with base nodes
   ROLES=("c" "w" "w")
-  INDICES=("1" "2" "3") # Note: Terraform logic uses original_index 1, 1, 2. Let's stick to simple logic here for fallback.
+  INDICES=("1" "1" "2")  # controlplane1, worker1, worker2
+  
+  # Add additional workers
+  if [ -n "$ADDITIONAL_WORKERS" ]; then
+    IFS=',' read -ra WORKER_ARRAY <<< "$ADDITIONAL_WORKERS"
+    for worker in "${WORKER_ARRAY[@]}"; do
+      if [ -n "$worker" ]; then
+        # Extract number from worker name (e.g., worker-3 -> 3)
+        if [[ "$worker" =~ worker-([0-9]+) ]]; then
+          WORKER_NUM="${BASH_REMATCH[1]}"
+        elif [[ "$worker" =~ worker([0-9]+) ]]; then
+          WORKER_NUM="${BASH_REMATCH[1]}"
+        else
+          WORKER_NUM="3"  # fallback
+        fi
+        ROLES+=("w")
+        INDICES+=("$WORKER_NUM")
+      fi
+    done
+  fi
+  
+  # Add additional control planes
+  if [ -n "$ADDITIONAL_CONTROLPLANES" ]; then
+    IFS=',' read -ra CP_ARRAY <<< "$ADDITIONAL_CONTROLPLANES"
+    for cp in "${CP_ARRAY[@]}"; do
+      if [ -n "$cp" ]; then
+        # Extract number from controlplane name (e.g., controlplane-2 -> 2)
+        if [[ "$cp" =~ controlplane-([0-9]+) ]]; then
+          CP_NUM="${BASH_REMATCH[1]}"
+        elif [[ "$cp" =~ controlplane([0-9]+) ]]; then
+          CP_NUM="${BASH_REMATCH[1]}"
+        else
+          CP_NUM="2"  # fallback
+        fi
+        ROLES+=("c")
+        INDICES+=("$CP_NUM")
+      fi
+    done
+  fi
 fi
 
 # Create snippets directory if it doesn't exist
@@ -101,16 +163,11 @@ echo "Generating cloud-init snippets for each node..."
 # For each node, generate a cloud-init snippet with the correct hostname
 for i in "${!ROLES[@]}"; do
   ROLE="${ROLES[$i]}"
-  # Adjust index for workers in fallback mode
-  if [ ${#HOSTNAMES[@]} -eq 0 ]; then
-    if [ "$ROLE" == "w" ]; then
-      INDEX=$((i))
-    else
-      INDEX=1
-    fi
-  else
-    INDEX="${INDICES[$i]}"
-  fi
+  
+  # Use the INDEX from our arrays - we've already calculated them correctly
+  INDEX="${INDICES[$i]}"
+  
+  echo "Generating for node $i: ROLE=$ROLE, INDEX=$INDEX"
 
   # If we have full hostnames from terraform output, use them
   if [ ${#HOSTNAMES[@]} -gt 0 ] && [ -n "${HOSTNAMES[$i]}" ]; then

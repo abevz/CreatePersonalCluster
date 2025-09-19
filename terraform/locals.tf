@@ -149,7 +149,7 @@ locals {
       ]
       devices           = []
       ipv4 = {
-        dns1            = var.dns_servers[0]
+        dns1            = length(var.dns_servers) > 0 ? var.dns_servers[0] : null
         dns2            = length(var.dns_servers) > 1 ? var.dns_servers[1] : null
       }
       ipv6 = {

@@ -6,10 +6,10 @@
 
   vars:
     # DNS server IP from command line or default
-    dns_server_ip: "{{ pihole_dns_server | default('10.10.10.187') }}"
+    dns_server_ip: "{{ pihole_dns_server | default('10.10.10.100') }}"
     
     # Local domains to configure (can be overridden from command line)
-    domain_list: "{{ local_domains | default(['bevz.net', 'bevz.dev', 'bevz.pl']) }}"
+    domain_list: "{{ local_domains_str.split(',') }}"
     
     control_plane_node: "{{ groups['control_plane'][0] }}"
 

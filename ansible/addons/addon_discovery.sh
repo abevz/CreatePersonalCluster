@@ -83,7 +83,7 @@ addon_display_interactive_menu() {
     for addon in "${addons_in_cat[@]}"; do
       local description
       description=$(addon_get_description "$addon")
-      printf "  %2d) %-30s - %s\n" $choice_num "$addon" "$description" >&2
+      printf "  %2d) %-30s - %s\n" "$choice_num" "$addon" "$description" >&2
       choice_to_addon[$choice_num]="$addon"
       ((choice_num++))
     done
