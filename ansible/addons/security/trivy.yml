@@ -12,7 +12,7 @@
     - name: Set Trivy version
       ansible.builtin.set_fact:
         trivy_target_version: >-
-          {{ requested_version if requested_version != '' else (trivy_version | default('latest')) }}
+          {{ requested_version if requested_version != '' else (trivy_version | default('v0.66.0')) }}
 
     - name: Create trivy namespace
       ansible.builtin.shell: kubectl create namespace trivy-system
@@ -22,7 +22,7 @@
 
     - name: Install Trivy operator
       ansible.builtin.shell: |
-        kubectl apply -f https://raw.githubusercontent.com/aquasecurity/trivy-operator/main/deploy/static/trivy-operator.yaml
+        kubectl apply -f https://raw.githubusercontent.com/aquasecurity/trivy-operator/c4d544125354c5a5c0d1403ae5fe44380b7d979d/deploy/static/trivy-operator.yaml
       register: trivy_operator_result
       changed_when: "'configured' in trivy_operator_result.stdout or 'created' in trivy_operator_result.stdout"
 

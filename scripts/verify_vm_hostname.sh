@@ -175,12 +175,12 @@ fi
 if [ -z "$PROXMOX_HOST" ] || [ -z "$PROXMOX_USERNAME" ]; then
   log_info "PROXMOX_HOST or PROXMOX_USERNAME not set. Getting from terraform secrets..."
 
-  local terraform_dir="$REPO_ROOT/terraform"
+  terraform_dir="$REPO_ROOT/terraform"
   if ! validate_directory "$terraform_dir" "Terraform directory"; then
     exit 1
   fi
 
-  local secrets_file="$terraform_dir/secrets.sops.yaml"
+  secrets_file="$terraform_dir/secrets.sops.yaml"
   if ! validate_file "$secrets_file" "Terraform secrets file"; then
     exit 1
   fi
@@ -219,8 +219,8 @@ if ! pushd "$REPO_ROOT/terraform" >/dev/null; then
   exit 1
 fi
 
-local node_ips
-local node_names
+node_ips
+node_names
 
 if ! node_ips=$(tofu output -json k8s_node_ips 2>/dev/null); then
   error_handle "$ERROR_EXECUTION" "Failed to get node IPs from tofu output" "$SEVERITY_HIGH" "abort"
@@ -246,9 +246,9 @@ if [ -z "$node_ips" ] || [ "$node_ips" = "null" ] || [ -z "$node_names" ] || [ "
 fi
 
 # Initialize counters
-local success_count=0
-local total_count=0
-local error_count=0
+success_count=0
+total_count=0
+error_count=0
 
 # Check if we got the node information
 echo "Checking VM hostnames..."
@@ -260,14 +260,14 @@ while read -r node_key ip_address; do
   total_count=$((total_count + 1))
 
   # Get the expected hostname for this node
-  local expected_hostname
+  expected_hostname
   if ! expected_hostname=$(echo "$node_names" | jq -r ".[\"$node_key\"]" 2>/dev/null); then
     error_handle "$ERROR_EXECUTION" "Failed to extract expected hostname for $node_key" "$SEVERITY_MEDIUM" "continue"
     expected_hostname="ERROR"
   fi
 
   # Check the actual hostname on the VM
-  local actual_hostname=""
+  actual_hostname=""
 
   # Try with VM_USERNAME from environment first
   if [ -n "$VM_USERNAME" ]; then
@@ -284,7 +284,7 @@ while read -r node_key ip_address; do
   fi
 
   # Determine status
-  local status
+  status
   if [ -z "$actual_hostname" ]; then
     status="ERROR: Could not connect"
     error_count=$((error_count + 1))

@@ -8,7 +8,7 @@ variable "pm_node" {
 variable "dns_servers" {
   type        = list(string)
   description = "List of DNS servers for VM initialization."
-  default = ["10.10.10.187"]
+  default = ["10.10.10.100"]
   # Example: default = ["1.1.1.1", "8.8.8.8"]
 }
 
@@ -143,7 +143,7 @@ variable "static_ip_gateway" {
 variable "static_ip_start" {
   description = "Starting IP address offset for static IP assignment"
   type        = number
-  default     = 100
+  default     = 110
 }
 
 # Advanced IP block system variables

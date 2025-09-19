@@ -22,3 +22,18 @@ cpc.env
 secrets.sops.yaml
 terraform_state.json
 terraform/snippets/summary.txt
+
+# Gemini-generated files
+GEMINI.md
+TEST_COMPLIANCE_REPORT.md
+
+# Test environment files
+envs/test-clone.env
+envs/ubuntu-test.env
+
+# Log files
+kube-bench-full.log
+
+# Temp files
+tmp/
+next_step.md

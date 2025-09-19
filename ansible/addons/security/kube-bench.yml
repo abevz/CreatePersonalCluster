@@ -12,7 +12,7 @@
     - name: Set kube-bench version
       ansible.builtin.set_fact:
         kube_bench_target_version: >-
-          {{ requested_version if requested_version != '' else (kube_bench_version | default('latest')) }}
+          {{ requested_version if requested_version != '' else (kube_bench_version | default('v0.12.0')) }}
 
     - name: Create kube-bench namespace
       ansible.builtin.shell: kubectl create namespace kube-bench

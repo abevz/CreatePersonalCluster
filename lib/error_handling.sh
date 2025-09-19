@@ -1,25 +1,27 @@
 #!/bin/bash
+if [ -n "$ERROR_HANDLING_SH_SOURCED" ]; then return; fi
+ERROR_HANDLING_SH_SOURCED=1
 # =============================================================================
 # CPC Error Handling Library
 # =============================================================================
 # Centralized error handling system for CreatePersonalCluster
 
 # Error codes and categories
-declare -r ERROR_NETWORK=100
-declare -r ERROR_AUTH=101
-declare -r ERROR_CONFIG=102
-declare -r ERROR_DEPENDENCY=103
-declare -r ERROR_TIMEOUT=104
-declare -r ERROR_VALIDATION=105
-declare -r ERROR_EXECUTION=106
-declare -r ERROR_UNKNOWN=199
+: "${ERROR_NETWORK:=100}" && declare -r ERROR_NETWORK
+: "${ERROR_AUTH:=101}" && declare -r ERROR_AUTH
+: "${ERROR_CONFIG:=102}" && declare -r ERROR_CONFIG
+: "${ERROR_DEPENDENCY:=103}" && declare -r ERROR_DEPENDENCY
+: "${ERROR_TIMEOUT:=104}" && declare -r ERROR_TIMEOUT
+: "${ERROR_VALIDATION:=105}" && declare -r ERROR_VALIDATION
+: "${ERROR_EXECUTION:=106}" && declare -r ERROR_EXECUTION
+: "${ERROR_UNKNOWN:=199}" && declare -r ERROR_UNKNOWN
 
 # Error severity levels
-declare -r SEVERITY_CRITICAL=1
-declare -r SEVERITY_HIGH=2
-declare -r SEVERITY_MEDIUM=3
-declare -r SEVERITY_LOW=4
-declare -r SEVERITY_INFO=5
+: "${SEVERITY_CRITICAL:=1}" && declare -r SEVERITY_CRITICAL
+: "${SEVERITY_HIGH:=2}" && declare -r SEVERITY_HIGH
+: "${SEVERITY_MEDIUM:=3}" && declare -r SEVERITY_MEDIUM
+: "${SEVERITY_LOW:=4}" && declare -r SEVERITY_LOW
+: "${SEVERITY_INFO:=5}" && declare -r SEVERITY_INFO
 
 # Global error tracking
 declare -a ERROR_STACK=()

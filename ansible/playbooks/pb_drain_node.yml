@@ -1,6 +1,6 @@
 ---
 - name: Drain Node from Kubernetes Cluster
-  hosts: localhost # Runs kubectl from the control machine (where ccr is run)
+  hosts: control_plane # Runs on control plane where kubectl is configured
   gather_facts: true
 
   vars:
@@ -13,19 +13,9 @@
         msg: "Variable 'node_to_drain' must be provided."
       when: node_to_drain == ""
 
-    - name: Ensure KUBECONFIG is set or use default
-      ansible.builtin.set_fact:
-        effective_kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default(ansible_env.HOME + '/.kube/config', true) }}"
-
-    - name: Display KUBECONFIG being used
-      ansible.builtin.debug:
-        msg: "Using KUBECONFIG: {{ effective_kubeconfig }}"
-
     - name: Drain the specified node
       ansible.builtin.command:
         cmd: "kubectl drain {{ node_to_drain }} {{ drain_options }}"
-      environment:
-        KUBECONFIG: "{{ effective_kubeconfig }}"
       register: drain_result
       changed_when: drain_result.rc == 0 # Consider drain successful if command exits 0
       failed_when: drain_result.rc != 0

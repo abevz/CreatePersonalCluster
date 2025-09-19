@@ -1,0 +1,3 @@
+config {
+  preset = "all"
+}

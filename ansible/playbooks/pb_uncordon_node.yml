@@ -1,0 +1,24 @@
+---
+- name: Uncordon Node in Kubernetes Cluster
+  hosts: control_plane # Runs on control plane where kubectl is configured
+  gather_facts: true
+
+  vars:
+    node_to_uncordon: "" # Expected to be passed via -e node_to_uncordon=nodename
+
+  tasks:
+    - name: Check if node_to_uncordon is provided
+      ansible.builtin.fail:
+        msg: "Variable 'node_to_uncordon' must be provided."
+      when: node_to_uncordon == ""
+
+    - name: Uncordon the specified node
+      ansible.builtin.command:
+        cmd: "kubectl uncordon {{ node_to_uncordon }}"
+      register: uncordon_result
+      changed_when: uncordon_result.rc == 0
+      failed_when: uncordon_result.rc != 0
+
+    - name: Display uncordon result
+      ansible.builtin.debug:
+        var: uncordon_result.stdout_lines
