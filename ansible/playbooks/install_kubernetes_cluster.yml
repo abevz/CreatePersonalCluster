@@ -163,7 +163,7 @@
         dest: /etc/containerd/certs.d/docker.io/hosts.toml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
       vars:
         upstream_server: "https://docker.io"
         proxy_project: "dockerhub-proxy"
@@ -175,7 +175,7 @@
         dest: /etc/containerd/certs.d/quay.io/hosts.toml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
       vars:
         upstream_server: "https://quay.io"
         proxy_project: "quay-proxy"
@@ -187,7 +187,7 @@
         dest: /etc/containerd/certs.d/gcr.io/hosts.toml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
       vars:
         upstream_server: "https://gcr.io"
         proxy_project: "gcr-proxy"
@@ -199,7 +199,7 @@
         dest: /etc/containerd/certs.d/registry.k8s.io/hosts.toml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
       vars:
         upstream_server: "https://registry.k8s.io"
         proxy_project: "k8s-proxy"
@@ -211,7 +211,7 @@
         dest: /etc/containerd/certs.d/k8s.gcr.io/hosts.toml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
       vars:
         upstream_server: "https://k8s.gcr.io"
         proxy_project: "k8s-proxy"
@@ -223,7 +223,7 @@
         dest: /etc/containerd/certs.d/{{ harbor_hostname }}/hosts.toml
         owner: root
         group: root
-        mode: '0644'
+        mode: '0600'
       vars:
         upstream_server: "https://{{ harbor_hostname }}"
         proxy_project: "k8s-proxy"

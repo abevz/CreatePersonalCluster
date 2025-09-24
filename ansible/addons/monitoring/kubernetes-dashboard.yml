@@ -1,0 +1,69 @@
+# Description: Kubernetes Dashboard
+# Category: monitoring
+# Version: 7.13.0
+# Dependencies: none
+# Maintainer: CPC Team
+
+---
+- name: Install/Upgrade Kubernetes Dashboard
+  when: addon_name in ['kubernetes-dashboard', 'all']
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  block:
+    - name: Set Kubernetes Dashboard version
+      ansible.builtin.set_fact:
+        kubernetes_dashboard_target_version: >-
+          {{ requested_version if requested_version != '' else (kubernetes_dashboard_version | default('7.13.0')) }}
+    
+    - name: Check if Helm is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/helm  
+      register: helm_binary
+
+    - name: Install Helm if not found
+      when: not helm_binary.stat.exists
+      ansible.builtin.shell: |
+          echo "Helm not found. Installing..."
+          HELM_VERSION="v3.19.0"
+          ARCH="amd64"
+          if [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; fi
+          curl -L --fail --remote-name-all https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
+          sha256sum --check helm-${HELM_VERSION}-linux-${ARCH}.tar.gz.sha256sum
+          sudo tar -xzf helm-${HELM_VERSION}-linux-${ARCH}.tar.gz -C /usr/local/bin --strip-components=1 linux-${ARCH}/helm
+          rm helm-${HELM_VERSION}-linux-${ARCH}.tar.gz
+          rm helm-${HELM_VERSION}-linux-${ARCH}.tar.gz.sha256sum
+      args: 
+        warn: false
+      register: helm_install_check
+      changed_when: "'Helm not found' in helm_install_check.stdout"
+
+    - name: Add Kubernetes Dashboard Helm repository
+      ansible.builtin.shell: helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/ && helm repo update
+      register: helm_repo_add_result
+      changed_when: "'Adding existing repo' not in helm_repo_add_result.stdout"
+
+    - name: Update Helm repositories
+      ansible.builtin.shell: helm repo update
+      changed_when: false
+  
+    - name: Install/Upgrade Kubernetes Dashboard
+      ansible.builtin.shell: |
+        helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
+          --namespace kubernetes-dashboard \
+          --create-namespace 
+      register: helm_install_result
+      changed_when: "'already exists' not in helm_install_result.stderr"
+
+    - name: Wait for Kubernetes Dashboard pods to be ready
+      ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=kubernetes-dashboard -n kubernetes-dashboard --timeout=300s
+      changed_when: false
+
+    - name: Verify Kubernetes Dashboard installation
+      ansible.builtin.shell: helm list -n kubernetes-dashboard  -o json | jq -r '.[0].app_version'
+      register: new_traefik_gateway_version
+      changed_when: false
+
+    - name: Display Kubernetes Dashboard installation result
+      ansible.builtin.debug:
+        msg:
+          - "Kubernetes Dashboard installation completed"
+          - "Helm chart version: {{ kubernetes_dashboard_target_version }}"
