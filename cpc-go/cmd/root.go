@@ -1,34 +1,65 @@
-/*
-Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-
-*/
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
 	"github.com/spf13/cobra"
 )
 
+var (
+	globalCfgFile   string
+	DeploymentsRoot string
+	k               = koanf.New(".")
+)
 
-
-// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "cpc-go",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Short: "CPC-GO is an orchestrator for your infrastructure.",
+	Long: `A tool that uses a declarative approach to create,
+manage, and destroy infrastructure across various cloud and on-premise providers.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := loadGlobalConfig(); err != nil {
+			return err
+		}
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+		var deploymentsPath string
+		userPath, _ := cmd.Flags().GetString("deployments-root")
+		if userPath != "" {
+			deploymentsPath = userPath
+		} else {
+			deploymentsPath = k.String("deployments_root")
+		}
+
+		if deploymentsPath == "" {
+			deploymentsPath = "."
+		}
+
+		// Replace tilde '~' with the user's home directory using the standard library.
+		if strings.HasPrefix(deploymentsPath, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("could not get user home directory: %w", err)
+			}
+			deploymentsPath = filepath.Join(home, deploymentsPath[2:])
+		}
+
+		var err error
+		DeploymentsRoot, err = filepath.Abs(deploymentsPath)
+		if err != nil {
+			return fmt.Errorf("could not get absolute path for '%s': %w", deploymentsPath, err)
+		}
+
+		fmt.Printf("Deployments root: %s\n", DeploymentsRoot)
+		return nil
+	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -37,15 +68,29 @@ func Execute() {
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.cpc-go.yaml)")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().StringVar(&globalCfgFile, "config", "", "Path to global config file (default is ~/.config/cpc/config.yaml)")
+	rootCmd.PersistentFlags().String("deployments-root", "", "Root directory for deployments (overrides value in config.yaml)")
 }
 
+func loadGlobalConfig() error {
+	if globalCfgFile != "" {
+		if err := k.Load(file.Provider(globalCfgFile), yaml.Parser()); err != nil {
+			return fmt.Errorf("error loading specified config file: %w", err)
+		}
+		return nil
+	}
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("could not find home directory: %w", err)
+	}
+	defaultCfgPath := filepath.Join(home, ".config", "cpc", "config.yaml")
+
+	if _, err := os.Stat(defaultCfgPath); err == nil {
+		if err := k.Load(file.Provider(defaultCfgPath), yaml.Parser()); err != nil {
+			return fmt.Errorf("error loading default config file: %w", err)
+		}
+	}
+
+	return nil
+}
