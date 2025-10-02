@@ -1,3 +1,4 @@
+// File: cmd/config.go
 package cmd
 
 import (
@@ -17,45 +18,37 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config [deployment-name]",
 	Short: "Показывает объединенную конфигурацию для развертывания в виде таблицы",
-	Long: `Загружает, расшифровывает и объединяет все конфигурационные файлы 
-(глобальный, deployment.yaml и secrets.sops.yaml) и выводит результат 
-в удобном для чтения табличном формате. 
+	Long: `Загружает, расшифровывает и объединяет все конфигурационные файлы
+(глобальный, deployment.yaml и secrets.sops.yaml) и выводит результат
+в удобном для чтения табличном формате.
 
 Секретные значения будут автоматически скрыты.
 Эта команда идеально подходит для отладки и проверки конфигурации.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		deploymentName := args[0]
-
-		// Используем глобальную переменную DeploymentsRoot, определенную в root.go
 		deploymentPath := filepath.Join(DeploymentsRoot, "deployments", deploymentName)
 
 		log.Printf("Загрузка конфигурации из: %s", deploymentPath)
-
 		if _, err := os.Stat(deploymentPath); os.IsNotExist(err) {
 			log.Fatalf("Ошибка: директория развертывания '%s' не найдена.", deploymentPath)
 		}
 
-		// Загружаем конфигурацию с помощью нашего модуля
-		cfg, err := config.Load(deploymentPath)
+		// Шаг 1: Загружаем конфигурацию в сырой объект koanf.
+		koanfObj, err := config.Load(deploymentPath)
 		if err != nil {
 			log.Fatalf("Ошибка: не удалось загрузить конфигурацию: %v", err)
 		}
 
-		// Шаг 2: Объявляем переменную, КУДА будем загружать данные.
-		// Убедись, что тип `config.Deployment` доступен.
+		// Шаг 2: Объявляем переменную для нашей структуры.
 		var deploymentData config.Deployment
 
-		// Шаг 3: ЭТОТ ШАГ БЫЛ ПРОПУЩЕН.
-		// "Перекладываем" данные из объекта `k` в нашу структуру `deploymentData`.
-		if err := k.Unmarshal("", &deploymentData); err != nil {
+		// Шаг 3: "Перекладываем" данные из объекта koanf в нашу структуру.
+		if err := koanfObj.Unmarshal("", &deploymentData); err != nil {
 			log.Fatalf("Ошибка парсинга конфигурации в структуру: %v", err)
 		}
 
-		// Твоя отладочная печать теперь покажет чистую структуру.
-		log.Printf("DEBUG: Загруженная структура: %+v\n", deploymentData)
-
-		log.Printf("DEBUG: Загруженная структура: %+v\n", cfg)
+		log.Printf("Конфигурация успешно смаплена в структуру.")
 
 		// --- Логика вывода в таблицу ---
 		t := table.NewWriter()
@@ -64,57 +57,47 @@ var configCmd = &cobra.Command{
 		t.SetTitle("Объединенная Конфигурация для '%s'", deploymentName)
 		t.AppendHeader(table.Row{"Ключ Конфигурации", "Значение"})
 
-		// Рекурсивно обходим структуру конфигурации и добавляем строки в таблицу
-		appendStructToTable(t, reflect.ValueOf(*cfg), "")
+		// Шаг 4: Передаем в рендер ПРАВИЛЬНУЮ, заполненную структуру.
+		appendStructToTable(t, reflect.ValueOf(deploymentData), "")
 
 		t.Render()
 	},
 }
 
-// appendStructToTable - это рекурсивная функция, которая "разворачивает"
-// вложенную структуру в плоский список ключ-значение для таблицы.
+// appendStructToTable рекурсивно "разворачивает" структуру для таблицы.
 func appendStructToTable(t table.Writer, val reflect.Value, prefix string) {
-	// Убеждаемся, что работаем со структурой, а не с указателем на нее
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
 	}
-
-	// Если это не структура, завершаем рекурсию
 	if val.Kind() != reflect.Struct {
 		return
 	}
 
-	// Проходим по всем полям структуры
 	for i := 0; i < val.NumField(); i++ {
 		field := val.Field(i)
 		fieldType := val.Type().Field(i)
 
-		// Используем тег `mapstructure` как имя ключа в YAML
-		keyName := fieldType.Tag.Get("mapstructure")
+		// ИСПРАВЛЕНИЕ: Ищем правильный тег "koanf", а не "mapstructure".
+		keyName := fieldType.Tag.Get("koanf")
 		if keyName == "" {
 			continue // Пропускаем поля без тега
 		}
 
-		// Формируем полный ключ (например, spec.provider)
 		fullKey := keyName
 		if prefix != "" {
 			fullKey = prefix + "." + keyName
 		}
 
-		// В зависимости от типа поля, решаем, что делать дальше
 		switch field.Kind() {
 		case reflect.Struct:
-			// Если поле - это вложенная структура, уходим в рекурсию
 			appendStructToTable(t, field, fullKey)
 		case reflect.Map:
-			// Если поле - это карта (map), итерируемся по ее ключам
 			for _, key := range field.MapKeys() {
 				mapValue := field.MapIndex(key)
 				rowKey := fullKey + "." + fmt.Sprintf("%v", key.Interface())
 				t.AppendRow(table.Row{rowKey, formatValue(rowKey, mapValue)})
 			}
 		default:
-			// Для простых типов (string, int, bool) просто добавляем строку
 			t.AppendRow(table.Row{fullKey, formatValue(fullKey, field)})
 		}
 	}
@@ -122,17 +105,12 @@ func appendStructToTable(t table.Writer, val reflect.Value, prefix string) {
 
 // formatValue форматирует значение для вывода и скрывает секреты.
 func formatValue(key string, v reflect.Value) string {
-	// Простое правило: если ключ содержит слово "credentials" или "secret", скрываем значение.
-	// В будущем можно сделать эту логику умнее.
 	if containsSensitiveKeyword(key) {
 		return "*** SENSITIVE ***"
 	}
-
-	// Для указателей получаем реальное значение
 	if v.Kind() == reflect.Ptr && !v.IsNil() {
 		v = v.Elem()
 	}
-
 	return fmt.Sprintf("%v", v.Interface())
 }
 
@@ -140,7 +118,7 @@ func formatValue(key string, v reflect.Value) string {
 func containsSensitiveKeyword(key string) bool {
 	sensitiveWords := []string{"credentials", "secret", "token", "password", "private_key"}
 	for _, word := range sensitiveWords {
-		if strings.Contains(key, word) {
+		if strings.Contains(strings.ToLower(key), word) {
 			return true
 		}
 	}

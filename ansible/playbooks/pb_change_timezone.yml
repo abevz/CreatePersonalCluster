@@ -1,0 +1,15 @@
+---
+# Playbook change TimeZone
+# Handles Debian/Ubuntu (Debian family) and Rocky Linux (RedHat family)
+
+- name: Bootstrap Kubernetes Cluster Prerequisites and Components
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Set timezone Europe/Warsaw
+      become: true
+      community.general.timezone:
+        name: Europe/Warsaw

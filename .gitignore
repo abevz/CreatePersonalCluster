@@ -37,3 +37,9 @@ kube-bench-full.log
 # Temp files
 tmp/
 next_step.md
+
+# Go binaries
+#
+cpc-go/*
+!cpc-go/*.go
+
