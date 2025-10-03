@@ -26,6 +26,19 @@ type Spec struct {
 	Provider        string                   `koanf:"provider"`
 	ProviderConfig  map[string]interface{}   `koanf:"provider_config"`
 	PostCreateTasks []map[string]interface{} `koanf:"postCreateTasks"`
+	// NEW: Add these two fields
+	ClusterDomain string                 `koanf:"clusterDomain"`
+	NodeGroups    []NodeGroup            `koanf:"nodeGroups"`
+	TfvarsSchema  string                 `koanf:"tfvarsSchema"`
+	Variables     map[string]interface{} `koanf:"variables"`
+}
+
+// NEW: Add this whole new struct
+type NodeGroup struct {
+	Name       string `koanf:"name"`
+	RolePrefix string `koanf:"rolePrefix"`
+	Profile    string `koanf:"profile"`
+	Count      int    `koanf:"count"`
 }
 
 type ProviderCredentials struct {

@@ -2,12 +2,14 @@
 package cmd
 
 import (
+	"encoding/json" // ИЗМЕНЕНИЕ: Импортируем для красивого вывода JSON
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"unicode/utf8" // ИЗМЕНЕНИЕ: Импортируем для работы со строками
 
 	"github.com/abevz/createpersonalcluster/cpc-go/internal/config"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -34,16 +36,12 @@ var configCmd = &cobra.Command{
 			log.Fatalf("Ошибка: директория развертывания '%s' не найдена.", deploymentPath)
 		}
 
-		// Шаг 1: Загружаем конфигурацию в сырой объект koanf.
 		koanfObj, err := config.Load(deploymentPath)
 		if err != nil {
 			log.Fatalf("Ошибка: не удалось загрузить конфигурацию: %v", err)
 		}
 
-		// Шаг 2: Объявляем переменную для нашей структуры.
 		var deploymentData config.Deployment
-
-		// Шаг 3: "Перекладываем" данные из объекта koanf в нашу структуру.
 		if err := koanfObj.Unmarshal("", &deploymentData); err != nil {
 			log.Fatalf("Ошибка парсинга конфигурации в структуру: %v", err)
 		}
@@ -57,14 +55,19 @@ var configCmd = &cobra.Command{
 		t.SetTitle("Объединенная Конфигурация для '%s'", deploymentName)
 		t.AppendHeader(table.Row{"Ключ Конфигурации", "Значение"})
 
-		// Шаг 4: Передаем в рендер ПРАВИЛЬНУЮ, заполненную структуру.
+		// ИЗМЕНЕНИЕ: Настраиваем колонки для переноса текста
+		t.SetColumnConfigs([]table.ColumnConfig{
+			{Number: 1, AutoMerge: true}, // Колонка с ключами
+			{Number: 2, WidthMax: 80},    // Колонка со значениями, макс. ширина 80 символов
+		})
+
 		appendStructToTable(t, reflect.ValueOf(deploymentData), "")
 
 		t.Render()
 	},
 }
 
-// appendStructToTable рекурсивно "разворачивает" структуру для таблицы.
+// ... (функция appendStructToTable остается без изменений) ...
 func appendStructToTable(t table.Writer, val reflect.Value, prefix string) {
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -76,18 +79,14 @@ func appendStructToTable(t table.Writer, val reflect.Value, prefix string) {
 	for i := 0; i < val.NumField(); i++ {
 		field := val.Field(i)
 		fieldType := val.Type().Field(i)
-
-		// ИСПРАВЛЕНИЕ: Ищем правильный тег "koanf", а не "mapstructure".
 		keyName := fieldType.Tag.Get("koanf")
 		if keyName == "" {
-			continue // Пропускаем поля без тега
+			continue
 		}
-
 		fullKey := keyName
 		if prefix != "" {
 			fullKey = prefix + "." + keyName
 		}
-
 		switch field.Kind() {
 		case reflect.Struct:
 			appendStructToTable(t, field, fullKey)
@@ -103,18 +102,42 @@ func appendStructToTable(t table.Writer, val reflect.Value, prefix string) {
 	}
 }
 
-// formatValue форматирует значение для вывода и скрывает секреты.
+// ИЗМЕНЕНИЕ: Полностью переписанная функция formatValue для красоты
 func formatValue(key string, v reflect.Value) string {
 	if containsSensitiveKeyword(key) {
 		return "*** SENSITIVE ***"
 	}
+
 	if v.Kind() == reflect.Ptr && !v.IsNil() {
 		v = v.Elem()
 	}
-	return fmt.Sprintf("%v", v.Interface())
+
+	// Получаем интерфейс для дальнейшей работы
+	val := v.Interface()
+
+	// Специальная обработка для приватного ключа
+	if key == "post_install_secrets.vm_ssh_private_key" {
+		if s, ok := val.(string); ok && utf8.RuneCountInString(s) > 60 {
+			return s[:30] + "\n[...обрезано...]\n" + s[len(s)-30:]
+		}
+	}
+
+	// Красивый вывод для слайсов и карт через JSON
+	switch v.Kind() {
+	case reflect.Slice, reflect.Map:
+		// MarshalIndent для красивого вывода с отступами
+		bytes, err := json.MarshalIndent(val, "", "  ")
+		if err != nil {
+			return fmt.Sprintf("Ошибка форматирования: %v", err)
+		}
+		return string(bytes)
+	}
+
+	// Стандартный вывод для всего остального
+	return fmt.Sprintf("%v", val)
 }
 
-// containsSensitiveKeyword проверяет, содержит ли ключ "секретные" слова.
+// ... (функция containsSensitiveKeyword остается без изменений) ...
 func containsSensitiveKeyword(key string) bool {
 	sensitiveWords := []string{"credentials", "secret", "token", "password", "private_key"}
 	for _, word := range sensitiveWords {
@@ -123,8 +146,4 @@ func containsSensitiveKeyword(key string) bool {
 		}
 	}
 	return false
-}
-
-func init() {
-	deploymentCmd.AddCommand(configCmd)
 }

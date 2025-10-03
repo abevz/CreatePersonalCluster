@@ -18,6 +18,8 @@ var (
 	k               = koanf.New(".")
 )
 
+var TofuRoot string
+
 var rootCmd = &cobra.Command{
 	Use:   "cpc-go",
 	Short: "CPC-GO is an orchestrator for your infrastructure.",
@@ -70,6 +72,7 @@ func Execute() {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&globalCfgFile, "config", "", "Path to global config file (default is ~/.config/cpc/config.yaml)")
 	rootCmd.PersistentFlags().String("deployments-root", "", "Root directory for deployments (overrides value in config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&TofuRoot, "tofu-root", "../terraform", "Root directory for OpenTofu .tf files")
 }
 
 func loadGlobalConfig() error {
