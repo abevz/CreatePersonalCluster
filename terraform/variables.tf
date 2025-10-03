@@ -159,4 +159,28 @@ variable "workspace_ip_block_size" {
   default     = 10
 }
 
+variable "proxmox_endpoint" {
+  description = "The URL of the Proxmox API endpoint."
+  type        = string
+  default     = null
+}
+
+variable "proxmox_password" {
+  description = "The password for the Proxmox user."
+  type        = string
+  sensitive   = true # This hides the value in logs
+  default     = null
+}
+
+variable "cluster_id" {
+  description = "The unique identifier for the cluster."
+  type        = string
+  default     = null
+}
+
+variable "cluster_domain" {
+  description = "The domain for the cluster nodes."
+  type        = string
+  default     = null
+}
 
