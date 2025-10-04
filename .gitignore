@@ -40,6 +40,4 @@ next_step.md
 
 # Go binaries
 #
-cpc-go/*
-!cpc-go/*.go
-
+cpc-go/cpc-go
