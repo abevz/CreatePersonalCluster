@@ -8,11 +8,32 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath" // <--- НОВЫЙ ИМПОРТ
 
 	"github.com/abevz/createpersonalcluster/cpc-go/internal/config"
 )
 
-// runCommand is a helper to execute external commands with real-time output and environment variables.
+// НОВАЯ ФУНКЦИЯ для подготовки окружения Tofu
+// Она берет базовые переменные и добавляет к ним путь к кэшу плагинов.
+func getTofuEnv(baseEnv map[string]string) (map[string]string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	pluginCacheDir := filepath.Join(homeDir, ".cpc", "plugin-cache")
+	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
+		// Если не удалось создать папку, просто выводим предупреждение, но не останавливаем выполнение
+		log.Printf("Warning: could not create plugin cache directory at %s: %v", pluginCacheDir, err)
+	} else {
+		// Если папка есть, добавляем переменную
+		baseEnv["TF_PLUGIN_CACHE_DIR"] = pluginCacheDir
+	}
+
+	return baseEnv, nil
+}
+
+// runCommand остается без изменений
 func runCommand(workDir string, envVars map[string]string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = workDir
@@ -26,12 +47,18 @@ func runCommand(workDir string, envVars map[string]string, name string, args ...
 	return cmd.Run()
 }
 
-// Plan runs 'init', sets permissions, selects workspace, and runs 'plan'.
+// Plan теперь использует getTofuEnv
 func Plan(workDir string, cfg *config.Deployment) error {
-	env := map[string]string{
+	baseEnv := map[string]string{
 		"AWS_ACCESS_KEY_ID":     cfg.S3BackendCredentials.AccessKey,
 		"AWS_SECRET_ACCESS_KEY": cfg.S3BackendCredentials.SecretKey,
 	}
+	// Получаем полное окружение с кэшем
+	env, err := getTofuEnv(baseEnv)
+	if err != nil {
+		return err // Если не можем получить home dir, это фатальная ошибка
+	}
+
 	workspaceName := cfg.Metadata.Name
 
 	// Step 1: Initialize
@@ -44,7 +71,6 @@ func Plan(workDir string, cfg *config.Deployment) error {
 	log.Println("   Setting provider permissions...")
 	chmodCmd := `find .terraform/providers -type f -name 'terraform-provider-*' -exec chmod +x {} +`
 	if err := runCommand(workDir, env, "bash", "-c", chmodCmd); err != nil {
-		// This is not a fatal error, so we just log a warning
 		log.Printf("Warning: failed to chmod providers, plan may fail: %v", err)
 	}
 
@@ -63,14 +89,21 @@ func Plan(workDir string, cfg *config.Deployment) error {
 	return nil
 }
 
-// Apply runs 'init', sets permissions, selects workspace, and runs 'apply'.
+// Apply теперь использует getTofuEnv
 func Apply(workDir string, cfg *config.Deployment) (map[string]interface{}, error) {
-	env := map[string]string{
+	baseEnv := map[string]string{
 		"AWS_ACCESS_KEY_ID":     cfg.S3BackendCredentials.AccessKey,
 		"AWS_SECRET_ACCESS_KEY": cfg.S3BackendCredentials.SecretKey,
 	}
+	// Получаем полное окружение с кэшем
+	env, err := getTofuEnv(baseEnv)
+	if err != nil {
+		return nil, err
+	}
+
 	workspaceName := cfg.Metadata.Name
 
+	// ... (все остальные шаги в Apply остаются такими же, но используют новую переменную 'env')
 	// Step 1: Initialize
 	log.Println("   Initializing OpenTofu backend...")
 	if err := runCommand(workDir, env, "tofu", "init", "-input=false", "-no-color", "-reconfigure"); err != nil {
@@ -98,7 +131,7 @@ func Apply(workDir string, cfg *config.Deployment) (map[string]interface{}, erro
 		return nil, fmt.Errorf("'tofu apply' failed: %w", err)
 	}
 
-	// Step 5: Fetch outputs
+	// ... (код для 'tofu output' остается без изменений) ...
 	log.Println("   Fetching outputs...")
 	cmd := exec.Command("tofu", "output", "-json")
 	cmd.Dir = workDir
