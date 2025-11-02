@@ -17,19 +17,21 @@
           {{ gateway_api_version | default('v1.1.0') }}
 
     - name: Ensure Helm is installed on the control plane
-      ansible.builtin.shell: |
-        if ! command -v helm &> /dev/null; then
-          echo "Helm not found. Installing..."
-          HELM_VERSION="v3.19.0"
-          ARCH="amd64"
-          if [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; fi
-          curl -L --fail --remote-name-all https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
-          sha256sum --check helm-${HELM_VERSION}-linux-${ARCH}.tar.gz.sha256sum
-          sudo tar -xzf helm-${HELM_VERSION}-linux-${ARCH}.tar.gz -C /usr/local/bin --strip-components=1 linux-${ARCH}/helm
-          rm helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
-        else
-          echo "Helm is already installed."
-        fi
+      ansible.builtin.shell: 
+        cmd: |
+          if ! command -v helm &> /dev/null; then
+            echo "Helm not found. Installing..."
+            HELM_VERSION="v3.19.0"
+            ARCH="amd64"
+            if [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; fi
+            curl -L --fail --remote-name-all https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
+            sha256sum --check helm-${HELM_VERSION}-linux-${ARCH}.tar.gz.sha256sum
+            sudo tar -xzf helm-${HELM_VERSION}-linux-${ARCH}.tar.gz -C /usr/local/bin --strip-components=1 linux-${ARCH}/helm
+            rm helm-${HELM_VERSION}-linux-${ARCH}.tar.gz{,.sha256sum}
+          else
+            echo "Helm is already installed."
+          fi
+        executable: /bin/bash  
       register: helm_install_check
       changed_when: "'Helm not found' in helm_install_check.stdout"
 

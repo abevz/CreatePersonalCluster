@@ -26,6 +26,7 @@ terraform/snippets/summary.txt
 # Gemini-generated files
 GEMINI.md
 TEST_COMPLIANCE_REPORT.md
+AGENTS.md
 
 # Test environment files
 envs/test-clone.env
@@ -41,3 +42,5 @@ next_step.md
 # Go binaries
 #
 cpc-go/cpc-go
+
+__pycache__

@@ -20,12 +20,16 @@
       ignore_errors: true
 
     - name: Apply MetalLB native manifests
-      ansible.builtin.shell: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/87e385bdd457fb55fa7b2174368390695c5010e3/config/manifests/metallb-native.yaml
+      ansible.builtin.shell: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/{{ metallb_target_version }}/config/manifests/metallb-native.yaml
       register: metallb_apply_result
       changed_when: "'configured' in metallb_apply_result.stdout or 'created' in metallb_apply_result.stdout"
 
     - name: Wait for MetalLB pods to be ready
       ansible.builtin.shell: kubectl wait --for=condition=ready pod -l app=metallb -n metallb-system --timeout=300s
+      register: wait_result
+      until: wait_result.rc == 0
+      retries: 10 
+      delay: 6
       changed_when: false
 
     - name: Set MetalLB IP range
