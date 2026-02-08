@@ -1,5 +1,22 @@
 # 🚀 Create Personal Cluster (CPC)
 
+> ⚠️ **DEPRECATED: This project has evolved into [platform-iac](https://github.com/abevz/platform-iac)**
+>
+> CPC has been superseded by **platform-iac** - a more modular, enterprise-ready Infrastructure as Code solution.
+> All active development has moved to the new repository.
+> 
+> **Key improvements in platform-iac:**
+> - **35+ modular Ansible roles** vs monolithic single role in CPC
+> - **Molecule testing framework** for Ansible roles
+> - **Native OpenTofu tests** (tftest.hcl)
+> - **iac-wrapper.sh** - unified CLI for all operations
+> - **Cleaner architecture** with separated concerns
+> - **Full English documentation** and comments
+>
+> ➡️ **Please use [platform-iac](https://github.com/abevz/platform-iac) for new deployments**
+
+---
+
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.31+-blue.svg)](https://kubernetes.io/)
 [![Terraform](https://img.shields.io/badge/Terraform-1.0+-purple.svg)](https://www.terraform.io/)
 [![Ansible](https://img.shields.io/badge/Ansible-2.15+-red.svg)](https://www.ansible.com/)
